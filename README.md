@@ -4,6 +4,8 @@ MarketLab is a local-first research system for market-regime analysis and large-
 
 The implementation follows `DESIGN.md`: immutable source captures, point-in-time snapshots, deterministic calculations, bounded agent outputs, and reproducible reports.
 
+See `IMPLEMENTATION.md` for current implementation status and the next small slices.
+
 ## Current Baseline
 
 This repository currently contains only the first contracts:
