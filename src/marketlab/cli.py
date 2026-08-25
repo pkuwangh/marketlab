@@ -15,6 +15,7 @@ from marketlab.bulltard.ingest import (
     DEFAULT_OBSERVATIONS_ROOT,
     IngestError,
     build_ingest_plan,
+    fetch_ticker_page,
     ingest_planned_view,
 )
 from marketlab.bulltard.models import BulltardView
@@ -127,10 +128,7 @@ def ingest(
 ) -> None:
     """Retrieve and parse one targeted Bulltard view."""
 
-    try:
-        source_date = date.fromisoformat(source_date_value)
-    except ValueError as exc:
-        raise typer.BadParameter("Date must use YYYY-MM-DD format", param_hint="--date") from exc
+    source_date = _parse_source_date(source_date_value)
 
     try:
         plan = build_ingest_plan(
@@ -159,6 +157,66 @@ def ingest(
         observation_path=str(result.observation_path),
         row_count=result.row_count,
     ).success("Completed Bulltard ingest")
+
+
+@bulltard_app.command("ticker", no_args_is_help=True)
+def ticker(
+    symbol: str = typer.Argument(
+        ...,
+        help="Ticker symbol to retrieve from Bulltard.",
+    ),
+    recap_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Local recap text or HTML file containing the signed Bulltard link.",
+    ),
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Source date represented by the recap.",
+    ),
+    debug_root: Path = typer.Option(
+        DEFAULT_DEBUG_ROOT,
+        "--debug-root",
+        file_okay=False,
+        help="Root directory for temporary Bulltard parser debug payloads.",
+    ),
+) -> None:
+    """Retrieve one Bulltard ticker detail page."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = fetch_ticker_page(
+            source_date=source_date,
+            symbol=symbol,
+            recap_path=recap_path,
+            debug_root=debug_root,
+        )
+    except IngestError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"symbol={result.symbol}")
+    typer.echo(f"signed_url={result.signed_url}")
+    typer.echo(f"final_url={result.final_url}")
+    typer.echo(f"status_code={result.status_code}")
+    typer.echo(f"byte_count={result.byte_count}")
+    typer.echo(f"debug_path={result.debug_path}")
+    logger.bind(
+        source_date=source_date.isoformat(),
+        symbol=result.symbol,
+        debug_path=str(result.debug_path),
+        byte_count=result.byte_count,
+    ).success("Completed Bulltard ticker fetch")
+
+
+def _parse_source_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter("Date must use YYYY-MM-DD format", param_hint="--date") from exc
 
 
 if __name__ == "__main__":

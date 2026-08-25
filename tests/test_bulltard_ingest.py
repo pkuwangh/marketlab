@@ -9,7 +9,9 @@ from marketlab.bulltard.ingest import (
     IngestError,
     build_ingest_plan,
     fetch_ingest_view,
+    fetch_ticker_page,
     ingest_planned_view,
+    normalize_ticker_symbol,
 )
 from marketlab.bulltard.models import BulltardView
 
@@ -149,3 +151,62 @@ def test_ingest_planned_view_writes_ranked_trade_observations(tmp_path: Path) ->
     assert rows[0]["premium"] == 74508194.5
     assert rows[2]["symbol"] == "AKAM"
     assert rows[2]["side"] == "bearish"
+
+
+def test_fetch_ticker_page_uses_signed_link_session_and_writes_debug_html(
+    tmp_path: Path,
+) -> None:
+    debug_root = tmp_path / "debug" / "bulltard"
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(f"{request.url.host}{request.url.path}")
+        if request.url.host == "jamesbulltard.substack.com":
+            return httpx.Response(
+                302,
+                headers={"location": "https://app.jamesbulltard.com/"},
+            )
+        if request.url.path == "/":
+            return httpx.Response(
+                200,
+                headers={"set-cookie": "bulltard_session=fixture-session; Path=/"},
+                content=b"<html>home</html>",
+            )
+        if request.url.path == "/tickers/INTC":
+            assert request.headers["cookie"] == "bulltard_session=fixture-session"
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                content=b"<html>INTC details</html>",
+            )
+        return httpx.Response(404)
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    )
+
+    result = fetch_ticker_page(
+        source_date=date(2026, 8, 25),
+        symbol="intc",
+        recap_path=FIXTURE_DIR / "recap.html",
+        debug_root=debug_root,
+        client=client,
+    )
+
+    assert requested_paths == [
+        "jamesbulltard.substack.com/redirect",
+        "app.jamesbulltard.com/",
+        "app.jamesbulltard.com/tickers/INTC",
+    ]
+    assert result.symbol == "INTC"
+    assert result.status_code == 200
+    assert result.content_type == "text/html"
+    assert result.byte_count == len(b"<html>INTC details</html>")
+    assert result.debug_path == debug_root / "tickers" / "INTC" / "2026-08-25.html"
+    assert result.debug_path.read_bytes() == b"<html>INTC details</html>"
+
+
+def test_normalize_ticker_symbol_rejects_path_like_input() -> None:
+    with pytest.raises(IngestError, match="Invalid ticker symbol"):
+        normalize_ticker_symbol("../INTC")

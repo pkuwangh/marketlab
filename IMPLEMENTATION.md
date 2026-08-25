@@ -34,6 +34,7 @@ support for one useful view.
 - Temporary debug HTML output under `data/debug/bulltard/...` for parser bring-up.
 - Parser for ranked option trade rows from server-rendered HTML.
 - JSONL observation output under `data/observations/bulltard/ranked_option_trades/`.
+- Targeted Bulltard ticker-page retrieval under `data/debug/bulltard/tickers/<SYMBOL>/`.
 
 ## Current Useful Commands
 
@@ -42,6 +43,7 @@ support for one useful view.
 ./bin/marketlab bulltard
 ./bin/marketlab bulltard inspect-recap path/to/recap.html
 ./bin/marketlab bulltard ingest --date 2026-08-24 --view ranked-option-trades path/to/recap.html
+./bin/marketlab bulltard ticker INTC --date 2026-08-24 path/to/recap.html
 ```
 
 ## Decisions
@@ -62,6 +64,7 @@ Inspect and use the first observation rows:
 
 - Add a small `bulltard show-observations` or equivalent inspection command if plain `head`/`jq`
   is not enough.
+- Inspect one fetched ticker page and parse the smallest useful ticker-level table or summary.
 - Decide which columns matter for the first large-cap/options-liquidity filter.
 - Start measuring whether the ranked rows create useful candidates.
 

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from loguru import logger
@@ -22,6 +22,7 @@ APP_HOST = "app.jamesbulltard.com"
 APP_ORIGIN = f"https://{APP_HOST}"
 HTTP_TIMEOUT_SECONDS = 30.0
 _DATE_IN_NAME_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,15}$")
 
 
 class IngestError(ValueError):
@@ -47,6 +48,20 @@ class IngestResult:
     fetched_view: FetchedView
     row_count: int
     observation_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedTickerPage:
+    """One retrieved Bulltard ticker detail page."""
+
+    source_date: date
+    symbol: str
+    signed_url: str
+    final_url: str
+    status_code: int
+    content_type: str | None
+    byte_count: int
+    debug_path: Path
 
 
 def build_ingest_plan(
@@ -120,7 +135,7 @@ def fetch_ingest_view(
             url=view_url,
         ).info("Retrieving Bulltard view")
         response = _get(active_client, view_url, purpose=f"{plan.view.value} view")
-        _require_usable_response(response, view=plan.view)
+        _require_usable_response(response, label=f"{plan.view.value} view")
 
         debug_path = debug_root / plan.view.output_slug / f"{plan.source_date.isoformat()}.html"
         debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +190,87 @@ def ingest_planned_view(
     )
 
 
+def fetch_ticker_page(
+    *,
+    source_date: date,
+    symbol: str,
+    recap_path: Path,
+    debug_root: Path = DEFAULT_DEBUG_ROOT,
+    client: httpx.Client | None = None,
+) -> FetchedTickerPage:
+    """Retrieve one Bulltard ticker detail page through the recap access link."""
+
+    if not recap_path.is_file():
+        raise IngestError(f"Recap path does not exist or is not a file: {recap_path}")
+    _warn_if_path_date_differs(source_date=source_date, path=recap_path)
+    normalized_symbol = normalize_ticker_symbol(symbol)
+
+    try:
+        signed_url = extract_signed_source_url(recap_path.read_text(encoding="utf-8"))
+    except SignedSourceUrlError as exc:
+        raise IngestError(str(exc)) from exc
+
+    owns_client = client is None
+    active_client = client or httpx.Client(
+        follow_redirects=True,
+        timeout=HTTP_TIMEOUT_SECONDS,
+    )
+
+    try:
+        logger.bind(
+            source_date=source_date.isoformat(),
+            symbol=normalized_symbol,
+            signed_url=signed_url,
+        ).info("Bootstrapping Bulltard ticker access")
+        bootstrap = _get(active_client, signed_url, purpose="bootstrap access")
+        _require_app_access(bootstrap)
+
+        ticker_url = f"{APP_ORIGIN}/tickers/{quote(normalized_symbol, safe='.-')}"
+        logger.bind(
+            source_date=source_date.isoformat(),
+            symbol=normalized_symbol,
+            url=ticker_url,
+        ).info("Retrieving Bulltard ticker page")
+        response = _get(active_client, ticker_url, purpose=f"{normalized_symbol} ticker page")
+        _require_usable_response(response, label=f"{normalized_symbol} ticker page")
+
+        debug_path = debug_root / "tickers" / normalized_symbol / f"{source_date.isoformat()}.html"
+        debug_path.parent.mkdir(parents=True, exist_ok=True)
+        debug_path.write_bytes(response.content)
+
+        result = FetchedTickerPage(
+            source_date=source_date,
+            symbol=normalized_symbol,
+            signed_url=signed_url,
+            final_url=str(response.url),
+            status_code=response.status_code,
+            content_type=response.headers.get("content-type"),
+            byte_count=len(response.content),
+            debug_path=debug_path,
+        )
+        logger.bind(
+            source_date=source_date.isoformat(),
+            symbol=normalized_symbol,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            byte_count=result.byte_count,
+            debug_path=str(result.debug_path),
+        ).success("Retrieved Bulltard ticker page")
+        return result
+    finally:
+        if owns_client:
+            active_client.close()
+
+
+def normalize_ticker_symbol(symbol: str) -> str:
+    """Normalize and validate a ticker symbol for a Bulltard ticker route."""
+
+    normalized = symbol.strip().upper()
+    if not _TICKER_RE.fullmatch(normalized):
+        raise IngestError(f"Invalid ticker symbol: {symbol}")
+    return normalized
+
+
 def _parse_fetched_view(fetched_view: FetchedView):
     html = fetched_view.debug_path.read_text(encoding="utf-8")
     try:
@@ -196,7 +292,7 @@ def _get(client: httpx.Client, url: str, *, purpose: str) -> httpx.Response:
 
 
 def _require_app_access(response: httpx.Response) -> None:
-    _require_usable_response(response, view=None)
+    _require_usable_response(response, label="bootstrap")
     parts = urlsplit(str(response.url))
     if parts.scheme != "https" or parts.netloc.lower() != APP_HOST:
         raise IngestError(
@@ -204,12 +300,10 @@ def _require_app_access(response: httpx.Response) -> None:
         )
 
 
-def _require_usable_response(response: httpx.Response, *, view: BulltardView | None) -> None:
+def _require_usable_response(response: httpx.Response, *, label: str) -> None:
     if response.status_code >= 400:
-        label = view.value if view is not None else "bootstrap"
         raise IngestError(f"Bulltard {label} request failed with HTTP {response.status_code}")
     if not response.content:
-        label = view.value if view is not None else "bootstrap"
         raise IngestError(f"Bulltard {label} response was empty")
 
 

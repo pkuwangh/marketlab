@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from marketlab import __version__
-from marketlab.bulltard.ingest import FetchedView, IngestResult
+from marketlab.bulltard.ingest import FetchedTickerPage, FetchedView, IngestResult
 from marketlab.cli import app, bulltard_app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -52,6 +52,18 @@ def test_ingest_no_args_shows_help_without_missing_option_error() -> None:
     assert "recap_path" in result.output
     assert "--date" in result.output
     assert "Missing option" not in result.output
+    assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_ticker_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "ticker"])
+
+    assert result.exit_code != 0
+    assert "Retrieve one Bulltard ticker detail page" in result.output
+    assert "symbol" in result.output
+    assert "recap_path" in result.output
+    assert "--date" in result.output
     assert "Missing argument" not in result.output
     assert "Traceback" not in result.output
 
@@ -138,3 +150,52 @@ def test_bulltard_ingest_retrieves_first_view(
         in result.output
     )
     assert "row_count=3" in result.output
+
+
+def test_bulltard_ticker_fetches_detail_page(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    debug_root = tmp_path / "debug" / "bulltard"
+
+    def fake_fetch_ticker_page(
+        *,
+        source_date,
+        symbol: str,
+        recap_path: Path,
+        debug_root: Path,
+    ) -> FetchedTickerPage:
+        return FetchedTickerPage(
+            source_date=source_date,
+            symbol=symbol.upper(),
+            signed_url="https://jamesbulltard.substack.com/redirect?token=fixture-secret",
+            final_url=f"https://app.jamesbulltard.com/tickers/{symbol.upper()}",
+            status_code=200,
+            content_type="text/html",
+            byte_count=123,
+            debug_path=debug_root / "tickers" / symbol.upper() / f"{source_date.isoformat()}.html",
+        )
+
+    monkeypatch.setattr("marketlab.cli.fetch_ticker_page", fake_fetch_ticker_page)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "ticker",
+            "intc",
+            str(FIXTURE_DIR / "recap.html"),
+            "--date",
+            "2026-08-25",
+            "--debug-root",
+            str(debug_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "symbol=INTC" in result.output
+    assert "fixture-secret" in result.output
+    assert "final_url=https://app.jamesbulltard.com/tickers/INTC" in result.output
+    assert "status_code=200" in result.output
+    assert "byte_count=123" in result.output
+    assert str(debug_root / "tickers" / "INTC" / "2026-08-25.html") in result.output
