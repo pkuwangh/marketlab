@@ -10,7 +10,13 @@ import typer
 from loguru import logger
 
 from marketlab import __version__
-from marketlab.bulltard.ingest import DEFAULT_OBSERVATIONS_ROOT, IngestError, build_ingest_plan
+from marketlab.bulltard.ingest import (
+    DEFAULT_DEBUG_ROOT,
+    DEFAULT_OBSERVATIONS_ROOT,
+    IngestError,
+    build_ingest_plan,
+    fetch_ingest_view,
+)
 from marketlab.bulltard.models import BulltardView
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
 from marketlab.logging import configure_logging
@@ -112,8 +118,14 @@ def ingest(
         file_okay=False,
         help="Root directory for structured Bulltard observations.",
     ),
+    debug_root: Path = typer.Option(
+        DEFAULT_DEBUG_ROOT,
+        "--debug-root",
+        file_okay=False,
+        help="Root directory for temporary Bulltard parser debug payloads.",
+    ),
 ) -> None:
-    """Prepare a targeted Bulltard ingest run for one useful view."""
+    """Retrieve one targeted Bulltard view for parser bring-up."""
 
     try:
         source_date = date.fromisoformat(source_date_value)
@@ -127,18 +139,24 @@ def ingest(
             recap_path=recap_path,
             output_root=output_root,
         )
+        result = fetch_ingest_view(plan, debug_root=debug_root)
     except IngestError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"view={plan.view.value}")
     typer.echo(f"route_path={plan.view.route_path}")
     typer.echo(f"signed_url={plan.signed_url}")
-    typer.echo(f"output_path={plan.output_path}")
+    typer.echo(f"final_url={result.final_url}")
+    typer.echo(f"status_code={result.status_code}")
+    typer.echo(f"byte_count={result.byte_count}")
+    typer.echo(f"debug_path={result.debug_path}")
+    typer.echo(f"planned_observation_path={plan.observation_path}")
     logger.bind(
         source_date=source_date.isoformat(),
         view=plan.view.value,
-        output_path=str(plan.output_path),
-    ).info("HTTP retrieval and row parsing are the next implementation step")
+        debug_path=str(result.debug_path),
+        planned_observation_path=str(plan.observation_path),
+    ).info("Row parsing is the next implementation step")
 
 
 if __name__ == "__main__":

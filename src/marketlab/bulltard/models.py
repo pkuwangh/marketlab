@@ -33,7 +33,7 @@ class IngestPlan:
     view: BulltardView
     recap_path: Path
     signed_url: str
-    output_path: Path
+    observation_path: Path
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,5 +42,5 @@ class IngestPlan:
             "view": self.view.value,
             "recap_path": str(self.recap_path),
             "signed_url": self.signed_url,
-            "output_path": str(self.output_path),
+            "observation_path": str(self.observation_path),
         }

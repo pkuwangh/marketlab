@@ -3,12 +3,13 @@
 `DESIGN.md` is the architecture source of truth. This file tracks the current implementation state
 and the next small slices.
 
-## Current Commits
+## Recent Commits
 
 - `53c94e2` - Initialize marketlab baseline.
 - `f846da9` - Add Bulltard recap inspection.
 - `0e82e6e` - Track implementation status.
 - `9d360ef` - Add local Bulltard archiving.
+- `11030cb` - Refocus Bulltard ingest on useful observations.
 
 ## Course Correction
 
@@ -29,6 +30,8 @@ support for one useful view.
 - Selection of the likely database link when a Gmail export contains many Substack redirects.
 - Bulltard ingest planning for `ranked-option-trades`, including view route and intended
   observation output path.
+- One-view HTTP retrieval via `httpx.Client(follow_redirects=True)`.
+- Temporary debug HTML output under `data/debug/bulltard/...` for parser bring-up.
 
 ## Current Useful Commands
 
@@ -55,8 +58,6 @@ support for one useful view.
 
 Turn the ingest plan into one real Bulltard ingest path:
 
-- Use one short-lived `httpx.Client(follow_redirects=True)`.
-- Retrieve one named view, probably ranked option trades.
 - Parse structured candidate rows.
 - Write local observations under `data/observations/bulltard/...`.
 - Report row count and visible failures.

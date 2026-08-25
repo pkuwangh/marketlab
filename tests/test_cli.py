@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from marketlab import __version__
+from marketlab.bulltard.ingest import FetchedView
 from marketlab.cli import app, bulltard_app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -46,7 +48,7 @@ def test_ingest_no_args_shows_help_without_missing_option_error() -> None:
     result = CliRunner().invoke(app, ["bulltard", "ingest"])
 
     assert result.exit_code != 0
-    assert "Prepare a targeted Bulltard ingest run" in result.output
+    assert "Retrieve one targeted Bulltard view" in result.output
     assert "recap_path" in result.output
     assert "--date" in result.output
     assert "Missing option" not in result.output
@@ -83,8 +85,24 @@ def test_bulltard_inspect_recap_unwraps_gmail_tracking_redirect() -> None:
     assert "google.com/url" not in result.output
 
 
-def test_bulltard_ingest_prepares_first_view(tmp_path: Path) -> None:
+def test_bulltard_ingest_retrieves_first_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     output_root = tmp_path / "observations" / "bulltard"
+    debug_root = tmp_path / "debug" / "bulltard"
+
+    def fake_fetch_ingest_view(plan, *, debug_root: Path) -> FetchedView:  # noqa: ANN001
+        return FetchedView(
+            plan=plan,
+            final_url="https://app.jamesbulltard.com/ranked_option_trades",
+            status_code=200,
+            content_type="text/html",
+            byte_count=42,
+            debug_path=debug_root / plan.view.output_slug / f"{plan.source_date.isoformat()}.html",
+        )
+
+    monkeypatch.setattr("marketlab.cli.fetch_ingest_view", fake_fetch_ingest_view)
 
     result = CliRunner().invoke(
         app,
@@ -96,6 +114,8 @@ def test_bulltard_ingest_prepares_first_view(tmp_path: Path) -> None:
             "2026-08-24",
             "--output-root",
             str(output_root),
+            "--debug-root",
+            str(debug_root),
         ],
     )
 
@@ -104,4 +124,8 @@ def test_bulltard_ingest_prepares_first_view(tmp_path: Path) -> None:
     assert "route_path=/ranked_option_trades" in result.output
     assert "jamesbulltard.substack.com/redirect" in result.output
     assert "fixture-secret" in result.output
+    assert "final_url=https://app.jamesbulltard.com/ranked_option_trades" in result.output
+    assert "status_code=200" in result.output
+    assert "byte_count=42" in result.output
+    assert str(debug_root / "ranked_option_trades" / "2026-08-24.html") in result.output
     assert str(output_root / "ranked_option_trades" / "2026-08-24.jsonl") in result.output

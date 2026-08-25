@@ -14,7 +14,7 @@ This repository currently contains only the first useful contracts:
 - Minimal `marketlab` CLI entrypoint.
 - Snapshot identity model.
 - Bulltard recap source URL extraction against local recap artifacts.
-- Minimal Bulltard ingest planning for the first targeted view.
+- Minimal Bulltard retrieval for the first targeted view.
 - Loguru-based CLI logging with informative context fields.
 - Focused tests for URL extraction and snapshot serialization.
 
@@ -55,7 +55,7 @@ Inspect a local recap and print the signed source URL:
 uv run marketlab bulltard inspect-recap tests/fixtures/bulltard/recap.html
 ```
 
-Prepare the first targeted ingest path:
+Retrieve the first targeted view for parser bring-up:
 
 ```bash
 uv run marketlab bulltard ingest \
@@ -64,9 +64,9 @@ uv run marketlab bulltard ingest \
   data/inbox/bulltard/recap-2026-08-24.html
 ```
 
-The current `ingest` command resolves the recap, signed access link, view route, and intended
-observation output path. The next implementation step is HTTP retrieval and row parsing for that
-one view.
+The current `ingest` command resolves the recap, signed access link, and view route, then retrieves
+that view into `data/debug/bulltard/...` for parser bring-up. The next implementation step is row
+parsing into `data/observations/bulltard/...`.
 
 If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
 than the database link. For bring-up, use a saved message artifact or a small local text file
