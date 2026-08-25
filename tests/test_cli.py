@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from marketlab import __version__
-from marketlab.bulltard.ingest import FetchedView
+from marketlab.bulltard.ingest import FetchedView, IngestResult
 from marketlab.cli import app, bulltard_app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -48,7 +48,7 @@ def test_ingest_no_args_shows_help_without_missing_option_error() -> None:
     result = CliRunner().invoke(app, ["bulltard", "ingest"])
 
     assert result.exit_code != 0
-    assert "Retrieve one targeted Bulltard view" in result.output
+    assert "Retrieve and parse one targeted Bulltard view" in result.output
     assert "recap_path" in result.output
     assert "--date" in result.output
     assert "Missing option" not in result.output
@@ -92,8 +92,8 @@ def test_bulltard_ingest_retrieves_first_view(
     output_root = tmp_path / "observations" / "bulltard"
     debug_root = tmp_path / "debug" / "bulltard"
 
-    def fake_fetch_ingest_view(plan, *, debug_root: Path) -> FetchedView:  # noqa: ANN001
-        return FetchedView(
+    def fake_ingest_planned_view(plan, *, debug_root: Path) -> IngestResult:  # noqa: ANN001
+        fetched_view = FetchedView(
             plan=plan,
             final_url="https://app.jamesbulltard.com/ranked_option_trades",
             status_code=200,
@@ -101,8 +101,13 @@ def test_bulltard_ingest_retrieves_first_view(
             byte_count=42,
             debug_path=debug_root / plan.view.output_slug / f"{plan.source_date.isoformat()}.html",
         )
+        return IngestResult(
+            fetched_view=fetched_view,
+            row_count=3,
+            observation_path=plan.observation_path,
+        )
 
-    monkeypatch.setattr("marketlab.cli.fetch_ingest_view", fake_fetch_ingest_view)
+    monkeypatch.setattr("marketlab.cli.ingest_planned_view", fake_ingest_planned_view)
 
     result = CliRunner().invoke(
         app,
@@ -128,4 +133,8 @@ def test_bulltard_ingest_retrieves_first_view(
     assert "status_code=200" in result.output
     assert "byte_count=42" in result.output
     assert str(debug_root / "ranked_option_trades" / "2026-08-24.html") in result.output
-    assert str(output_root / "ranked_option_trades" / "2026-08-24.jsonl") in result.output
+    assert (
+        f"observation_path={output_root / 'ranked_option_trades' / '2026-08-24.jsonl'}"
+        in result.output
+    )
+    assert "row_count=3" in result.output

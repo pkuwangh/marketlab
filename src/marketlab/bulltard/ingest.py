@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -11,6 +13,7 @@ import httpx
 from loguru import logger
 
 from marketlab.bulltard.models import BulltardView, IngestPlan
+from marketlab.bulltard.parsers import ParserError, parse_ranked_option_trades
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
 
 DEFAULT_OBSERVATIONS_ROOT = Path("data/observations/bulltard")
@@ -18,6 +21,7 @@ DEFAULT_DEBUG_ROOT = Path("data/debug/bulltard")
 APP_HOST = "app.jamesbulltard.com"
 APP_ORIGIN = f"https://{APP_HOST}"
 HTTP_TIMEOUT_SECONDS = 30.0
+_DATE_IN_NAME_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class IngestError(ValueError):
@@ -36,6 +40,15 @@ class FetchedView:
     debug_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class IngestResult:
+    """Result of one targeted Bulltard ingest run."""
+
+    fetched_view: FetchedView
+    row_count: int
+    observation_path: Path
+
+
 def build_ingest_plan(
     *,
     source_date: date,
@@ -47,6 +60,7 @@ def build_ingest_plan(
 
     if not recap_path.is_file():
         raise IngestError(f"Recap path does not exist or is not a file: {recap_path}")
+    _warn_if_path_date_differs(source_date=source_date, path=recap_path)
 
     logger.bind(
         source_date=source_date.isoformat(),
@@ -134,6 +148,46 @@ def fetch_ingest_view(
             active_client.close()
 
 
+def ingest_planned_view(
+    plan: IngestPlan,
+    *,
+    debug_root: Path = DEFAULT_DEBUG_ROOT,
+    client: httpx.Client | None = None,
+) -> IngestResult:
+    """Fetch, parse, and write observations for one planned Bulltard view."""
+
+    fetched_view = fetch_ingest_view(plan, debug_root=debug_root, client=client)
+    rows = _parse_fetched_view(fetched_view)
+    fetched_view.plan.observation_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(row.to_dict(), sort_keys=True) + "\n" for row in rows)
+    fetched_view.plan.observation_path.write_text(payload, encoding="utf-8")
+
+    logger.bind(
+        source_date=plan.source_date.isoformat(),
+        view=plan.view.value,
+        row_count=len(rows),
+        observation_path=str(plan.observation_path),
+    ).success("Wrote Bulltard observations")
+    return IngestResult(
+        fetched_view=fetched_view,
+        row_count=len(rows),
+        observation_path=plan.observation_path,
+    )
+
+
+def _parse_fetched_view(fetched_view: FetchedView):
+    html = fetched_view.debug_path.read_text(encoding="utf-8")
+    try:
+        match fetched_view.plan.view:
+            case BulltardView.RANKED_OPTION_TRADES:
+                return parse_ranked_option_trades(
+                    html,
+                    source_date=fetched_view.plan.source_date,
+                )
+    except ParserError as exc:
+        raise IngestError(str(exc)) from exc
+
+
 def _get(client: httpx.Client, url: str, *, purpose: str) -> httpx.Response:
     try:
         return client.get(url)
@@ -157,3 +211,19 @@ def _require_usable_response(response: httpx.Response, *, view: BulltardView | N
     if not response.content:
         label = view.value if view is not None else "bootstrap"
         raise IngestError(f"Bulltard {label} response was empty")
+
+
+def _warn_if_path_date_differs(*, source_date: date, path: Path) -> None:
+    match = _DATE_IN_NAME_RE.search(path.name)
+    if not match:
+        return
+    try:
+        path_date = date.fromisoformat(match.group(0))
+    except ValueError:
+        return
+    if path_date != source_date:
+        logger.bind(
+            source_date=source_date.isoformat(),
+            path_date=path_date.isoformat(),
+            path=str(path),
+        ).warning("Recap filename date differs from --date")

@@ -15,7 +15,7 @@ from marketlab.bulltard.ingest import (
     DEFAULT_OBSERVATIONS_ROOT,
     IngestError,
     build_ingest_plan,
-    fetch_ingest_view,
+    ingest_planned_view,
 )
 from marketlab.bulltard.models import BulltardView
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
@@ -125,7 +125,7 @@ def ingest(
         help="Root directory for temporary Bulltard parser debug payloads.",
     ),
 ) -> None:
-    """Retrieve one targeted Bulltard view for parser bring-up."""
+    """Retrieve and parse one targeted Bulltard view."""
 
     try:
         source_date = date.fromisoformat(source_date_value)
@@ -139,24 +139,26 @@ def ingest(
             recap_path=recap_path,
             output_root=output_root,
         )
-        result = fetch_ingest_view(plan, debug_root=debug_root)
+        result = ingest_planned_view(plan, debug_root=debug_root)
     except IngestError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"view={plan.view.value}")
     typer.echo(f"route_path={plan.view.route_path}")
     typer.echo(f"signed_url={plan.signed_url}")
-    typer.echo(f"final_url={result.final_url}")
-    typer.echo(f"status_code={result.status_code}")
-    typer.echo(f"byte_count={result.byte_count}")
-    typer.echo(f"debug_path={result.debug_path}")
-    typer.echo(f"planned_observation_path={plan.observation_path}")
+    typer.echo(f"final_url={result.fetched_view.final_url}")
+    typer.echo(f"status_code={result.fetched_view.status_code}")
+    typer.echo(f"byte_count={result.fetched_view.byte_count}")
+    typer.echo(f"debug_path={result.fetched_view.debug_path}")
+    typer.echo(f"observation_path={result.observation_path}")
+    typer.echo(f"row_count={result.row_count}")
     logger.bind(
         source_date=source_date.isoformat(),
         view=plan.view.value,
-        debug_path=str(result.debug_path),
-        planned_observation_path=str(plan.observation_path),
-    ).info("Row parsing is the next implementation step")
+        debug_path=str(result.fetched_view.debug_path),
+        observation_path=str(result.observation_path),
+        row_count=result.row_count,
+    ).success("Completed Bulltard ingest")
 
 
 if __name__ == "__main__":

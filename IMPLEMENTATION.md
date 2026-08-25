@@ -32,6 +32,8 @@ support for one useful view.
   observation output path.
 - One-view HTTP retrieval via `httpx.Client(follow_redirects=True)`.
 - Temporary debug HTML output under `data/debug/bulltard/...` for parser bring-up.
+- Parser for ranked option trade rows from server-rendered HTML.
+- JSONL observation output under `data/observations/bulltard/ranked_option_trades/`.
 
 ## Current Useful Commands
 
@@ -56,12 +58,12 @@ support for one useful view.
 
 ## Next Slice
 
-Turn the ingest plan into one real Bulltard ingest path:
+Inspect and use the first observation rows:
 
-- Parse structured candidate rows.
-- Write local observations under `data/observations/bulltard/...`.
-- Report row count and visible failures.
-- Keep Playwright out of v0 unless plain HTTP demonstrably fails for that required view.
+- Add a small `bulltard show-observations` or equivalent inspection command if plain `head`/`jq`
+  is not enough.
+- Decide which columns matter for the first large-cap/options-liquidity filter.
+- Start measuring whether the ranked rows create useful candidates.
 
 ## Later
 
