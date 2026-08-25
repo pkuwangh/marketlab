@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+.venv/
+venv/
+.env
+.env.*
+
+build/
+dist/
+*.egg-info/
+
+.DS_Store
+.ipynb_checkpoints/
+
+# Local research state. Code and small fixtures belong in Git; live data does not.
+data/
+reports/
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# Local credentials and capture capabilities.
+secrets/
+credentials/
+*.pem
+*.key
+*.token
