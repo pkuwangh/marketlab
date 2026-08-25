@@ -125,7 +125,7 @@ def looks_like_signed_source_url(url: str) -> bool:
     """Return whether a URL appears to be the signed Substack bootstrap URL.
 
     Gmail exports include several ordinary Substack post/action links with tokens.
-    Those are not useful for database capture. Valid source links are either
+    Those are not useful for database access. Valid source links are either
     Substack redirect capability URLs or links that encode the Bulltard app host.
     """
 

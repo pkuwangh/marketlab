@@ -10,12 +10,8 @@ import typer
 from loguru import logger
 
 from marketlab import __version__
-from marketlab.bulltard.archive import (
-    DEFAULT_OUTPUT_ROOT,
-    ArchiveError,
-    archive_local_artifacts,
-    parse_local_artifact_arg,
-)
+from marketlab.bulltard.ingest import DEFAULT_OBSERVATIONS_ROOT, IngestError, build_ingest_plan
+from marketlab.bulltard.models import BulltardView
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
 from marketlab.logging import configure_logging
 
@@ -35,7 +31,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 bulltard_app = typer.Typer(
-    help="Bulltard source capture and parsing utilities.",
+    help="Bulltard link extraction and ingest utilities.",
     no_args_is_help=True,
 )
 app.add_typer(bulltard_app, name="bulltard")
@@ -68,7 +64,7 @@ def root(
     configure_logging(log_level.value)
 
 
-@bulltard_app.command("inspect-recap")
+@bulltard_app.command("inspect-recap", no_args_is_help=True)
 def inspect_recap(
     recap_path: Path = typer.Argument(
         ...,
@@ -90,33 +86,34 @@ def inspect_recap(
     logger.bind(path=str(recap_path), url=signed_url).success("Inspected Bulltard recap")
 
 
-@bulltard_app.command("archive-local")
-def archive_local(
+@bulltard_app.command("ingest", no_args_is_help=True)
+def ingest(
+    recap_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Local recap text or HTML file containing the signed Bulltard link.",
+    ),
     source_date_value: str = typer.Option(
         ...,
         "--date",
         metavar="YYYY-MM-DD",
-        help="Source date represented by the local artifacts.",
+        help="Source date represented by the recap.",
     ),
-    artifact_args: list[str] = typer.Option(
-        ...,
-        "--artifact",
-        "-a",
-        help="Artifact to archive, in the form route_name=path.",
+    view: BulltardView = typer.Option(
+        BulltardView.RANKED_OPTION_TRADES,
+        "--view",
+        help="Bulltard view to ingest.",
     ),
     output_root: Path = typer.Option(
-        DEFAULT_OUTPUT_ROOT,
+        DEFAULT_OBSERVATIONS_ROOT,
         "--output-root",
         file_okay=False,
-        help="Root directory for raw Bulltard archives.",
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        help="Overwrite an existing local archive for this date.",
+        help="Root directory for structured Bulltard observations.",
     ),
 ) -> None:
-    """Archive already-saved local Bulltard artifacts and write a manifest."""
+    """Prepare a targeted Bulltard ingest run for one useful view."""
 
     try:
         source_date = date.fromisoformat(source_date_value)
@@ -124,23 +121,24 @@ def archive_local(
         raise typer.BadParameter("Date must use YYYY-MM-DD format", param_hint="--date") from exc
 
     try:
-        artifacts = [parse_local_artifact_arg(value) for value in artifact_args]
-        manifest = archive_local_artifacts(
+        plan = build_ingest_plan(
             source_date=source_date,
-            artifacts=artifacts,
+            view=view,
+            recap_path=recap_path,
             output_root=output_root,
-            force=force,
         )
-    except ArchiveError as exc:
+    except IngestError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    manifest_path = output_root / source_date.isoformat() / "capture_manifest.json"
-    typer.echo(str(manifest_path))
+    typer.echo(f"view={plan.view.value}")
+    typer.echo(f"route_path={plan.view.route_path}")
+    typer.echo(f"signed_url={plan.signed_url}")
+    typer.echo(f"output_path={plan.output_path}")
     logger.bind(
         source_date=source_date.isoformat(),
-        manifest_path=str(manifest_path),
-        artifact_count=len(manifest.artifacts),
-    ).success("Archived local Bulltard capture")
+        view=plan.view.value,
+        output_path=str(plan.output_path),
+    ).info("HTTP retrieval and row parsing are the next implementation step")
 
 
 if __name__ == "__main__":

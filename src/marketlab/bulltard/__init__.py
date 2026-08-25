@@ -1,1 +1,1 @@
-"""Bulltard source capture and normalization contracts."""
+"""Bulltard source-link extraction and targeted ingestion support."""

@@ -7,6 +7,15 @@ and the next small slices.
 
 - `53c94e2` - Initialize marketlab baseline.
 - `f846da9` - Add Bulltard recap inspection.
+- `0e82e6e` - Track implementation status.
+- `9d360ef` - Add local Bulltard archiving.
+
+## Course Correction
+
+`archive-local` was implemented too early and does not solve the real problem. The Bulltard app is
+an interface to a subscription database, not something MarketLab should try to mirror. The
+archive-first CLI path has been removed from the working tree and replaced with targeted ingest
+support for one useful view.
 
 ## Implemented
 
@@ -15,48 +24,45 @@ and the next small slices.
 - Repo-local `bin/marketlab` symlink.
 - Loguru CLI logging via `--log-level`.
 - Snapshot identity model.
-- Bulltard capture manifest and raw artifact models.
 - Bulltard recap URL extraction from local text/HTML artifacts.
 - Gmail `https://www.google.com/url?q=...` unwrap for copied/saved email links.
 - Selection of the likely database link when a Gmail export contains many Substack redirects.
-- Bulltard app route discovery and classification for the v0 crawl boundary.
-- Local Bulltard artifact archiving into `data/raw/bulltard/<date>/`.
-- Local capture manifest generation with SHA-256 hashes and byte counts.
-- Local archive overwrite protection unless `--force` is passed.
+- Bulltard ingest planning for `ranked-option-trades`, including view route and intended
+  observation output path.
 
-## Current Commands
+## Current Useful Commands
 
 ```bash
 ./bin/marketlab --help
 ./bin/marketlab bulltard
 ./bin/marketlab bulltard inspect-recap path/to/recap.html
-./bin/marketlab bulltard archive-local --date 2026-08-24 --artifact recap=path/to/recap.html
+./bin/marketlab bulltard ingest --date 2026-08-24 --view ranked-option-trades path/to/recap.html
 ```
 
 ## Decisions
 
-- Keep early functionality local-only until source artifact semantics are solid.
+- Build the shortest end-to-end research loop before adding support infrastructure.
 - Use Typer for the CLI and let Typer handle argument parsing directly.
 - Use Loguru for operational logs.
-- Preserve full local capture URLs by default; do not build premature redaction into the normal path.
+- Preserve full temporary URLs in local bring-up logs by default; keep them out of Git and public
+  reports.
 - Treat Gmail full-page exports as noisy but usable when the database link can be identified by
   nearby context.
-- Do not add live HTTP capture until local parsing and archive behavior are stable.
+- Do not build broad Bulltard crawlers, archive manifests, or storage layers until one targeted
+  ingest path produces useful candidate rows.
 
 ## Next Slice
 
-Implement live-but-bounded HTTP capture:
+Turn the ingest plan into one real Bulltard ingest path:
 
-- Read a local recap artifact for the requested date.
-- Extract the signed Substack redirect.
 - Use one short-lived `httpx.Client(follow_redirects=True)`.
-- Fetch the bootstrap page and archive it as `home.html`.
-- Discover same-origin research routes from the archived page.
-- Keep failures visible in `capture_manifest.json`.
-- Keep Playwright out of v0 unless plain HTTP demonstrably fails for a required route.
+- Retrieve one named view, probably ranked option trades.
+- Parse structured candidate rows.
+- Write local observations under `data/observations/bulltard/...`.
+- Report row count and visible failures.
+- Keep Playwright out of v0 unless plain HTTP demonstrably fails for that required view.
 
 ## Later
 
-- Fetch bounded same-origin research pages.
-- Parse normalized Bulltard tables/signals from archived pages.
+- Add another Bulltard view only after the first view proves useful.
 - Persist candidate lifecycle records and replay historical candidates.

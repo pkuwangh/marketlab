@@ -1,7 +1,7 @@
 # Market Regime & Large-Cap Opportunity Research System
 
-**High-Level Design - Version 0.5**
-**Status:** Design baseline for implementation
+**High-Level Design - Version 0.6**
+**Status:** Core-first design baseline for implementation
 **Primary audience:** coding/research agents and the human researcher
 
 > **Purpose:** Build a durable, testable research process that (1) sizes marginal market exposure while maintaining a permanent long-term core in SPY/QQQ and (2) identifies unusually attractive multi-month opportunities in large, fundamentally viable, options-liquid individual stocks.
@@ -18,6 +18,17 @@
 | Overlay        | Monetize or reshape exposure around the core                     | Covered calls, cash-secured puts, defined-risk option structures |
 
 This document stays at the system-design level while including the implementation architecture needed for reproducibility: Python orchestration, bounded agents, immutable time snapshots, local-first storage, an incremental Codex-to-API runtime path, and a visualization layer designed for both exploratory research and auditable backtests. The research system has two coordinated engines: a SPY/QQQ market-regime engine and a large-cap single-name opportunity engine.
+
+## Implementation Bias
+
+Build the shortest end-to-end loop that can teach us whether the system helps make better market decisions. A new module, schema, capture layer, crawler, cache, or abstraction is justified only when it directly supports one of these near-term outcomes:
+
+- Produce a current market-regime view.
+- Produce a structured large-cap candidate list.
+- Compare candidates or regimes to forward returns and drawdowns.
+- Preserve exactly the source observation needed to reproduce a specific claim.
+
+Do not build infrastructure just because the eventual system might need it. Start with one useful path, measure what it produces, then generalize only around repeated pressure from real research tasks.
 
 # 1. Problem Statement
 
@@ -202,7 +213,7 @@ The highest-value design decision is the mapping layer between a statistical reg
 
 The subscription should be treated as a structured research source rather than a stream of ephemeral trade ideas. It serves two roles: (1) an external market/regime input and (2) the primary candidate generator for the single-name opportunity engine. The objective is to learn which parts of the service contain persistent information and which are noise; a mention or flow event does not automatically pass our own eligibility or validation gates.
 
-## Inputs to capture from each recap
+## Bulltard observations to ingest
 
 - Market regime / SPY commentary and key technical levels.
 
@@ -214,13 +225,15 @@ The subscription should be treated as a structured research source rather than a
 
 - Repeated signals across multiple days (for example, recurrent put-selling or repeated call accumulation).
 
-Because the daily database/link may be ephemeral, **data capture may eventually be automated even though trading remains manual**. The desired automation boundary is ingest/archive/extract only: capture the recap and permitted database snapshot with availability timestamps, then freeze the source artifact for research. There is no broker integration or autonomous order path.
+The goal is not to archive the Bulltard app or mirror its database. The app is an interface to a subscription data source. MarketLab should retrieve the specific views needed for a research question, parse them into structured observations, and store only the observations and provenance needed to reproduce our own analysis.
 
-## Confirmed daily-access and capture mechanics
+Because the daily database/link may be ephemeral, **data ingestion may eventually be automated even though trading remains manual**. The desired automation boundary is ingest/extract only: use the recap link while it is valid, pull a narrow set of relevant rows, and make those rows available for testing candidate quality. There is no broker integration or autonomous order path.
+
+## Confirmed daily-access mechanics
 
 A direct capture test on a current recap materially simplified the ingestion design. The recap contains a signed Substack redirect URL. Opening that original signed URL in a fresh browser succeeds, while opening the clean `https://app.jamesbulltard.com/` destination directly in a fresh browser is blocked. The correct working assumption is therefore **capability/bootstrap access from the original daily email link**, not a persistent personal-browser profile.
 
-The captured application HTML is already useful without browser automation. It contains server-rendered navigation routes such as:
+The application currently exposes useful server-rendered views without browser automation, including:
 
 - `/ranked_option_trades` - Rankings.
 - `/daily_option_trades` - Daily Chart.
@@ -229,9 +242,9 @@ The captured application HTML is already useful without browser automation. It c
 - `/tickers/<TICKER>` - individual ticker pages.
 - `/scanner/?access_token=...` - Scanner, with a separate short-lived access token surfaced by the application page.
 
-The captured HTML also contains actual table values and ticker links rather than only an empty JavaScript shell. Therefore, **plain HTTP collection with one short-lived session is the v0 default**; Playwright is only a fallback if a future route requires JavaScript rendering or browser-only behavior.
+Those views contain table values and ticker links rather than only an empty JavaScript shell. Therefore, **plain HTTP with one short-lived session is the v0 default**; Playwright is only a fallback if a concrete required view cannot be read with plain HTTP.
 
-### Deterministic capture flow
+### Deterministic ingest flow
 
 ```text
 Gmail recap
@@ -240,71 +253,60 @@ extract original signed Substack database URL
     ↓
 create fresh httpx.Client(follow_redirects=True)
     ↓
-GET signed URL and follow bootstrap redirects
+GET signed URL and establish the daily access session
     ↓
-receive Bulltard application page / session state
+request one named Bulltard view needed for the current research task
     ↓
-discover allowed same-origin research links from returned HTML
+parse table rows/signals from that view
     ↓
-fetch bounded routes using the same client
+store structured observations with retrieval metadata
     ↓
-archive immutable raw responses + capture metadata
-    ↓
-parse normalized Bulltard tables/signals
-    ↓
-hand sanitized structured snapshots to research agents
+compare candidates/signals to independent features and future outcomes
 ```
 
-The collector should not require a persistent Chrome profile, copy browser cookies, manufacture tokens, or attempt to bypass expiry. If the server sets cookies during the redirect chain, `httpx.Client` may carry them automatically for that capture session; they are an implementation detail rather than project state. Every trading day should bootstrap from that day's original signed email URL.
+The ingester should not require a persistent Chrome profile, copy browser cookies, manufacture tokens, or attempt to bypass expiry. If the server sets cookies during the redirect chain, `httpx.Client` may carry them automatically for that capture session; they are an implementation detail rather than project state. Every trading day should bootstrap from that day's original signed email URL.
 
-### Link discovery and crawl boundary
+For v0, the durable product is structured observation rows, not copied application pages. Raw HTML/network payloads may be kept as local debug cache when parser development needs them, but they are not the research artifact and should not drive the design.
 
-The collector should **discover links from the authorized HTML instead of assuming a fixed private API**. This makes the ingestion resilient to new tabs while retaining a strict crawl boundary. Suggested v0 policy:
+### Targeted query boundary
 
-- Follow only `app.jamesbulltard.com` links returned by pages reached through the current signed-email bootstrap.
-- Restrict collection to known research route classes plus explicitly discovered ticker pages.
-- Use a small crawl depth (for example, <= 2) and deduplicate canonical URLs.
-- Capture large-cap ticker pages relevant to the eligible universe; do not indiscriminately crawl every small/mid-cap ticker.
+Bulltard ingestion should be query-shaped, not crawler-shaped:
+
+- Request one named view at a time, starting with the view most likely to produce candidate rows.
+- Expand to another view only when it supports a concrete research question.
+- Fetch ticker pages only for candidates that pass the large-cap/options-liquidity gate or are needed to debug that gate.
+- Do not attempt to reconstruct or mirror the full Bulltard database.
 - Preserve query parameters supplied by the application, including scanner access tokens, but never generate or alter access tokens.
-- Record status code, final URL with secrets redacted in ordinary logs, content type, capture time, content hash, source email date, and capture version.
-- If a discovered route fails under plain HTTP, record the failure before invoking the Playwright fallback; do not silently change collection semantics.
+- Record source date, retrieval time, view name, final URL/context, parser version, and row count for every ingested observation set.
 
-This collector is deterministic infrastructure, **not an agent browsing task**. Python should acquire and freeze the source data first. Agents operate on archived/sanitized snapshots afterward so research is reproducible and does not depend on a live expiring link.
+This ingester is deterministic infrastructure, **not an agent browsing task**. Python should acquire and normalize the source observations first. Agents operate on structured rows afterward so research is reproducible and does not depend on a live expiring link.
 
-### Credential and raw-artifact handling
+### Credential and source handling
 
-The original signed Substack URL and scanner token should be treated as short-lived credentials/capabilities even if they expire quickly. They must never be committed to Git, pasted into normal experiment logs, or exposed in generated public reports. Raw email/source capture may retain the original URL when required for provenance, but only inside the gitignored local raw-data area with normal local-file protections. Derived metadata and logs should redact credential-bearing query strings.
+The original signed Substack URL and scanner token should be treated as short-lived capabilities. They must never be committed to Git or exposed in generated public reports. Local operational logs may show exact temporary URLs when useful for debugging; redaction belongs in public/exported artifacts or explicit commands, not as a default feature that obscures local bring-up.
 
-A suggested raw layout is:
+A suggested v0 local layout is:
 
 ```text
-data/raw/bulltard/2026-08-24/
-├── recap.txt
-├── recap.html
-├── capture_manifest.json
-├── home.html
-├── ranked_option_trades.html
-├── daily_option_trades.html
-├── bullish_gainers.html
-├── sector_rankings.html
-├── scanner.html
-└── tickers/
-    ├── INTC.html
-    ├── MU.html
-    └── ...
+data/inbox/bulltard/
+└── recap-2026-08-24.html        # saved email/input, gitignored
+
+data/observations/bulltard/
+└── ranked_option_trades/
+    └── 2026-08-24.jsonl         # parsed rows + minimal provenance, gitignored
 ```
 
-`capture_manifest.json` should identify the source email and collection results while using redacted URLs for ordinary inspection. Each raw payload should have a cryptographic content hash so later parsing/backtests can identify exactly which source snapshot produced a record.
+Move to DuckDB/Parquet when the row volume or query patterns justify it. Do not introduce a database solely to make the skeleton look complete.
 
-### Capture command contract
+### Ingest command contract
 
 The first implementation should expose a boring, repeatable command such as:
 
 ```bash
-marketlab bulltard capture --date 2026-08-24
+marketlab bulltard ingest --date 2026-08-24 --view ranked-option-trades data/inbox/bulltard/recap-2026-08-24.html
 ```
 
-Its responsibility is only to: locate/read the requested recap, extract the signed link, bootstrap access, discover/fetch bounded research pages, validate nonempty responses, hash/archive them, and emit a machine-readable manifest. Parsing and candidate scoring are separate commands/stages. A failed or partial capture must remain visible as a failed/partial snapshot rather than being silently filled from a later date.
+Its responsibility is only to: read the requested recap, extract the signed link, establish daily access, retrieve one named view, parse rows, write structured observations, and report what it produced. Candidate scoring is a separate step. A failed ingest should fail visibly and should not be filled from a later date.
 
 ## Research questions
 
@@ -487,13 +489,13 @@ Every live signal should be recorded before the outcome is known. This turns the
 
 # 11. Development Plan
 
-Build the simplest version that can teach us something, then add sophistication only when justified.
+Build the simplest version that can teach us something, then add sophistication only when justified. A valid implementation slice should increase decision feedback: better candidate rows, better regime evidence, better outcome measurement, or a clearer rejection of a weak idea. Status files, generic storage layers, crawlers, broad manifests, and agent wrappers are secondary unless they unblock that feedback loop.
 
 | **Phase** | **Scope** | **Exit criterion** |
 |---|---|---|
-| 0. Design / bootstrap | Agree on objectives, portfolio constraints, snapshot contract, schemas, repo/storage conventions | Design baseline accepted; deterministic skeleton runs locally |
-| 1. Bulltard archaeology & capture | Extract 2-3 months of recaps/database signals; define structured signal taxonomy; preserve permitted daily source snapshots | We can reproduce historical candidates and quantify signal types |
-| 2. Single-name opportunity MVP | Implement large-cap universe gate, option-liquidity gate, candidate lifecycle, and basic momentum/fundamental validation | We can replay historical candidates and measure 20/40/65/126d outcomes |
+| 0. Design / bootstrap | Agree on objectives, portfolio constraints, and a minimal local CLI | Design baseline accepted; deterministic CLI runs locally |
+| 1. Bulltard signal-ingest MVP | Ingest one useful Bulltard view into structured candidate rows; define the smallest signal taxonomy needed for those rows | We can produce a daily candidate list from a real recap and inspect the rows |
+| 2. Candidate outcome MVP | Add large-cap gate, option-liquidity gate, basic price/relative-strength context, and forward return/drawdown labels | We can replay historical candidates and measure 20/40/65/126d outcomes |
 | 3. Regime MVP | Trend + volatility + breadth; simple interpretable composite for SPY/QQQ | Clear out-of-sample separation of forward outcomes or explicit "no edge" result |
 | 4. Portfolio policy | Map regime to bounded beta/cash risk budget and combine with validated single-name opportunities | Policy adds risk-adjusted value vs. fixed-policy benchmark |
 | 5. Expand evidence | Liquidity/credit, sentiment, richer fundamentals/revisions, Bulltard-derived features, sector context | Each added family shows incremental out-of-sample value |
@@ -542,8 +544,8 @@ Build the simplest version that can teach us something, then add sophistication 
 
 - Which independent fundamental/estimate-revision data sources are practical and point-in-time enough for v0?
 
-| Recommended immediate next step: Bootstrap the data/domain model before tuning scores. Define the portfolio control envelope, official snapshot contract, Bulltard signal taxonomy, large-cap eligibility gate, option-liquidity metrics, candidate lifecycle schema, and the first reproducible historical replay format. |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Recommended immediate next step: implement one end-to-end Bulltard candidate path. From a saved recap, use the signed link to retrieve one useful view, parse candidate rows, save those rows locally, then inspect whether they are the right inputs for large-cap filtering and forward-return testing. |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 # 14. Implementation Infrastructure
 
@@ -553,19 +555,21 @@ The initial infrastructure should optimize for iteration speed and scientific re
 |-------------------------|---------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | Source control          | Private GitHub repository | Code, configuration, schemas, tests, research notes, and model definitions belong in Git; changing market-data files do not.         |
 | Active analytical store | Local DuckDB              | Fast SQL over local research data with almost no operational overhead.                                                               |
-| Columnar history        | Local Parquet files       | Compact, immutable-friendly storage for raw/normalized market observations and research snapshots.                                   |
-| Backup / archive        | Personal Google Drive     | Simple off-machine backup for Parquet partitions, source archives, DB checkpoints, and generated reports.                            |
+| Observation history     | Local JSONL/Parquet first | Simple, inspectable storage for ingested observations and research snapshots; move to richer storage when queries require it.         |
+| Backup                  | Personal Google Drive     | Simple off-machine backup for observation files, DB checkpoints, and generated reports.                                              |
 | Cloud infrastructure    | None initially            | S3/GCS and hosted compute are unnecessary until the system must run while the laptop is offline or serve multiple machines/services. |
 
-**Storage rule:** GitHub stores definitions and code, not the live market database. Google Drive is a backup/archive target, not the location from which DuckDB should be actively opened and mutated.
+**Storage rule:** GitHub stores definitions and code, not the live market database. Google Drive is a backup target, not the location from which DuckDB should be actively opened and mutated.
 
 ## Local data layout
 
 - repo/: source code, tests, notebooks, configs, migration/schema definitions, AGENTS.md, and documentation.
 
-- data/raw/: immutable source observations and source archives. Preserve acquisition/availability timestamps.
+- data/inbox/: user-supplied inputs such as saved recaps. Preserve acquisition/availability timestamps when known.
 
-- data/normalized/: normalized Parquet partitions for index data, single-name prices/fundamentals, option-liquidity observations, and external research signals.
+- data/observations/: structured rows ingested from market data, option-liquidity sources, fundamentals, and external research signals.
+
+- data/debug/: optional raw payload cache for parser replay or troubleshooting. This is not the main research product.
 
 - data/snapshots/: named prior-close, intraday-preview, and official-EOD snapshots, including eligible-universe and opportunity state.
 
@@ -689,21 +693,22 @@ This architecture makes visual research cheap during exploration while keeping t
 
 Treat this document as the architectural source of truth unless a later design version explicitly supersedes it. When implementing:
 
+- Implement the core research loop before support infrastructure. A feature is not done because it stores an artifact; it is done when it produces, scores, explains, or evaluates a market/regime/candidate observation.
 - Keep canonical numerical calculations deterministic and testable. Do not let an LLM/agent silently modify a regime score, historical snapshot, or backtest result.
 - Preserve point-in-time correctness. Every official signal must be reproducible from a named frozen snapshot and explicit feature/model/policy versions.
-- Keep raw source observations immutable; derive normalized data, features, and reports from them.
+- Keep source observations reproducible, but do not equate reproducibility with copying every interface response. Store the smallest durable observations needed to support a research claim; keep raw payloads only when they are necessary for debugging, audit, or parser replay.
 - Keep active research data out of Git. Only code, schemas, configuration, small test fixtures, and documentation belong in the repository.
 - Hide agent implementation details behind a `ResearchAgent` interface so the v0 Codex CLI backend can later be replaced by an API backend.
 - Treat agent output as bounded structured research input. Validate before persistence.
 - Treat Bulltard as a candidate generator/feature source, never as the final decision authority. Persist all extracted candidates and rejected candidates needed for unbiased evaluation.
-- Keep Bulltard acquisition deterministic: bootstrap each day from the original signed recap link, use a short-lived same-session HTTP collector, bound link discovery to authorized same-origin research routes, and use Playwright only as an explicit fallback.
-- Treat signed recap URLs and scanner access tokens as credentials: keep them out of Git and normal logs, redact them in manifests/reports, and never synthesize or modify them.
+- Keep Bulltard acquisition deterministic and targeted: bootstrap each day from the original signed recap link, use a short-lived same-session HTTP client, retrieve named views needed by the current research question, and use Playwright only as an explicit fallback.
+- Treat signed recap URLs and scanner access tokens as temporary capabilities: keep them out of Git and public reports, never synthesize or modify them, and avoid building credential-management features before they are needed.
 - Keep hard single-name eligibility gates (fundamental viability and options liquidity) separate from soft opportunity ranking features.
 - Model candidate lifecycle transitions as immutable episodes with point-in-time evidence; do not rewrite old states after outcomes are known.
 - Prefer simple, interpretable models first. Add features only when they show incremental out-of-sample value.
 - Make every important chart reproducible from a CLI command and versioned inputs; notebooks are exploratory, not the only implementation path.
 - Never execute trades. The system produces research, exposure guidance, and portfolio-policy recommendations only.
-- Add tests for snapshot timing, look-ahead prevention, point-in-time universe membership, option-liquidity gating, candidate lifecycle transitions, feature calculation, model versioning, and persistence before adding automation.
+- Add tests around the behavior being used now. Broaden tests for snapshot timing, look-ahead prevention, point-in-time universe membership, option-liquidity gating, candidate lifecycle transitions, feature calculation, model versioning, and persistence as those components enter the active research loop.
 
 ## Suggested first repository skeleton
 
@@ -727,10 +732,10 @@ marketlab/
 │   ├── options/
 │   ├── fundamentals/
 │   ├── bulltard/
-│   │   ├── capture.py       # signed-link bootstrap + bounded HTTP crawl
-│   │   ├── discovery.py     # same-origin link classification/canonicalization
-│   │   ├── parsers.py       # deterministic normalization of archived pages
-│   │   └── models.py        # capture manifest + Bulltard domain records
+│   │   ├── recaps.py        # signed-link extraction from saved recaps
+│   │   ├── ingest.py        # targeted Bulltard view retrieval
+│   │   ├── parsers.py       # deterministic normalization into observation rows
+│   │   └── models.py        # Bulltard signal/candidate records
 │   ├── agents/
 │   ├── backtest/
 │   ├── visualization/
@@ -748,11 +753,11 @@ marketlab/
 
 - Define the first option-liquidity score/gate: underlying dollar volume, option volume/OI, bid/ask quality, and usable multi-month expirations.
 
-- Implement `marketlab bulltard capture --date YYYY-MM-DD` using `httpx.Client(follow_redirects=True)`: bootstrap from the original signed email link, discover/fetch bounded same-origin research routes, validate responses, redact credential-bearing URLs from routine logs, and archive immutable hashed raw payloads.
+- Implement `marketlab bulltard ingest --date YYYY-MM-DD --view ranked-option-trades path/to/recap.html` using `httpx.Client(follow_redirects=True)`: bootstrap from the original signed email link, retrieve one useful view, parse structured candidate rows, and write local observations.
 
-- Add capture tests for redirect/session continuity, link canonicalization, same-origin/depth boundaries, scanner-token preservation without token mutation, secret redaction, partial-capture reporting, and deterministic manifests.
+- Add tests for the actual first ingest path: recap link extraction, redirect/session continuity if required, parser behavior on a saved fixture, output row schema, and visible failure when the signed link is expired or the expected table is absent.
 
-- Define the Bulltard signal taxonomy and candidate-lifecycle persistence schema before backfilling historical newsletters/database snapshots.
+- Define only the Bulltard signal fields required by the first ingested view. Expand the taxonomy after multiple real examples show repeated structure.
 
 - Choose the first canonical regime visualization: SPY price + regime shading + continuous score + component panels.
 
@@ -762,4 +767,4 @@ marketlab/
 
 - Implement a ResearchAgent interface with a Codex CLI backend, but keep agent-derived outputs outside the canonical numerical signal until their value is demonstrated.
 
-- Decide whether Bulltard database snapshots can be archived locally in a legally/contractually appropriate way for personal research before relying on them as a historical dataset.
+- Decide which Bulltard observation fields are legally/contractually appropriate to store locally for personal research before relying on them as a historical dataset.
