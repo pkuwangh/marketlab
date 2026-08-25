@@ -20,6 +20,9 @@ and the next small slices.
 - Gmail `https://www.google.com/url?q=...` unwrap for copied/saved email links.
 - Selection of the likely database link when a Gmail export contains many Substack redirects.
 - Bulltard app route discovery and classification for the v0 crawl boundary.
+- Local Bulltard artifact archiving into `data/raw/bulltard/<date>/`.
+- Local capture manifest generation with SHA-256 hashes and byte counts.
+- Local archive overwrite protection unless `--force` is passed.
 
 ## Current Commands
 
@@ -27,6 +30,7 @@ and the next small slices.
 ./bin/marketlab --help
 ./bin/marketlab bulltard
 ./bin/marketlab bulltard inspect-recap path/to/recap.html
+./bin/marketlab bulltard archive-local --date 2026-08-24 --artifact recap=path/to/recap.html
 ```
 
 ## Decisions
@@ -37,23 +41,22 @@ and the next small slices.
 - Preserve full local capture URLs by default; do not build premature redaction into the normal path.
 - Treat Gmail full-page exports as noisy but usable when the database link can be identified by
   nearby context.
-- Do not add live HTTP capture until local parsing and archive behavior are tested.
+- Do not add live HTTP capture until local parsing and archive behavior are stable.
 
 ## Next Slice
 
-Implement local archive writing:
+Implement live-but-bounded HTTP capture:
 
-- Accept local HTML/text payloads and a source date.
-- Write payloads under `data/raw/bulltard/<date>/`.
-- Compute SHA-256 and byte count for each artifact.
-- Emit `capture_manifest.json`.
-- Refuse to overwrite existing artifacts unless explicitly forced.
-- Keep this separate from live HTTP fetching.
+- Read a local recap artifact for the requested date.
+- Extract the signed Substack redirect.
+- Use one short-lived `httpx.Client(follow_redirects=True)`.
+- Fetch the bootstrap page and archive it as `home.html`.
+- Discover same-origin research routes from the archived page.
+- Keep failures visible in `capture_manifest.json`.
+- Keep Playwright out of v0 unless plain HTTP demonstrably fails for a required route.
 
 ## Later
 
-- Add live `httpx.Client(follow_redirects=True)` capture from the signed Substack redirect.
-- Discover app routes from captured `home.html`.
 - Fetch bounded same-origin research pages.
 - Parse normalized Bulltard tables/signals from archived pages.
 - Persist candidate lifecycle records and replay historical candidates.

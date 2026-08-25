@@ -55,6 +55,14 @@ Inspect a local recap and print the signed source URL:
 uv run marketlab bulltard inspect-recap tests/fixtures/bulltard/recap.html
 ```
 
+Archive already-saved local artifacts into the raw data layout:
+
+```bash
+uv run marketlab bulltard archive-local \
+  --date 2026-08-24 \
+  --artifact recap=tests/fixtures/bulltard/recap.html
+```
+
 If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
 than the database link. For this command, use a saved message artifact or a small local text file
 containing the copied link address for the recap's database/app button. Gmail may wrap the useful

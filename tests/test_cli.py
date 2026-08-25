@@ -58,3 +58,25 @@ def test_bulltard_inspect_recap_unwraps_gmail_tracking_redirect() -> None:
         in result.output
     )
     assert "google.com/url" not in result.output
+
+
+def test_bulltard_archive_local_outputs_manifest_path(tmp_path: Path) -> None:
+    output_root = tmp_path / "raw" / "bulltard"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "archive-local",
+            "--date",
+            "2026-08-24",
+            "--artifact",
+            f"recap={FIXTURE_DIR / 'recap.html'}",
+            "--output-root",
+            str(output_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert str(output_root / "2026-08-24" / "capture_manifest.json") in result.output
+    assert (output_root / "2026-08-24" / "recap.html").is_file()
