@@ -9,8 +9,6 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Self
 
-from marketlab.bulltard.redaction import redact_url
-
 
 class CaptureStatus(StrEnum):
     """Outcome for one attempted capture artifact."""
@@ -81,12 +79,12 @@ class RawArtifact:
             byte_count=len(payload),
         )
 
-    def to_dict(self, *, redact_urls: bool = True) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "route_name": self.route_name,
             "path": self.path,
-            "source_url": redact_url(self.source_url) if redact_urls else self.source_url,
-            "final_url": redact_url(self.final_url) if redact_urls else self.final_url,
+            "source_url": self.source_url,
+            "final_url": self.final_url,
             "status": self.status.value,
             "status_code": self.status_code,
             "content_type": self.content_type,
@@ -133,14 +131,14 @@ class CaptureManifest:
             artifact.status != CaptureStatus.OK for artifact in self.artifacts
         )
 
-    def to_dict(self, *, redact_urls: bool = True) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "source": "bulltard",
             "source_date": self.source_date.isoformat(),
             "capture_version": self.capture_version,
             "created_at": self.created_at.isoformat(),
             "is_partial": self.is_partial,
-            "artifacts": [artifact.to_dict(redact_urls=redact_urls) for artifact in self.artifacts],
+            "artifacts": [artifact.to_dict() for artifact in self.artifacts],
             "errors": list(self.errors),
         }
 
@@ -156,8 +154,8 @@ class CaptureManifest:
             errors=tuple(data["errors"]),
         )
 
-    def to_json(self, *, redact_urls: bool = True) -> str:
-        return json.dumps(self.to_dict(redact_urls=redact_urls), indent=2, sort_keys=True) + "\n"
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
     @classmethod
     def from_json(cls, text: str) -> Self:

@@ -2,7 +2,6 @@ import hashlib
 from datetime import UTC, date, datetime
 
 from marketlab.bulltard.models import CaptureManifest, RawArtifact
-from marketlab.bulltard.redaction import REDACTED
 
 
 def test_raw_artifact_hashes_payload_bytes() -> None:
@@ -22,7 +21,7 @@ def test_raw_artifact_hashes_payload_bytes() -> None:
     assert artifact.byte_count == len(payload)
 
 
-def test_manifest_json_redacts_urls_by_default() -> None:
+def test_manifest_json_preserves_urls_by_default() -> None:
     artifact = RawArtifact.from_bytes(
         route_name="scanner",
         path="data/raw/bulltard/2026-08-24/scanner.html",
@@ -42,12 +41,11 @@ def test_manifest_json_redacts_urls_by_default() -> None:
 
     text = manifest.to_json()
 
-    assert "super-secret" not in text
-    assert f"access_token={REDACTED}" in text
+    assert "super-secret" in text
     assert artifact.sha256 in text
 
 
-def test_manifest_round_trips_redacted_storage_json() -> None:
+def test_manifest_round_trips_storage_json() -> None:
     artifact = RawArtifact.from_bytes(
         route_name="rankings",
         path="data/raw/bulltard/2026-08-24/ranked_option_trades.html",
