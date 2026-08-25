@@ -13,7 +13,11 @@ import httpx
 from loguru import logger
 
 from marketlab.bulltard.models import BulltardView, IngestPlan
-from marketlab.bulltard.parsers import ParserError, parse_ranked_option_trades
+from marketlab.bulltard.parsers import (
+    ParserError,
+    parse_ranked_option_trades,
+    parse_ticker_flow_history,
+)
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
 
 DEFAULT_OBSERVATIONS_ROOT = Path("data/observations/bulltard")
@@ -62,6 +66,15 @@ class FetchedTickerPage:
     content_type: str | None
     byte_count: int
     debug_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class TickerIngestResult:
+    """Result of one targeted Bulltard ticker ingest run."""
+
+    fetched_page: FetchedTickerPage
+    row_count: int
+    observation_path: Path
 
 
 def build_ingest_plan(
@@ -260,6 +273,54 @@ def fetch_ticker_page(
     finally:
         if owns_client:
             active_client.close()
+
+
+def ingest_ticker_page(
+    *,
+    source_date: date,
+    symbol: str,
+    recap_path: Path,
+    output_root: Path = DEFAULT_OBSERVATIONS_ROOT,
+    debug_root: Path = DEFAULT_DEBUG_ROOT,
+    client: httpx.Client | None = None,
+) -> TickerIngestResult:
+    """Fetch, parse, and write option-flow observations for one Bulltard ticker."""
+
+    fetched_page = fetch_ticker_page(
+        source_date=source_date,
+        symbol=symbol,
+        recap_path=recap_path,
+        debug_root=debug_root,
+        client=client,
+    )
+    html = fetched_page.debug_path.read_text(encoding="utf-8")
+    try:
+        rows = parse_ticker_flow_history(
+            html,
+            source_date=fetched_page.source_date,
+            symbol=fetched_page.symbol,
+        )
+    except ParserError as exc:
+        raise IngestError(str(exc)) from exc
+
+    observation_path = (
+        output_root / "ticker_flow" / fetched_page.symbol / f"{source_date.isoformat()}.jsonl"
+    )
+    observation_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(row.to_dict(), sort_keys=True) + "\n" for row in rows)
+    observation_path.write_text(payload, encoding="utf-8")
+
+    logger.bind(
+        source_date=source_date.isoformat(),
+        symbol=fetched_page.symbol,
+        row_count=len(rows),
+        observation_path=str(observation_path),
+    ).success("Wrote Bulltard ticker-flow observations")
+    return TickerIngestResult(
+        fetched_page=fetched_page,
+        row_count=len(rows),
+        observation_path=observation_path,
+    )
 
 
 def normalize_ticker_symbol(symbol: str) -> str:

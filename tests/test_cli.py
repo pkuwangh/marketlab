@@ -4,7 +4,12 @@ import pytest
 from typer.testing import CliRunner
 
 from marketlab import __version__
-from marketlab.bulltard.ingest import FetchedTickerPage, FetchedView, IngestResult
+from marketlab.bulltard.ingest import (
+    FetchedTickerPage,
+    FetchedView,
+    IngestResult,
+    TickerIngestResult,
+)
 from marketlab.cli import app, bulltard_app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -60,7 +65,7 @@ def test_ticker_no_args_shows_help_without_missing_argument_error() -> None:
     result = CliRunner().invoke(app, ["bulltard", "ticker"])
 
     assert result.exit_code != 0
-    assert "Retrieve one Bulltard ticker detail page" in result.output
+    assert "Retrieve and parse one Bulltard ticker detail page" in result.output
     assert "symbol" in result.output
     assert "recap_path" in result.output
     assert "--date" in result.output
@@ -156,16 +161,18 @@ def test_bulltard_ticker_fetches_detail_page(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    output_root = tmp_path / "observations" / "bulltard"
     debug_root = tmp_path / "debug" / "bulltard"
 
-    def fake_fetch_ticker_page(
+    def fake_ingest_ticker_page(
         *,
         source_date,
         symbol: str,
         recap_path: Path,
+        output_root: Path,
         debug_root: Path,
-    ) -> FetchedTickerPage:
-        return FetchedTickerPage(
+    ) -> TickerIngestResult:
+        fetched_page = FetchedTickerPage(
             source_date=source_date,
             symbol=symbol.upper(),
             signed_url="https://jamesbulltard.substack.com/redirect?token=fixture-secret",
@@ -175,8 +182,13 @@ def test_bulltard_ticker_fetches_detail_page(
             byte_count=123,
             debug_path=debug_root / "tickers" / symbol.upper() / f"{source_date.isoformat()}.html",
         )
+        return TickerIngestResult(
+            fetched_page=fetched_page,
+            row_count=3,
+            observation_path=output_root / "ticker_flow" / symbol.upper() / "2026-08-25.jsonl",
+        )
 
-    monkeypatch.setattr("marketlab.cli.fetch_ticker_page", fake_fetch_ticker_page)
+    monkeypatch.setattr("marketlab.cli.ingest_ticker_page", fake_ingest_ticker_page)
 
     result = CliRunner().invoke(
         app,
@@ -187,6 +199,8 @@ def test_bulltard_ticker_fetches_detail_page(
             str(FIXTURE_DIR / "recap.html"),
             "--date",
             "2026-08-25",
+            "--output-root",
+            str(output_root),
             "--debug-root",
             str(debug_root),
         ],
@@ -199,3 +213,5 @@ def test_bulltard_ticker_fetches_detail_page(
     assert "status_code=200" in result.output
     assert "byte_count=123" in result.output
     assert str(debug_root / "tickers" / "INTC" / "2026-08-25.html") in result.output
+    assert str(output_root / "ticker_flow" / "INTC" / "2026-08-25.jsonl") in result.output
+    assert "row_count=3" in result.output

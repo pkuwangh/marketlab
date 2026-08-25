@@ -68,7 +68,7 @@ The current `ingest` command resolves the recap, signed access link, and view ro
 view into `data/debug/bulltard/...` for parser troubleshooting, and writes parsed rows to
 `data/observations/bulltard/...`.
 
-Retrieve the Bulltard detail page for one ticker from the same signed recap access:
+Retrieve and parse the Bulltard detail page for one ticker from the same signed recap access:
 
 ```bash
 uv run marketlab bulltard ticker \
@@ -78,6 +78,8 @@ uv run marketlab bulltard ticker \
 ```
 
 Ticker pages are currently saved under `data/debug/bulltard/tickers/<SYMBOL>/`.
+Ticker flow observations are written under
+`data/observations/bulltard/ticker_flow/<SYMBOL>/`.
 
 If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
 than the database link. For bring-up, use a saved message artifact or a small local text file

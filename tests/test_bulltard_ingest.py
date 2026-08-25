@@ -11,6 +11,7 @@ from marketlab.bulltard.ingest import (
     fetch_ingest_view,
     fetch_ticker_page,
     ingest_planned_view,
+    ingest_ticker_page,
     normalize_ticker_symbol,
 )
 from marketlab.bulltard.models import BulltardView
@@ -205,6 +206,48 @@ def test_fetch_ticker_page_uses_signed_link_session_and_writes_debug_html(
     assert result.byte_count == len(b"<html>INTC details</html>")
     assert result.debug_path == debug_root / "tickers" / "INTC" / "2026-08-25.html"
     assert result.debug_path.read_bytes() == b"<html>INTC details</html>"
+
+
+def test_ingest_ticker_page_writes_ticker_flow_observations(tmp_path: Path) -> None:
+    output_root = tmp_path / "observations" / "bulltard"
+    debug_root = tmp_path / "debug" / "bulltard"
+    ticker_html = (FIXTURE_DIR / "ticker_intc.html").read_bytes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "jamesbulltard.substack.com":
+            return httpx.Response(302, headers={"location": "https://app.jamesbulltard.com/"})
+        if request.url.path == "/":
+            return httpx.Response(200, content=b"<html>home</html>")
+        if request.url.path == "/tickers/INTC":
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=ticker_html)
+        return httpx.Response(404)
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    )
+
+    result = ingest_ticker_page(
+        source_date=date(2026, 8, 25),
+        symbol="intc",
+        recap_path=FIXTURE_DIR / "recap.html",
+        output_root=output_root,
+        debug_root=debug_root,
+        client=client,
+    )
+
+    assert result.row_count == 3
+    assert result.fetched_page.symbol == "INTC"
+    assert result.observation_path == output_root / "ticker_flow" / "INTC" / "2026-08-25.jsonl"
+    rows = [
+        json.loads(line)
+        for line in result.observation_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["symbol"] == "INTC"
+    assert rows[0]["order_type"] == "Calls Bought"
+    assert rows[0]["premium"] == 808000.0
+    assert rows[1]["is_older"] is True
+    assert rows[2]["side"] == "bearish"
 
 
 def test_normalize_ticker_symbol_rejects_path_like_input() -> None:

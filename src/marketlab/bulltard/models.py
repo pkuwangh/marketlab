@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -79,4 +79,38 @@ class RankedOptionTradeObservation:
             "avg_dte": self.avg_dte,
             "score": self.score,
             "premium": self.premium,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TickerFlowObservation:
+    """One option-flow row from a Bulltard ticker detail page."""
+
+    source_date: date
+    symbol: str
+    traded_at: datetime
+    order_type: str
+    side: RankedTradeSide | None
+    contract: str
+    contract_type: str | None
+    expiry: date
+    contracts: int
+    premium: float
+    is_older: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": "bulltard",
+            "source_date": self.source_date.isoformat(),
+            "view": "ticker-flow-history",
+            "symbol": self.symbol,
+            "traded_at": self.traded_at.isoformat(timespec="minutes"),
+            "order_type": self.order_type,
+            "side": self.side.value if self.side else None,
+            "contract": self.contract,
+            "contract_type": self.contract_type,
+            "expiry": self.expiry.isoformat(),
+            "contracts": self.contracts,
+            "premium": self.premium,
+            "is_older": self.is_older,
         }

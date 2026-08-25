@@ -35,6 +35,8 @@ support for one useful view.
 - Parser for ranked option trade rows from server-rendered HTML.
 - JSONL observation output under `data/observations/bulltard/ranked_option_trades/`.
 - Targeted Bulltard ticker-page retrieval under `data/debug/bulltard/tickers/<SYMBOL>/`.
+- Parser for ticker detail flow-history rows.
+- JSONL ticker-flow output under `data/observations/bulltard/ticker_flow/<SYMBOL>/`.
 
 ## Current Useful Commands
 
@@ -64,7 +66,6 @@ Inspect and use the first observation rows:
 
 - Add a small `bulltard show-observations` or equivalent inspection command if plain `head`/`jq`
   is not enough.
-- Inspect one fetched ticker page and parse the smallest useful ticker-level table or summary.
 - Decide which columns matter for the first large-cap/options-liquidity filter.
 - Start measuring whether the ranked rows create useful candidates.
 

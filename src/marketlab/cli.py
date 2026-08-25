@@ -15,8 +15,8 @@ from marketlab.bulltard.ingest import (
     DEFAULT_OBSERVATIONS_ROOT,
     IngestError,
     build_ingest_plan,
-    fetch_ticker_page,
     ingest_planned_view,
+    ingest_ticker_page,
 )
 from marketlab.bulltard.models import BulltardView
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
@@ -184,32 +184,42 @@ def ticker(
         file_okay=False,
         help="Root directory for temporary Bulltard parser debug payloads.",
     ),
+    output_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for structured Bulltard observations.",
+    ),
 ) -> None:
-    """Retrieve one Bulltard ticker detail page."""
+    """Retrieve and parse one Bulltard ticker detail page."""
 
     source_date = _parse_source_date(source_date_value)
     try:
-        result = fetch_ticker_page(
+        result = ingest_ticker_page(
             source_date=source_date,
             symbol=symbol,
             recap_path=recap_path,
+            output_root=output_root,
             debug_root=debug_root,
         )
     except IngestError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    typer.echo(f"symbol={result.symbol}")
-    typer.echo(f"signed_url={result.signed_url}")
-    typer.echo(f"final_url={result.final_url}")
-    typer.echo(f"status_code={result.status_code}")
-    typer.echo(f"byte_count={result.byte_count}")
-    typer.echo(f"debug_path={result.debug_path}")
+    typer.echo(f"symbol={result.fetched_page.symbol}")
+    typer.echo(f"signed_url={result.fetched_page.signed_url}")
+    typer.echo(f"final_url={result.fetched_page.final_url}")
+    typer.echo(f"status_code={result.fetched_page.status_code}")
+    typer.echo(f"byte_count={result.fetched_page.byte_count}")
+    typer.echo(f"debug_path={result.fetched_page.debug_path}")
+    typer.echo(f"observation_path={result.observation_path}")
+    typer.echo(f"row_count={result.row_count}")
     logger.bind(
         source_date=source_date.isoformat(),
-        symbol=result.symbol,
-        debug_path=str(result.debug_path),
-        byte_count=result.byte_count,
-    ).success("Completed Bulltard ticker fetch")
+        symbol=result.fetched_page.symbol,
+        debug_path=str(result.fetched_page.debug_path),
+        observation_path=str(result.observation_path),
+        row_count=result.row_count,
+    ).success("Completed Bulltard ticker ingest")
 
 
 def _parse_source_date(value: str) -> date:
