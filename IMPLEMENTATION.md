@@ -40,6 +40,8 @@ support for one useful view.
 - Candidate review table that combines ranked rows with any available ticker-flow observations.
 - Trades Of Interest parser for local recap files.
 - JSONL recap-interest output under `data/observations/bulltard/trades_of_interest/`.
+- `bulltard daily` orchestration command for ranked ingest, recap-interest parsing, selected ticker
+  detail ingestion, and candidate review output.
 
 ## Current Useful Commands
 
@@ -51,6 +53,7 @@ support for one useful view.
 ./bin/marketlab bulltard ticker INTC --date 2026-08-24 path/to/recap.html
 ./bin/marketlab bulltard trades-of-interest --date 2026-08-24 path/to/recap.html
 ./bin/marketlab bulltard candidates --date 2026-08-24
+./bin/marketlab bulltard daily --date 2026-08-24 path/to/recap.html
 ```
 
 ## Decisions

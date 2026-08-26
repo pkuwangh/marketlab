@@ -1,10 +1,12 @@
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from marketlab import __version__
+from marketlab.bulltard.daily import DailyWorkflowResult
 from marketlab.bulltard.ingest import (
     FetchedTickerPage,
     FetchedView,
@@ -12,6 +14,7 @@ from marketlab.bulltard.ingest import (
     TickerIngestResult,
     TradesOfInterestIngestResult,
 )
+from marketlab.bulltard.models import BulltardView, IngestPlan
 from marketlab.cli import app, bulltard_app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -90,6 +93,17 @@ def test_trades_of_interest_no_args_shows_help_without_missing_argument_error() 
 
     assert result.exit_code != 0
     assert "Parse recap Trades Of Interest into observations" in result.output
+    assert "recap_path" in result.output
+    assert "--date" in result.output
+    assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_daily_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "daily"])
+
+    assert result.exit_code != 0
+    assert "Run the daily Bulltard candidate workflow" in result.output
     assert "recap_path" in result.output
     assert "--date" in result.output
     assert "Missing argument" not in result.output
@@ -329,6 +343,100 @@ def test_bulltard_trades_of_interest_writes_observations(
     assert str(output_root / "trades_of_interest" / "2026-08-26.jsonl") in result.output
     assert "row_count=2" in result.output
     assert "symbols=META,XAR" in result.output
+
+
+def test_bulltard_daily_runs_candidate_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "observations" / "bulltard"
+    debug_root = tmp_path / "debug" / "bulltard"
+
+    def fake_run_daily_workflow(
+        *,
+        source_date,
+        recap_path: Path,
+        output_root: Path,
+        debug_root: Path,
+        fetch_ticker_details: bool,
+        top_ranked: int,
+        extra_tickers: tuple[str, ...],
+        limit: int,
+    ) -> DailyWorkflowResult:
+        assert source_date == date(2026, 8, 26)
+        assert fetch_ticker_details is True
+        assert top_ranked == 1
+        assert extra_tickers == ("INTC", "META")
+        assert limit == 12
+        plan = IngestPlan(
+            source_date=source_date,
+            view=BulltardView.RANKED_OPTION_TRADES,
+            recap_path=recap_path,
+            signed_url="https://jamesbulltard.substack.com/redirect?token=fixture-secret",
+            observation_path=output_root / "ranked_option_trades" / "2026-08-26.jsonl",
+        )
+        ranked_result = IngestResult(
+            fetched_view=FetchedView(
+                plan=plan,
+                final_url="https://app.jamesbulltard.com/ranked_option_trades",
+                status_code=200,
+                content_type="text/html",
+                byte_count=42,
+                debug_path=debug_root / "ranked_option_trades" / "2026-08-26.html",
+            ),
+            row_count=40,
+            observation_path=plan.observation_path,
+        )
+        interest_result = TradesOfInterestIngestResult(
+            source_date=source_date,
+            recap_path=recap_path,
+            row_count=2,
+            observation_path=output_root / "trades_of_interest" / "2026-08-26.jsonl",
+            symbols=("META", "XAR"),
+        )
+        return DailyWorkflowResult(
+            source_date=source_date,
+            ranked_result=ranked_result,
+            trades_of_interest_result=interest_result,
+            ticker_results=(),
+            ticker_failures=(),
+            candidate_table="symbol  source\nMETA    ranked+interest#1",
+        )
+
+    monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "daily",
+            str(FIXTURE_DIR / "recap_with_trades_of_interest.html"),
+            "--date",
+            "2026-08-26",
+            "--output-root",
+            str(output_root),
+            "--debug-root",
+            str(debug_root),
+            "--top-ranked",
+            "1",
+            "--ticker",
+            "INTC,META",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (
+        f"ranked_observation_path={output_root / 'ranked_option_trades' / '2026-08-26.jsonl'}"
+        in result.output
+    )
+    assert "ranked_row_count=40" in result.output
+    assert (
+        f"trades_of_interest_path={output_root / 'trades_of_interest' / '2026-08-26.jsonl'}"
+        in result.output
+    )
+    assert "trades_of_interest_symbols=META,XAR" in result.output
+    assert "ticker_detail_symbols=" in result.output
+    assert "META    ranked+interest#1" in result.output
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:

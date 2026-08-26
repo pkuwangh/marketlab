@@ -95,6 +95,19 @@ Review ranked candidates and attach any ticker-flow detail already collected:
 uv run marketlab bulltard candidates --date 2026-08-26
 ```
 
+Run the daily Bulltard loop in one command:
+
+```bash
+uv run marketlab bulltard daily \
+  --date 2026-08-26 \
+  data/inbox/bulltard/recap-2026-08-26.html
+```
+
+By default, `daily` ingests the ranked database view, parses Trades Of Interest from the recap,
+fetches ticker detail for the Trades Of Interest names, and prints the candidate review table.
+Use `--top-ranked N` to also fetch detail for the top N ranked database names, or
+`--no-ticker-details` to skip detail fetches.
+
 If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
 than the database link. For bring-up, use a saved message artifact or a small local text file
 containing the copied link address for the recap's database/app button. Gmail may wrap the useful

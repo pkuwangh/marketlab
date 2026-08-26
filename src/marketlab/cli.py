@@ -15,6 +15,7 @@ from marketlab.bulltard.candidates import (
     format_candidate_reviews,
     load_candidate_reviews,
 )
+from marketlab.bulltard.daily import DailyWorkflowError, run_daily_workflow
 from marketlab.bulltard.ingest import (
     DEFAULT_DEBUG_ROOT,
     DEFAULT_OBSERVATIONS_ROOT,
@@ -315,11 +316,106 @@ def trades_of_interest(
     ).success("Completed Bulltard Trades Of Interest ingest")
 
 
+@bulltard_app.command("daily", no_args_is_help=True)
+def daily(
+    recap_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Local recap text or HTML file containing the signed Bulltard link.",
+    ),
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Source date represented by the recap.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for structured Bulltard observations.",
+    ),
+    debug_root: Path = typer.Option(
+        DEFAULT_DEBUG_ROOT,
+        "--debug-root",
+        file_okay=False,
+        help="Root directory for temporary Bulltard parser debug payloads.",
+    ),
+    fetch_ticker_details: bool = typer.Option(
+        True,
+        "--ticker-details/--no-ticker-details",
+        help="Fetch ticker detail pages for selected candidates.",
+    ),
+    top_ranked: int = typer.Option(
+        0,
+        "--top-ranked",
+        min=0,
+        help="Also fetch ticker details for the top N ranked database names.",
+    ),
+    extra_tickers_value: str = typer.Option(
+        "",
+        "--ticker",
+        help="Comma-separated extra ticker symbols to fetch details for.",
+    ),
+    limit: int = typer.Option(
+        12,
+        "--limit",
+        min=1,
+        help="Maximum number of candidates to show in the review table.",
+    ),
+) -> None:
+    """Run the daily Bulltard candidate workflow."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = run_daily_workflow(
+            source_date=source_date,
+            recap_path=recap_path,
+            output_root=output_root,
+            debug_root=debug_root,
+            fetch_ticker_details=fetch_ticker_details,
+            top_ranked=top_ranked,
+            extra_tickers=_parse_extra_tickers(extra_tickers_value),
+            limit=limit,
+        )
+    except DailyWorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"ranked_observation_path={result.ranked_result.observation_path}")
+    typer.echo(f"ranked_row_count={result.ranked_result.row_count}")
+    if result.trades_of_interest_result is None:
+        typer.echo("trades_of_interest_row_count=0")
+        typer.echo("trades_of_interest_symbols=")
+    else:
+        typer.echo(f"trades_of_interest_path={result.trades_of_interest_result.observation_path}")
+        typer.echo(f"trades_of_interest_row_count={result.trades_of_interest_result.row_count}")
+        typer.echo(
+            f"trades_of_interest_symbols={','.join(result.trades_of_interest_result.symbols)}"
+        )
+    typer.echo(
+        "ticker_detail_symbols="
+        + ",".join(ticker_result.fetched_page.symbol for ticker_result in result.ticker_results)
+    )
+    if result.ticker_failures:
+        typer.echo(
+            "ticker_detail_failures="
+            + ",".join(f"{failure.symbol}:{failure.error}" for failure in result.ticker_failures)
+        )
+    typer.echo("")
+    typer.echo(result.candidate_table)
+
+
 def _parse_source_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise typer.BadParameter("Date must use YYYY-MM-DD format", param_hint="--date") from exc
+
+
+def _parse_extra_tickers(value: str) -> tuple[str, ...]:
+    return tuple(symbol.strip() for symbol in value.split(",") if symbol.strip())
 
 
 if __name__ == "__main__":
