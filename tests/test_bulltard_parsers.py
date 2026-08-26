@@ -47,7 +47,7 @@ def test_parse_ticker_flow_history_reads_visible_table_rows() -> None:
 
     rows = parse_ticker_flow_history(html, source_date=date(2026, 8, 25), symbol="intc")
 
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert rows[0].to_dict() == {
         "source": "bulltard",
         "source_date": "2026-08-25",
@@ -70,6 +70,7 @@ def test_parse_ticker_flow_history_reads_visible_table_rows() -> None:
     assert rows[1].is_older is True
     assert rows[2].side == RankedTradeSide.BEARISH
     assert rows[2].premium == 1000000.0
+    assert rows[3].premium is None
 
 
 def test_parse_ticker_flow_history_fails_when_rows_are_absent() -> None:

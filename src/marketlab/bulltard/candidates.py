@@ -145,7 +145,12 @@ def _review_from_observation_rows(
     )
     flow_rows = tuple(_read_jsonl(ticker_flow_path)) if ticker_flow_path.is_file() else ()
     latest_flow = max(flow_rows, key=lambda flow: str(flow.get("traded_at", "")), default=None)
-    top_flow = max(flow_rows, key=lambda flow: float(flow.get("premium") or 0.0), default=None)
+    priced_flow_rows = tuple(flow for flow in flow_rows if flow.get("premium") is not None)
+    top_flow = max(
+        priced_flow_rows,
+        key=lambda flow: float(flow["premium"]),
+        default=None,
+    )
 
     return CandidateReview(
         source_date=source_date,
@@ -202,7 +207,7 @@ def _format_flow(flow: dict[str, Any] | None, *, include_time: bool) -> str:
         str(flow.get("order_type", "")),
         str(flow.get("contract", "")),
         str(flow.get("expiry", "")),
-        format_money(float(flow.get("premium") or 0.0)),
+        _format_optional_money(flow.get("premium")),
     ]
     if include_time:
         parts.insert(0, str(flow.get("traded_at", "")).replace("T", " "))
@@ -215,6 +220,12 @@ def _format_source(review: CandidateReview) -> str:
     if review.score is not None:
         return "ranked"
     return f"interest#{review.interest_rank}" if review.interest_rank is not None else "-"
+
+
+def _format_optional_money(value: object) -> str:
+    if value is None:
+        return "-"
+    return format_money(float(value))
 
 
 def _format_interest_note(review: CandidateReview) -> str:

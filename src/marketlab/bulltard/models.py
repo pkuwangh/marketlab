@@ -95,7 +95,7 @@ class TickerFlowObservation:
     contract_type: str | None
     expiry: date
     contracts: int
-    premium: float
+    premium: float | None
     is_older: bool
 
     def to_dict(self) -> dict[str, Any]:

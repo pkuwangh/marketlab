@@ -237,7 +237,7 @@ def test_ingest_ticker_page_writes_ticker_flow_observations(tmp_path: Path) -> N
         client=client,
     )
 
-    assert result.row_count == 3
+    assert result.row_count == 4
     assert result.fetched_page.symbol == "INTC"
     assert result.observation_path == output_root / "ticker_flow" / "INTC" / "2026-08-25.jsonl"
     rows = [
@@ -249,6 +249,7 @@ def test_ingest_ticker_page_writes_ticker_flow_observations(tmp_path: Path) -> N
     assert rows[0]["premium"] == 808000.0
     assert rows[1]["is_older"] is True
     assert rows[2]["side"] == "bearish"
+    assert rows[3]["premium"] is None
 
 
 def test_ingest_trades_of_interest_writes_recap_observations(tmp_path: Path) -> None:

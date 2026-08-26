@@ -283,8 +283,10 @@ def _parse_int_text(value: str, label: str) -> int:
         raise ParserError(f"Invalid integer for {label}: {value}") from exc
 
 
-def _parse_money_text(value: str, label: str) -> float:
+def _parse_money_text(value: str, label: str) -> float | None:
     normalized = value.replace(",", "").strip()
+    if normalized in {"", "-", "\u2013", "\u2014"}:
+        return None
     match = _MONEY_RE.fullmatch(normalized)
     if not match:
         raise ParserError(f"Invalid money value for {label}: {value}")
