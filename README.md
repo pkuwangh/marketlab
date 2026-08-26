@@ -81,6 +81,12 @@ Ticker pages are currently saved under `data/debug/bulltard/tickers/<SYMBOL>/`.
 Ticker flow observations are written under
 `data/observations/bulltard/ticker_flow/<SYMBOL>/`.
 
+Review ranked candidates and attach any ticker-flow detail already collected:
+
+```bash
+uv run marketlab bulltard candidates --date 2026-08-26
+```
+
 If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
 than the database link. For bring-up, use a saved message artifact or a small local text file
 containing the copied link address for the recap's database/app button. Gmail may wrap the useful

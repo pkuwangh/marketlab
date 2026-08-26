@@ -10,6 +10,11 @@ import typer
 from loguru import logger
 
 from marketlab import __version__
+from marketlab.bulltard.candidates import (
+    CandidateReviewError,
+    format_candidate_reviews,
+    load_candidate_reviews,
+)
 from marketlab.bulltard.ingest import (
     DEFAULT_DEBUG_ROOT,
     DEFAULT_OBSERVATIONS_ROOT,
@@ -220,6 +225,48 @@ def ticker(
         observation_path=str(result.observation_path),
         row_count=result.row_count,
     ).success("Completed Bulltard ticker ingest")
+
+
+@bulltard_app.command("candidates", no_args_is_help=True)
+def candidates(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Source date to review.",
+    ),
+    observations_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--observations-root",
+        file_okay=False,
+        help="Root directory containing structured Bulltard observations.",
+    ),
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        min=1,
+        help="Maximum number of ranked candidates to show.",
+    ),
+) -> None:
+    """Review Bulltard ranked candidates with available ticker flow."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        reviews = load_candidate_reviews(
+            source_date=source_date,
+            observations_root=observations_root,
+            limit=limit,
+        )
+    except CandidateReviewError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(format_candidate_reviews(reviews))
+    missing_detail_count = sum(1 for review in reviews if review.detail_rows == 0)
+    logger.bind(
+        source_date=source_date.isoformat(),
+        candidate_count=len(reviews),
+        missing_detail_count=missing_detail_count,
+    ).success("Reviewed Bulltard candidates")
 
 
 def _parse_source_date(value: str) -> date:

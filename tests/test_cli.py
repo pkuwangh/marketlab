@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,16 @@ def test_ticker_no_args_shows_help_without_missing_argument_error() -> None:
     assert "recap_path" in result.output
     assert "--date" in result.output
     assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_candidates_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "candidates"])
+
+    assert result.exit_code != 0
+    assert "Review Bulltard ranked candidates with available ticker flow" in result.output
+    assert "--date" in result.output
+    assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -215,3 +226,61 @@ def test_bulltard_ticker_fetches_detail_page(
     assert str(debug_root / "tickers" / "INTC" / "2026-08-25.html") in result.output
     assert str(output_root / "ticker_flow" / "INTC" / "2026-08-25.jsonl") in result.output
     assert "row_count=3" in result.output
+
+
+def test_bulltard_candidates_outputs_review_table(tmp_path: Path) -> None:
+    observations_root = tmp_path / "observations" / "bulltard"
+    ranked_path = observations_root / "ranked_option_trades" / "2026-08-26.jsonl"
+    ticker_flow_path = observations_root / "ticker_flow" / "INTC" / "2026-08-26.jsonl"
+    _write_jsonl(
+        ranked_path,
+        [
+            {
+                "source_date": "2026-08-26",
+                "symbol": "INTC",
+                "side": "bullish",
+                "score": 19.0,
+                "trade_count": 31,
+                "premium": 74508194.5,
+            }
+        ],
+    )
+    _write_jsonl(
+        ticker_flow_path,
+        [
+            {
+                "symbol": "INTC",
+                "traded_at": "2026-08-26T10:15",
+                "order_type": "Puts Sold",
+                "contract": "100P",
+                "expiry": "2027-06-17",
+                "premium": 2650000.0,
+            }
+        ],
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "candidates",
+            "--date",
+            "2026-08-26",
+            "--observations-root",
+            str(observations_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "symbol" in result.output
+    assert "INTC" in result.output
+    assert "$74.5M" in result.output
+    assert "Puts Sold 100P" in result.output
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )

@@ -37,6 +37,7 @@ support for one useful view.
 - Targeted Bulltard ticker-page retrieval under `data/debug/bulltard/tickers/<SYMBOL>/`.
 - Parser for ticker detail flow-history rows.
 - JSONL ticker-flow output under `data/observations/bulltard/ticker_flow/<SYMBOL>/`.
+- Candidate review table that combines ranked rows with any available ticker-flow observations.
 
 ## Current Useful Commands
 
@@ -46,6 +47,7 @@ support for one useful view.
 ./bin/marketlab bulltard inspect-recap path/to/recap.html
 ./bin/marketlab bulltard ingest --date 2026-08-24 --view ranked-option-trades path/to/recap.html
 ./bin/marketlab bulltard ticker INTC --date 2026-08-24 path/to/recap.html
+./bin/marketlab bulltard candidates --date 2026-08-24
 ```
 
 ## Decisions
