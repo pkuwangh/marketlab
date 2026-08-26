@@ -114,3 +114,23 @@ class TickerFlowObservation:
             "premium": self.premium,
             "is_older": self.is_older,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TradeOfInterestObservation:
+    """One ticker note from the recap's Trades Of Interest section."""
+
+    source_date: date
+    rank: int
+    symbol: str
+    note: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": "bulltard",
+            "source_date": self.source_date.isoformat(),
+            "view": "trades-of-interest",
+            "rank": self.rank,
+            "symbol": self.symbol,
+            "note": self.note,
+        }

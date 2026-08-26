@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from marketlab.bulltard.recaps import (
     SignedSourceUrlError,
     extract_signed_source_url,
+    extract_trades_of_interest,
     extract_urls,
     looks_like_signed_source_url,
 )
@@ -65,3 +67,27 @@ def test_extract_signed_source_url_ignores_gmail_export_substack_post_links() ->
 
     with pytest.raises(SignedSourceUrlError, match="No signed Bulltard app bootstrap URL found"):
         extract_signed_source_url(recap)
+
+
+def test_extract_trades_of_interest_reads_ordered_list_items() -> None:
+    recap = (FIXTURE_DIR / "trades_of_interest.html").read_text(encoding="utf-8")
+
+    rows = extract_trades_of_interest(recap, source_date=date(2026, 8, 26))
+
+    assert len(rows) == 2
+    assert rows[0].to_dict() == {
+        "source": "bulltard",
+        "source_date": "2026-08-26",
+        "view": "trades-of-interest",
+        "rank": 1,
+        "symbol": "META",
+        "note": "$640 calls in October bought 3000x for 10.25. First note.",
+    }
+    assert rows[1].symbol == "XAR"
+    assert rows[1].note.startswith("$240 puts sold")
+
+
+def test_extract_trades_of_interest_returns_empty_tuple_when_section_is_absent() -> None:
+    rows = extract_trades_of_interest("<html></html>", source_date=date(2026, 8, 26))
+
+    assert rows == ()

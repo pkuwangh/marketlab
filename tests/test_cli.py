@@ -10,6 +10,7 @@ from marketlab.bulltard.ingest import (
     FetchedView,
     IngestResult,
     TickerIngestResult,
+    TradesOfInterestIngestResult,
 )
 from marketlab.cli import app, bulltard_app
 
@@ -81,6 +82,17 @@ def test_candidates_no_args_shows_help_without_missing_option_error() -> None:
     assert "Review Bulltard ranked candidates with available ticker flow" in result.output
     assert "--date" in result.output
     assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_trades_of_interest_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "trades-of-interest"])
+
+    assert result.exit_code != 0
+    assert "Parse recap Trades Of Interest into observations" in result.output
+    assert "recap_path" in result.output
+    assert "--date" in result.output
+    assert "Missing argument" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -276,6 +288,47 @@ def test_bulltard_candidates_outputs_review_table(tmp_path: Path) -> None:
     assert "INTC" in result.output
     assert "$74.5M" in result.output
     assert "Puts Sold 100P" in result.output
+
+
+def test_bulltard_trades_of_interest_writes_observations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "observations" / "bulltard"
+
+    def fake_ingest_trades_of_interest(
+        *,
+        source_date,
+        recap_path: Path,
+        output_root: Path,
+    ) -> TradesOfInterestIngestResult:
+        return TradesOfInterestIngestResult(
+            source_date=source_date,
+            recap_path=recap_path,
+            row_count=2,
+            observation_path=output_root / "trades_of_interest" / "2026-08-26.jsonl",
+            symbols=("META", "XAR"),
+        )
+
+    monkeypatch.setattr("marketlab.cli.ingest_trades_of_interest", fake_ingest_trades_of_interest)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "trades-of-interest",
+            str(FIXTURE_DIR / "trades_of_interest.html"),
+            "--date",
+            "2026-08-26",
+            "--output-root",
+            str(output_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert str(output_root / "trades_of_interest" / "2026-08-26.jsonl") in result.output
+    assert "row_count=2" in result.output
+    assert "symbols=META,XAR" in result.output
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:

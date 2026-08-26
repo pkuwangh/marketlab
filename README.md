@@ -81,6 +81,14 @@ Ticker pages are currently saved under `data/debug/bulltard/tickers/<SYMBOL>/`.
 Ticker flow observations are written under
 `data/observations/bulltard/ticker_flow/<SYMBOL>/`.
 
+Parse the recap's Trades Of Interest section into local observations:
+
+```bash
+uv run marketlab bulltard trades-of-interest \
+  --date 2026-08-26 \
+  data/inbox/bulltard/recap-2026-08-26.html
+```
+
 Review ranked candidates and attach any ticker-flow detail already collected:
 
 ```bash

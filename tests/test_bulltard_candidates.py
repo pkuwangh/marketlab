@@ -14,6 +14,7 @@ from marketlab.bulltard.candidates import (
 def test_load_candidate_reviews_attaches_available_ticker_flow(tmp_path: Path) -> None:
     observations_root = tmp_path / "observations" / "bulltard"
     ranked_path = observations_root / "ranked_option_trades" / "2026-08-26.jsonl"
+    interest_path = observations_root / "trades_of_interest" / "2026-08-26.jsonl"
     flow_path = observations_root / "ticker_flow" / "INTC" / "2026-08-26.jsonl"
     _write_jsonl(
         ranked_path,
@@ -41,6 +42,23 @@ def test_load_candidate_reviews_attaches_available_ticker_flow(tmp_path: Path) -
                 "score": -2.0,
                 "trade_count": 2,
                 "premium": 2433676.0,
+            },
+        ],
+    )
+    _write_jsonl(
+        interest_path,
+        [
+            {
+                "source_date": "2026-08-26",
+                "rank": 1,
+                "symbol": "META",
+                "note": "$640 calls in October bought 3000x for 10.25. First note.",
+            },
+            {
+                "source_date": "2026-08-26",
+                "rank": 2,
+                "symbol": "INTC",
+                "note": "Also discussed in the recap.",
             },
         ],
     )
@@ -73,6 +91,9 @@ def test_load_candidate_reviews_attaches_available_ticker_flow(tmp_path: Path) -
     )
 
     assert [review.symbol for review in reviews] == ["INTC", "AKAM"]
+    assert reviews[0].ranked_side == "bullish"
+    assert reviews[0].interest_rank == 2
+    assert reviews[0].interest_note == "Also discussed in the recap."
     assert reviews[0].detail_rows == 2
     assert reviews[0].latest_flow is not None
     assert reviews[0].latest_flow["contract"] == "100P"
@@ -80,11 +101,13 @@ def test_load_candidate_reviews_attaches_available_ticker_flow(tmp_path: Path) -
     assert reviews[0].top_flow["premium"] == 2650000.0
     assert reviews[1].detail_rows == 0
     assert reviews[1].latest_flow is None
+    assert reviews[1].interest_rank is None
 
 
 def test_format_candidate_reviews_outputs_compact_table(tmp_path: Path) -> None:
     observations_root = tmp_path / "observations" / "bulltard"
     ranked_path = observations_root / "ranked_option_trades" / "2026-08-26.jsonl"
+    interest_path = observations_root / "trades_of_interest" / "2026-08-26.jsonl"
     flow_path = observations_root / "ticker_flow" / "INTC" / "2026-08-26.jsonl"
     _write_jsonl(
         ranked_path,
@@ -96,6 +119,17 @@ def test_format_candidate_reviews_outputs_compact_table(tmp_path: Path) -> None:
                 "score": 19.0,
                 "trade_count": 31,
                 "premium": 74508194.5,
+            }
+        ],
+    )
+    _write_jsonl(
+        interest_path,
+        [
+            {
+                "source_date": "2026-08-26",
+                "rank": 1,
+                "symbol": "INTC",
+                "note": "Bullish recap note that should appear in the review table.",
             }
         ],
     )
@@ -121,13 +155,42 @@ def test_format_candidate_reviews_outputs_compact_table(tmp_path: Path) -> None:
     output = format_candidate_reviews(reviews)
 
     assert "symbol" in output
+    assert "ranked+interest#1" in output
     assert "INTC" in output
     assert "$74.5M" in output
+    assert "Bullish recap note" in output
     assert "2026-08-26 10:15 Puts Sold 100P 2027-06-17 $2.6M" in output
 
 
-def test_load_candidate_reviews_fails_when_ranked_file_is_missing(tmp_path: Path) -> None:
-    with pytest.raises(CandidateReviewError, match="Ranked observations not found"):
+def test_load_candidate_reviews_includes_interest_only_tickers(tmp_path: Path) -> None:
+    observations_root = tmp_path / "observations" / "bulltard"
+    interest_path = observations_root / "trades_of_interest" / "2026-08-26.jsonl"
+    _write_jsonl(
+        interest_path,
+        [
+            {
+                "source_date": "2026-08-26",
+                "rank": 1,
+                "symbol": "META",
+                "note": "$640 calls in October bought 3000x for 10.25. First note.",
+            }
+        ],
+    )
+
+    reviews = load_candidate_reviews(
+        source_date=date(2026, 8, 26),
+        observations_root=observations_root,
+        limit=10,
+    )
+
+    assert len(reviews) == 1
+    assert reviews[0].symbol == "META"
+    assert reviews[0].score is None
+    assert reviews[0].interest_rank == 1
+
+
+def test_load_candidate_reviews_fails_when_no_candidate_files_exist(tmp_path: Path) -> None:
+    with pytest.raises(CandidateReviewError, match="No candidate observations found"):
         load_candidate_reviews(
             source_date=date(2026, 8, 26),
             observations_root=tmp_path / "observations" / "bulltard",

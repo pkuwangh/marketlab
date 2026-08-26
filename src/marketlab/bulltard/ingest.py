@@ -18,7 +18,11 @@ from marketlab.bulltard.parsers import (
     parse_ranked_option_trades,
     parse_ticker_flow_history,
 )
-from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
+from marketlab.bulltard.recaps import (
+    SignedSourceUrlError,
+    extract_signed_source_url,
+    extract_trades_of_interest,
+)
 
 DEFAULT_OBSERVATIONS_ROOT = Path("data/observations/bulltard")
 DEFAULT_DEBUG_ROOT = Path("data/debug/bulltard")
@@ -75,6 +79,17 @@ class TickerIngestResult:
     fetched_page: FetchedTickerPage
     row_count: int
     observation_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class TradesOfInterestIngestResult:
+    """Result of parsing Trades Of Interest from one recap."""
+
+    source_date: date
+    recap_path: Path
+    row_count: int
+    observation_path: Path
+    symbols: tuple[str, ...]
 
 
 def build_ingest_plan(
@@ -320,6 +335,50 @@ def ingest_ticker_page(
         fetched_page=fetched_page,
         row_count=len(rows),
         observation_path=observation_path,
+    )
+
+
+def ingest_trades_of_interest(
+    *,
+    source_date: date,
+    recap_path: Path,
+    output_root: Path = DEFAULT_OBSERVATIONS_ROOT,
+) -> TradesOfInterestIngestResult:
+    """Parse and write Trades Of Interest observations from one local recap."""
+
+    if not recap_path.is_file():
+        raise IngestError(f"Recap path does not exist or is not a file: {recap_path}")
+    _warn_if_path_date_differs(source_date=source_date, path=recap_path)
+
+    logger.bind(
+        source_date=source_date.isoformat(),
+        recap_path=str(recap_path),
+    ).info("Parsing Bulltard Trades Of Interest")
+    rows = extract_trades_of_interest(
+        recap_path.read_text(encoding="utf-8"),
+        source_date=source_date,
+    )
+    if not rows:
+        raise IngestError("No Trades Of Interest entries found in recap")
+
+    observation_path = output_root / "trades_of_interest" / f"{source_date.isoformat()}.jsonl"
+    observation_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(row.to_dict(), sort_keys=True) + "\n" for row in rows)
+    observation_path.write_text(payload, encoding="utf-8")
+
+    symbols = tuple(row.symbol for row in rows)
+    logger.bind(
+        source_date=source_date.isoformat(),
+        row_count=len(rows),
+        symbols=symbols,
+        observation_path=str(observation_path),
+    ).success("Wrote Bulltard Trades Of Interest observations")
+    return TradesOfInterestIngestResult(
+        source_date=source_date,
+        recap_path=recap_path,
+        row_count=len(rows),
+        observation_path=observation_path,
+        symbols=symbols,
     )
 
 

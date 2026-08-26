@@ -12,6 +12,7 @@ from marketlab.bulltard.ingest import (
     fetch_ticker_page,
     ingest_planned_view,
     ingest_ticker_page,
+    ingest_trades_of_interest,
     normalize_ticker_symbol,
 )
 from marketlab.bulltard.models import BulltardView
@@ -248,6 +249,28 @@ def test_ingest_ticker_page_writes_ticker_flow_observations(tmp_path: Path) -> N
     assert rows[0]["premium"] == 808000.0
     assert rows[1]["is_older"] is True
     assert rows[2]["side"] == "bearish"
+
+
+def test_ingest_trades_of_interest_writes_recap_observations(tmp_path: Path) -> None:
+    output_root = tmp_path / "observations" / "bulltard"
+
+    result = ingest_trades_of_interest(
+        source_date=date(2026, 8, 26),
+        recap_path=FIXTURE_DIR / "trades_of_interest.html",
+        output_root=output_root,
+    )
+
+    assert result.row_count == 2
+    assert result.symbols == ("META", "XAR")
+    assert result.observation_path == output_root / "trades_of_interest" / "2026-08-26.jsonl"
+    rows = [
+        json.loads(line)
+        for line in result.observation_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["symbol"] == "META"
+    assert rows[0]["rank"] == 1
+    assert rows[0]["note"].startswith("$640 calls")
+    assert rows[1]["symbol"] == "XAR"
 
 
 def test_normalize_ticker_symbol_rejects_path_like_input() -> None:

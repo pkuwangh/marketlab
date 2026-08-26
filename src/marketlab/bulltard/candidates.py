@@ -19,10 +19,12 @@ class CandidateReview:
 
     source_date: date
     symbol: str
-    side: str
-    score: float
-    trade_count: int
-    ranked_premium: float
+    ranked_side: str | None
+    score: float | None
+    trade_count: int | None
+    ranked_premium: float | None
+    interest_rank: int | None
+    interest_note: str | None
     detail_rows: int
     latest_flow: dict[str, Any] | None
     top_flow: dict[str, Any] | None
@@ -38,23 +40,38 @@ def load_candidate_reviews(
     """Load ranked candidates and attach ticker-flow details when present."""
 
     ranked_path = observations_root / "ranked_option_trades" / f"{source_date.isoformat()}.jsonl"
-    if not ranked_path.is_file():
-        raise CandidateReviewError(f"Ranked observations not found: {ranked_path}")
+    interest_path = observations_root / "trades_of_interest" / f"{source_date.isoformat()}.jsonl"
 
-    ranked_rows = tuple(_read_jsonl(ranked_path))
-    if not ranked_rows:
-        raise CandidateReviewError(f"Ranked observations file is empty: {ranked_path}")
+    ranked_rows = tuple(_read_jsonl(ranked_path)) if ranked_path.is_file() else ()
+    interest_rows = tuple(_read_jsonl(interest_path)) if interest_path.is_file() else ()
+    if not ranked_rows and not interest_rows:
+        raise CandidateReviewError(
+            f"No candidate observations found: {ranked_path} or {interest_path}"
+        )
 
-    reviews = [_review_from_ranked_row(row, source_date, observations_root) for row in ranked_rows]
-    reviews.sort(
-        key=lambda review: (
-            abs(review.score),
-            review.ranked_premium,
-            review.trade_count,
-            review.symbol,
-        ),
-        reverse=True,
-    )
+    interest_by_symbol = {str(row["symbol"]).upper(): row for row in interest_rows}
+    reviews = []
+    for ranked_row in ranked_rows:
+        symbol = str(ranked_row["symbol"]).upper()
+        reviews.append(
+            _review_from_observation_rows(
+                source_date=source_date,
+                observations_root=observations_root,
+                ranked_row=ranked_row,
+                interest_row=interest_by_symbol.pop(symbol, None),
+            )
+        )
+    for interest_row in sorted(interest_by_symbol.values(), key=lambda row: int(row["rank"])):
+        reviews.append(
+            _review_from_observation_rows(
+                source_date=source_date,
+                observations_root=observations_root,
+                ranked_row=None,
+                interest_row=interest_row,
+            )
+        )
+
+    reviews.sort(key=_review_sort_key)
     return tuple(reviews[:limit])
 
 
@@ -67,11 +84,13 @@ def format_candidate_reviews(reviews: tuple[CandidateReview, ...]) -> str:
     rows = [
         [
             "symbol",
+            "source",
             "side",
             "score",
             "trades",
             "premium",
             "detail",
+            "interest_note",
             "latest_flow",
             "top_flow",
         ]
@@ -80,11 +99,13 @@ def format_candidate_reviews(reviews: tuple[CandidateReview, ...]) -> str:
         rows.append(
             [
                 review.symbol,
-                review.side,
-                f"{review.score:g}",
-                str(review.trade_count),
-                format_money(review.ranked_premium),
+                _format_source(review),
+                review.ranked_side or "-",
+                f"{review.score:g}" if review.score is not None else "-",
+                str(review.trade_count) if review.trade_count is not None else "-",
+                format_money(review.ranked_premium) if review.ranked_premium is not None else "-",
                 str(review.detail_rows),
+                _format_interest_note(review),
                 _format_flow(review.latest_flow, include_time=True),
                 _format_flow(review.top_flow, include_time=False),
             ]
@@ -105,12 +126,20 @@ def format_money(value: float) -> str:
     return f"${value:.0f}"
 
 
-def _review_from_ranked_row(
-    row: dict[str, Any],
+def _review_from_observation_rows(
+    *,
     source_date: date,
     observations_root: Path,
+    ranked_row: dict[str, Any] | None,
+    interest_row: dict[str, Any] | None,
 ) -> CandidateReview:
-    symbol = str(row["symbol"]).upper()
+    if ranked_row is None and interest_row is None:
+        raise CandidateReviewError("Candidate review requires at least one observation row")
+
+    source_row = ranked_row if ranked_row is not None else interest_row
+    if source_row is None:
+        raise CandidateReviewError("Candidate review requires at least one observation row")
+    symbol = str(source_row["symbol"]).upper()
     ticker_flow_path = (
         observations_root / "ticker_flow" / symbol / f"{source_date.isoformat()}.jsonl"
     )
@@ -121,15 +150,29 @@ def _review_from_ranked_row(
     return CandidateReview(
         source_date=source_date,
         symbol=symbol,
-        side=str(row["side"]),
-        score=float(row["score"]),
-        trade_count=int(row["trade_count"]),
-        ranked_premium=float(row["premium"]),
+        ranked_side=str(ranked_row["side"]) if ranked_row is not None else None,
+        score=float(ranked_row["score"]) if ranked_row is not None else None,
+        trade_count=int(ranked_row["trade_count"]) if ranked_row is not None else None,
+        ranked_premium=float(ranked_row["premium"]) if ranked_row is not None else None,
+        interest_rank=int(interest_row["rank"]) if interest_row is not None else None,
+        interest_note=str(interest_row["note"]) if interest_row is not None else None,
         detail_rows=len(flow_rows),
         latest_flow=latest_flow,
         top_flow=top_flow,
         ticker_flow_path=ticker_flow_path,
     )
+
+
+def _review_sort_key(review: CandidateReview) -> tuple[int, float, float, int, str]:
+    if review.score is not None:
+        return (
+            0,
+            -abs(review.score),
+            -(review.ranked_premium or 0.0),
+            review.interest_rank or 9999,
+            review.symbol,
+        )
+    return (1, 0.0, 0.0, review.interest_rank or 9999, review.symbol)
 
 
 def _read_jsonl(path: Path) -> tuple[dict[str, Any], ...]:
@@ -158,6 +201,27 @@ def _format_flow(flow: dict[str, Any] | None, *, include_time: bool) -> str:
     if include_time:
         parts.insert(0, str(flow.get("traded_at", "")).replace("T", " "))
     return " ".join(part for part in parts if part)
+
+
+def _format_source(review: CandidateReview) -> str:
+    if review.score is not None and review.interest_rank is not None:
+        return f"ranked+interest#{review.interest_rank}"
+    if review.score is not None:
+        return "ranked"
+    return f"interest#{review.interest_rank}" if review.interest_rank is not None else "-"
+
+
+def _format_interest_note(review: CandidateReview) -> str:
+    if not review.interest_note:
+        return "-"
+    return _clip(review.interest_note, 90)
+
+
+def _clip(value: str, limit: int) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 3]}..."
 
 
 def _format_table(rows: list[list[str]]) -> str:

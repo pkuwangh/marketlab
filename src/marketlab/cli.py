@@ -22,6 +22,7 @@ from marketlab.bulltard.ingest import (
     build_ingest_plan,
     ingest_planned_view,
     ingest_ticker_page,
+    ingest_trades_of_interest,
 )
 from marketlab.bulltard.models import BulltardView
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
@@ -267,6 +268,51 @@ def candidates(
         candidate_count=len(reviews),
         missing_detail_count=missing_detail_count,
     ).success("Reviewed Bulltard candidates")
+
+
+@bulltard_app.command("trades-of-interest", no_args_is_help=True)
+def trades_of_interest(
+    recap_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Local recap text or HTML file.",
+    ),
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Source date represented by the recap.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for structured Bulltard observations.",
+    ),
+) -> None:
+    """Parse recap Trades Of Interest into observations."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = ingest_trades_of_interest(
+            source_date=source_date,
+            recap_path=recap_path,
+            output_root=output_root,
+        )
+    except IngestError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"observation_path={result.observation_path}")
+    typer.echo(f"row_count={result.row_count}")
+    typer.echo(f"symbols={','.join(result.symbols)}")
+    logger.bind(
+        source_date=source_date.isoformat(),
+        row_count=result.row_count,
+        symbols=result.symbols,
+        observation_path=str(result.observation_path),
+    ).success("Completed Bulltard Trades Of Interest ingest")
 
 
 def _parse_source_date(value: str) -> date:

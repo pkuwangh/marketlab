@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from loguru import logger
 
+from marketlab.bulltard.models import TradeOfInterestObservation
+
 _RAW_URL_RE = re.compile(r"https?://[^\s\"'<>]+")
+_TRADE_OF_INTEREST_ITEM_RE = re.compile(
+    "^\\s*([A-Z][A-Z0-9.-]{0,15})\\s*(?:-|:|\\u2013|\\u2014)\\s*(.+)$"
+)
 _TRAILING_PUNCTUATION = ".,);]"
 _BULLTARD_APP_HOST = "app.jamesbulltard.com"
 _CONTEXT_CHARS = 500
@@ -78,6 +84,88 @@ class _LinkParser(HTMLParser):
         self._text_tail = f"{self._text_tail} {normalized}"[-_CONTEXT_CHARS:]
 
 
+class _TradesOfInterestParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.items: list[str] = []
+        self._strong_depth = 0
+        self._strong_parts: list[str] = []
+        self._awaiting_list = False
+        self._list_depth = 0
+        self._in_item = False
+        self._seen_item_paragraph = False
+        self._paragraph_depth = 0
+        self._item_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+
+        if self._strong_depth:
+            self._strong_depth += 1
+        elif tag == "strong":
+            self._strong_depth = 1
+            self._strong_parts = []
+
+        if self._awaiting_list and tag == "ol":
+            self._awaiting_list = False
+            self._list_depth = 1
+            return
+
+        if not self._list_depth:
+            return
+
+        if tag == "ol":
+            self._list_depth += 1
+            return
+
+        if tag == "li" and not self._in_item:
+            self._in_item = True
+            self._seen_item_paragraph = False
+            self._item_parts = []
+            return
+
+        if self._paragraph_depth:
+            self._paragraph_depth += 1
+
+        if tag == "p" and self._in_item and not self._seen_item_paragraph:
+            self._paragraph_depth = 1
+            self._seen_item_paragraph = True
+            self._item_parts = []
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_data(self, data: str) -> None:
+        if self._strong_depth:
+            self._strong_parts.append(data)
+        if self._paragraph_depth:
+            self._item_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+
+        if self._strong_depth:
+            self._strong_depth -= 1
+            if not self._strong_depth and _normalize_text("".join(self._strong_parts)).lower() == (
+                "trades of interest"
+            ):
+                self._awaiting_list = True
+
+        if self._paragraph_depth:
+            self._paragraph_depth -= 1
+            if not self._paragraph_depth:
+                item = _normalize_text("".join(self._item_parts))
+                if item:
+                    self.items.append(item)
+
+        if tag == "li" and self._in_item:
+            self._in_item = False
+
+        if self._list_depth and tag == "ol":
+            self._list_depth -= 1
+
+
 def extract_urls(text_or_html: str) -> tuple[str, ...]:
     """Extract HTTP URLs from plain text and simple HTML attributes."""
 
@@ -85,6 +173,41 @@ def extract_urls(text_or_html: str) -> tuple[str, ...]:
 
     logger.bind(url_count=len(urls)).info("Extracted URLs from recap")
     return tuple(urls)
+
+
+def extract_trades_of_interest(
+    text_or_html: str,
+    *,
+    source_date: date,
+) -> tuple[TradeOfInterestObservation, ...]:
+    """Extract ticker notes from a recap's Trades Of Interest section."""
+
+    parser = _TradesOfInterestParser()
+    parser.feed(text_or_html)
+
+    observations: list[TradeOfInterestObservation] = []
+    for rank, item in enumerate(parser.items, start=1):
+        match = _TRADE_OF_INTEREST_ITEM_RE.match(item)
+        if not match:
+            logger.bind(rank=rank, text=item[:120]).warning(
+                "Skipped Trades Of Interest item without a leading ticker"
+            )
+            continue
+        observations.append(
+            TradeOfInterestObservation(
+                source_date=source_date,
+                rank=rank,
+                symbol=match.group(1).upper(),
+                note=match.group(2),
+            )
+        )
+
+    logger.bind(
+        source_date=source_date.isoformat(),
+        item_count=len(parser.items),
+        observation_count=len(observations),
+    ).info("Extracted Trades Of Interest from recap")
+    return tuple(observations)
 
 
 def extract_signed_source_url(text_or_html: str) -> str:
