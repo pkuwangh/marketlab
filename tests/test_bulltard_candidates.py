@@ -90,18 +90,17 @@ def test_load_candidate_reviews_attaches_available_ticker_flow(tmp_path: Path) -
         limit=2,
     )
 
-    assert [review.symbol for review in reviews] == ["INTC", "AKAM"]
-    assert reviews[0].ranked_side == "bullish"
-    assert reviews[0].interest_rank == 2
-    assert reviews[0].interest_note == "Also discussed in the recap."
-    assert reviews[0].detail_rows == 2
-    assert reviews[0].latest_flow is not None
-    assert reviews[0].latest_flow["contract"] == "100P"
-    assert reviews[0].top_flow is not None
-    assert reviews[0].top_flow["premium"] == 2650000.0
-    assert reviews[1].detail_rows == 0
-    assert reviews[1].latest_flow is None
-    assert reviews[1].interest_rank is None
+    assert [review.symbol for review in reviews] == ["META", "INTC"]
+    assert reviews[0].score is None
+    assert reviews[0].interest_rank == 1
+    assert reviews[1].ranked_side == "bullish"
+    assert reviews[1].interest_rank == 2
+    assert reviews[1].interest_note == "Also discussed in the recap."
+    assert reviews[1].detail_rows == 2
+    assert reviews[1].latest_flow is not None
+    assert reviews[1].latest_flow["contract"] == "100P"
+    assert reviews[1].top_flow is not None
+    assert reviews[1].top_flow["premium"] == 2650000.0
 
 
 def test_format_candidate_reviews_outputs_compact_table(tmp_path: Path) -> None:

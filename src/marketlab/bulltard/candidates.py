@@ -163,16 +163,22 @@ def _review_from_observation_rows(
     )
 
 
-def _review_sort_key(review: CandidateReview) -> tuple[int, float, float, int, str]:
-    if review.score is not None:
+def _review_sort_key(review: CandidateReview) -> tuple[int, int, float, float, str]:
+    if review.interest_rank is not None:
         return (
             0,
-            -abs(review.score),
+            review.interest_rank,
+            -(abs(review.score) if review.score is not None else 0.0),
             -(review.ranked_premium or 0.0),
-            review.interest_rank or 9999,
             review.symbol,
         )
-    return (1, 0.0, 0.0, review.interest_rank or 9999, review.symbol)
+    return (
+        1,
+        9999,
+        -(abs(review.score) if review.score is not None else 0.0),
+        -(review.ranked_premium or 0.0),
+        review.symbol,
+    )
 
 
 def _read_jsonl(path: Path) -> tuple[dict[str, Any], ...]:
