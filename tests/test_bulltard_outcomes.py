@@ -75,6 +75,50 @@ def test_compute_bulltard_outcomes_summarizes_candidate_cohorts(tmp_path: Path) 
     assert "status:confirm" in result.table
 
 
+def test_compute_bulltard_outcomes_uses_adjusted_close_for_returns(tmp_path: Path) -> None:
+    source_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_candidate_validation_snapshots(
+        (
+            _snapshot(
+                source_date=source_date,
+                symbol="ADJ",
+                bulltard_source="ranked",
+                validation_status="confirm",
+                detail_rows=1,
+            ),
+        ),
+        snapshot_root=snapshot_root,
+        source_date=source_date,
+    )
+    _write_price_history(
+        price_root,
+        symbol="ADJ",
+        start=source_date,
+        closes=[100.0 for _index in range(30)],
+        adjusted_closes=[100 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=source_date,
+        closes=[100.0 for _index in range(30)],
+        adjusted_closes=[100.0 for _index in range(30)],
+    )
+
+    result = compute_bulltard_outcomes(
+        start_date=source_date,
+        end_date=source_date,
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(20,),
+    )
+
+    assert round(result.outcomes[0].return_value or 0.0, 4) == 0.2
+    assert round(result.outcomes[0].relative_strength_spy or 0.0, 4) == 0.2
+
+
 def _summary_row(result, cohort: str):
     return next(row for row in result.summary_rows if row.cohort == cohort)
 
@@ -123,7 +167,9 @@ def _write_price_history(
     symbol: str,
     start: date,
     closes: list[float],
+    adjusted_closes: list[float | None] | None = None,
 ) -> None:
+    adjusted_values = adjusted_closes or [None for _close in closes]
     write_price_observations(
         tuple(
             DailyPriceObservation(
@@ -136,6 +182,7 @@ def _write_price_history(
                 low=close - 1.0,
                 close=close,
                 volume=1_000_000,
+                adjusted_close=adjusted_values[index],
             )
             for index, close in enumerate(closes)
         ),

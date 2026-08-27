@@ -72,6 +72,17 @@ def test_prices_fetch_no_args_shows_help_without_missing_argument_error() -> Non
     assert "Traceback" not in result.output
 
 
+def test_prices_fetch_yahoo_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["prices", "fetch-yahoo"])
+
+    assert result.exit_code != 0
+    assert "Fetch daily OHLCV observations from Yahoo Finance" in result.output
+    assert "SYMBOL[,SYMBOL...]" in result.output
+    assert "--start" in result.output
+    assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_prices_import_csv_no_args_shows_help_without_missing_argument_error() -> None:
     result = CliRunner().invoke(app, ["prices", "import-csv"])
 
@@ -550,6 +561,56 @@ def test_prices_fetch_outputs_written_observation_paths(
 
     assert result.exit_code == 0
     assert "symbol=META source_symbol=meta.us row_count=100" in result.output
+    assert str(output_root / "META.jsonl") in result.output
+
+
+def test_prices_fetch_yahoo_outputs_written_observation_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "prices"
+
+    def fake_fetch_and_write_yahoo_daily_prices(
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+    ) -> tuple[PriceFetchResult, ...]:
+        assert symbols == ("META", "SPY")
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 27)
+        return (
+            PriceFetchResult(
+                symbol="META",
+                source_symbol="META",
+                observation_path=output_root / "META.jsonl",
+                row_count=420,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_yahoo_daily_prices",
+        fake_fetch_and_write_yahoo_daily_prices,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "prices",
+            "fetch-yahoo",
+            "META,SPY",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-27",
+            "--output-root",
+            str(output_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "symbol=META source_symbol=META row_count=420" in result.output
     assert str(output_root / "META.jsonl") in result.output
 
 

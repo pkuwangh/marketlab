@@ -402,10 +402,10 @@ def _lookback_return(
     past_index = index - lookback
     if past_index < 0:
         return None
-    past_close = history[past_index].close
+    past_close = history[past_index].return_close
     if past_close == 0:
         return None
-    return history[index].close / past_close - 1.0
+    return history[index].return_close / past_close - 1.0
 
 
 def _moving_average_distance(
@@ -417,11 +417,11 @@ def _moving_average_distance(
     start = index - window + 1
     if start < 0:
         return None
-    closes = [row.close for row in history[start : index + 1]]
+    closes = [row.return_close for row in history[start : index + 1]]
     average = sum(closes) / len(closes)
     if average == 0:
         return None
-    return history[index].close / average - 1.0
+    return history[index].return_close / average - 1.0
 
 
 def _drawdown_from_high(
@@ -431,10 +431,10 @@ def _drawdown_from_high(
     window: int,
 ) -> float | None:
     start = max(0, index - window + 1)
-    high = max(row.high for row in history[start : index + 1])
+    high = max(row.return_close for row in history[start : index + 1])
     if high == 0:
         return None
-    return history[index].close / high - 1.0
+    return history[index].return_close / high - 1.0
 
 
 def _relative_strength(

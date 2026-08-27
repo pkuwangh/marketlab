@@ -307,10 +307,10 @@ def _forward_return(
     future_index = index + horizon
     if future_index >= len(history):
         return None
-    current_close = history[index].close
+    current_close = history[index].return_close
     if current_close == 0:
         return None
-    return history[future_index].close / current_close - 1.0
+    return history[future_index].return_close / current_close - 1.0
 
 
 def _forward_max_drawdown(
@@ -324,10 +324,10 @@ def _forward_max_drawdown(
     future_index = index + horizon
     if future_index >= len(history):
         return None
-    current_close = history[index].close
+    current_close = history[index].return_close
     if current_close == 0:
         return None
-    lows = [row.low for row in history[index + 1 : future_index + 1]]
+    lows = [row.return_close for row in history[index + 1 : future_index + 1]]
     if not lows:
         return None
     return min(lows) / current_close - 1.0

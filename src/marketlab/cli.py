@@ -42,6 +42,7 @@ from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
     PriceDataError,
     fetch_and_write_stooq_daily_prices,
+    fetch_and_write_yahoo_daily_prices,
     import_daily_price_csv,
 )
 
@@ -157,6 +158,59 @@ def prices_fetch(
         symbol_count=len(results),
         output_root=str(output_root),
     ).success("Fetched daily price observations")
+
+
+@prices_app.command("fetch-yahoo", no_args_is_help=True)
+def prices_fetch_yahoo(
+    symbols_value: str = typer.Argument(
+        ...,
+        metavar="SYMBOL[,SYMBOL...]",
+        help="Comma-separated ticker symbols to fetch.",
+    ),
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First price date to fetch.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last price date to fetch.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for daily price observations.",
+    ),
+) -> None:
+    """Fetch daily OHLCV observations from Yahoo Finance through yfinance."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        results = fetch_and_write_yahoo_daily_prices(
+            symbols=_parse_symbols(symbols_value),
+            start_date=start_date,
+            end_date=end_date,
+            output_root=output_root,
+        )
+    except PriceDataError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    for result in results:
+        typer.echo(
+            f"symbol={result.symbol} source_symbol={result.source_symbol} "
+            f"row_count={result.row_count} observation_path={result.observation_path}"
+        )
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        symbol_count=len(results),
+        output_root=str(output_root),
+    ).success("Fetched Yahoo daily price observations")
 
 
 @prices_app.command("import-csv", no_args_is_help=True)

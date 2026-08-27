@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -36,10 +37,15 @@ class DailyPriceObservation:
     low: float
     close: float
     volume: int
+    adjusted_close: float | None = None
 
     @property
     def dollar_volume(self) -> float:
         return self.close * self.volume
+
+    @property
+    def return_close(self) -> float:
+        return self.adjusted_close if self.adjusted_close is not None else self.close
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +58,7 @@ class DailyPriceObservation:
             "low": self.low,
             "close": self.close,
             "volume": self.volume,
+            "adjusted_close": self.adjusted_close,
         }
 
 
@@ -189,6 +196,95 @@ def fetch_and_write_stooq_daily_prices(
     return tuple(results)
 
 
+def fetch_yahoo_daily_prices(
+    *,
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    downloader=None,
+) -> tuple[DailyPriceObservation, ...]:
+    """Fetch daily price observations through yfinance."""
+
+    normalized_symbol = normalize_symbol(symbol)
+    if end_date < start_date:
+        raise PriceDataError("End date must be on or after start date")
+
+    active_downloader = downloader
+    if active_downloader is None:
+        try:
+            import yfinance as yf
+        except ImportError as exc:
+            raise PriceDataError("yfinance is not installed; run `uv add yfinance`") from exc
+        active_downloader = yf.download
+
+    logger.bind(
+        symbol=normalized_symbol,
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+    ).info("Fetching Yahoo daily price observations")
+    try:
+        frame = active_downloader(
+            normalized_symbol,
+            start=start_date.isoformat(),
+            end=(end_date + timedelta(days=1)).isoformat(),
+            interval="1d",
+            auto_adjust=False,
+            actions=False,
+            progress=False,
+            threads=False,
+            group_by="column",
+            multi_level_index=False,
+        )
+    except Exception as exc:
+        raise PriceDataError(
+            f"Failed to fetch Yahoo prices for {normalized_symbol}: {exc}"
+        ) from exc
+
+    rows = parse_yahoo_daily_frame(
+        frame,
+        symbol=normalized_symbol,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not rows:
+        raise PriceDataError(f"No Yahoo daily price rows returned for {normalized_symbol}")
+    logger.bind(
+        symbol=normalized_symbol,
+        row_count=len(rows),
+    ).success("Fetched Yahoo daily price observations")
+    return rows
+
+
+def fetch_and_write_yahoo_daily_prices(
+    *,
+    symbols: tuple[str, ...],
+    start_date: date,
+    end_date: date,
+    output_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    downloader=None,
+) -> tuple[PriceFetchResult, ...]:
+    """Fetch and persist Yahoo daily price observations for multiple symbols."""
+
+    results: list[PriceFetchResult] = []
+    for symbol in dedupe_symbols(symbols):
+        rows = fetch_yahoo_daily_prices(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            downloader=downloader,
+        )
+        observation_path = write_price_observations(rows, output_root=output_root)
+        results.append(
+            PriceFetchResult(
+                symbol=rows[0].symbol,
+                source_symbol=rows[0].source_symbol,
+                observation_path=observation_path,
+                row_count=len(rows),
+            )
+        )
+    return tuple(results)
+
+
 def parse_stooq_daily_csv(
     text: str,
     *,
@@ -223,11 +319,61 @@ def parse_stooq_daily_csv(
                     low=_parse_float(row, "Low"),
                     close=_parse_float(row, "Close"),
                     volume=_parse_int(row, "Volume"),
+                    adjusted_close=_parse_optional_float(row, "Adj Close"),
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise PriceDataError(f"Invalid price CSV row {row_number}") from exc
 
+    rows.sort(key=lambda price: price.observed_date)
+    return tuple(rows)
+
+
+def parse_yahoo_daily_frame(
+    frame,
+    *,
+    symbol: str,
+    start_date: date,
+    end_date: date,
+) -> tuple[DailyPriceObservation, ...]:
+    """Parse a yfinance daily price frame into price observations."""
+
+    normalized_symbol = normalize_symbol(symbol)
+    if frame is None or getattr(frame, "empty", False):
+        return ()
+    try:
+        records = frame.reset_index().to_dict("records")
+    except AttributeError as exc:
+        raise PriceDataError("Yahoo price result must be a pandas-like DataFrame") from exc
+
+    rows: list[DailyPriceObservation] = []
+    for row_number, row in enumerate(records, start=1):
+        observed_date = _coerce_observed_date(_frame_value(row, "Date", "Datetime", "index"))
+        if observed_date is None or not start_date <= observed_date <= end_date:
+            continue
+        try:
+            rows.append(
+                DailyPriceObservation(
+                    source="yahoo",
+                    source_symbol=normalized_symbol,
+                    symbol=normalized_symbol,
+                    observed_date=observed_date,
+                    open=_frame_float(row, "Open", "open"),
+                    high=_frame_float(row, "High", "high"),
+                    low=_frame_float(row, "Low", "low"),
+                    close=_frame_float(row, "Close", "close"),
+                    volume=_frame_int(row, "Volume", "volume"),
+                    adjusted_close=_frame_optional_float(
+                        row,
+                        "Adj Close",
+                        "AdjClose",
+                        "adj close",
+                        "adjclose",
+                    ),
+                )
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PriceDataError(f"Invalid Yahoo price row {row_number}") from exc
     rows.sort(key=lambda price: price.observed_date)
     return tuple(rows)
 
@@ -343,6 +489,7 @@ def _price_from_dict(row: dict[str, Any]) -> DailyPriceObservation:
         low=float(row["low"]),
         close=float(row["close"]),
         volume=int(row["volume"]),
+        adjusted_close=_optional_float(row.get("adjusted_close")),
     )
 
 
@@ -357,8 +504,74 @@ def _parse_float(row: dict[str, str | None], key: str) -> float:
     return float(_required(row, key).replace(",", ""))
 
 
+def _parse_optional_float(row: dict[str, str | None], key: str) -> float | None:
+    value = row.get(key)
+    if value is None or not value.strip():
+        return None
+    return float(value.replace(",", ""))
+
+
 def _parse_int(row: dict[str, str | None], key: str) -> int:
     return int(float(_required(row, key).replace(",", "")))
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _frame_value(row: dict[Any, Any], *names: str) -> Any:
+    for name in names:
+        if name in row and not _is_missing(row[name]):
+            return row[name]
+    raise KeyError(names[0])
+
+
+def _frame_float(row: dict[Any, Any], *names: str) -> float:
+    value = _frame_value(row, *names)
+    if _is_missing(value):
+        raise ValueError(names[0])
+    return float(value)
+
+
+def _frame_optional_float(row: dict[Any, Any], *names: str) -> float | None:
+    for name in names:
+        if name in row and not _is_missing(row[name]):
+            return float(row[name])
+    return None
+
+
+def _frame_int(row: dict[Any, Any], *names: str) -> int:
+    value = _frame_value(row, *names)
+    if _is_missing(value):
+        raise ValueError(names[0])
+    return int(float(value))
+
+
+def _coerce_observed_date(value: object) -> date | None:
+    if _is_missing(value):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if hasattr(value, "date"):
+        coerced = value.date()
+        if isinstance(coerced, date):
+            return coerced
+    if isinstance(value, str):
+        return date.fromisoformat(value[:10])
+    raise ValueError(f"Invalid date value: {value}")
+
+
+def _is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(math.isnan(value))
+    except TypeError:
+        return False
 
 
 def _looks_like_stooq_error(text: str) -> bool:
