@@ -22,6 +22,7 @@ Implemented:
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
 - One-command daily Bulltard workflow for candidate capture.
 - Daily OHLCV price fetch into local observations.
+- Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
 - Bulltard outcome replay summaries from saved validation snapshots.
 
@@ -126,6 +127,12 @@ Fetch independent daily OHLCV history for the candidate tickers plus benchmarks:
 ```
 
 If Stooq requires an API key, set `MARKETLAB_STOOQ_API_KEY` or pass `--stooq-api-key`.
+
+Or import a local CSV with `Date, Open, High, Low, Close, Volume` columns:
+
+```bash
+./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
+```
 
 Validate a captured Bulltard candidate set from local price observations:
 
