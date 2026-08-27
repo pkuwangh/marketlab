@@ -66,7 +66,7 @@ uv run pytest -q
 
 | Milestone | Status | Goal | Exit Criterion |
 | --- | --- | --- | --- |
-| 1. Bulltard Candidate Capture | Mostly complete | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
+| 1. Bulltard Candidate Capture | Complete | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
 | 2. Candidate Validation & Outcome MVP | Next | Make the workflow better than the email by adding independent market data and measuring forward results. | We can replay candidate dates, apply basic universe/liquidity/price gates, attach forward returns/drawdowns, and summarize which Bulltard-derived cohorts have edge. |
 | 3. Market Regime MVP | Planned | Size marginal exposure independently from single-name ideas. | SPY/QQQ regime buckets show forward return and drawdown separation, or clearly show no edge. |
 | 4. Portfolio Policy MVP | Planned | Convert regime plus validated opportunities into a bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context. |
@@ -75,7 +75,7 @@ uv run pytest -q
 
 ## Milestone 1 - Bulltard Candidate Capture
 
-Current status: mostly complete.
+Current status: complete.
 
 Completed scope:
 
@@ -85,7 +85,12 @@ Completed scope:
 - Retrieve ticker detail pages and parse flow history.
 - Produce one daily command that gathers the above into local observations.
 
-Remaining work should be limited to bugs or sharp edges found while using the workflow. Do not expand this into a general archive system.
+Completion evidence:
+
+- Unit and CLI tests cover recap extraction, ranked ingest, Trades Of Interest parsing, ticker-detail ingest, candidate review, and the daily orchestration contract.
+- The live `2026-08-26` recap produced ranked observations, Trades Of Interest observations, ticker-flow observations, and a candidate table in one command.
+
+Future changes here should be limited to bugs or sharp edges found while using the workflow. Do not expand this into a general archive system.
 
 ## Milestone 2 - Candidate Validation & Outcome MVP
 
@@ -183,6 +188,7 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `5f8292d` - Refresh implementation milestones
 - `e015a76` - Run Bulltard daily candidate workflow
 - `b12f96c` - Handle missing ticker flow premiums
 - `69ceec8` - Prioritize recap interest in candidate review

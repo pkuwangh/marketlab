@@ -4,19 +4,23 @@ MarketLab is a local-first research system for market-regime analysis and large-
 
 The implementation follows `DESIGN.md`: point-in-time observations, deterministic calculations, bounded agent outputs, and reproducible reports.
 
-See `IMPLEMENTATION.md` for current implementation status and the next small slices.
+See `IMPLEMENTATION.md` for milestone status and the next research deliverables.
 
 ## Current Baseline
 
-This repository currently contains only the first useful contracts:
+Milestone 1 is complete: the repo can capture the daily Bulltard candidate set from a saved recap before the signed link expires.
 
-- Python package skeleton.
-- Minimal `marketlab` CLI entrypoint.
+Implemented:
+
+- Python package skeleton with `uv`, Typer CLI, Loguru logging, and focused tests.
+- Repo-local `bin/marketlab` command shim.
 - Snapshot identity model.
-- Bulltard recap source URL extraction against local recap artifacts.
-- Bulltard ingest for the first targeted ranked-trades view.
-- Loguru-based CLI logging with informative context fields.
-- Focused tests for URL extraction and snapshot serialization.
+- Bulltard recap source URL extraction against local text or HTML recap artifacts.
+- Bulltard ranked option trades ingest.
+- Trades Of Interest parsing from the recap.
+- Ticker detail retrieval and flow-history parsing.
+- Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
+- One-command daily Bulltard workflow for candidate capture.
 
 ## Development
 
@@ -73,8 +77,8 @@ Retrieve and parse the Bulltard detail page for one ticker from the same signed 
 ```bash
 uv run marketlab bulltard ticker \
   INTC \
-  --date 2026-08-24 \
-  data/inbox/bulltard/recap-2026-08-24.html
+  data/inbox/bulltard/recap-2026-08-24.html \
+  --date 2026-08-24
 ```
 
 Ticker pages are currently saved under `data/debug/bulltard/tickers/<SYMBOL>/`.
