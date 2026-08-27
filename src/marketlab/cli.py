@@ -26,8 +26,23 @@ from marketlab.bulltard.ingest import (
     ingest_trades_of_interest,
 )
 from marketlab.bulltard.models import BulltardView
+from marketlab.bulltard.outcomes import (
+    CandidateOutcomeError,
+    compute_bulltard_outcomes,
+)
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
+from marketlab.bulltard.validation import (
+    DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+    DEFAULT_MIN_DOLLAR_VOLUME,
+    CandidateValidationError,
+    validate_bulltard_candidates,
+)
 from marketlab.logging import configure_logging
+from marketlab.prices import (
+    DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    PriceDataError,
+    fetch_and_write_stooq_daily_prices,
+)
 
 
 class LogLevel(StrEnum):
@@ -48,7 +63,12 @@ bulltard_app = typer.Typer(
     help="Bulltard link extraction and ingest utilities.",
     no_args_is_help=True,
 )
+prices_app = typer.Typer(
+    help="Daily OHLCV price utilities.",
+    no_args_is_help=True,
+)
 app.add_typer(bulltard_app, name="bulltard")
+app.add_typer(prices_app, name="prices")
 
 
 def _version_callback(value: bool) -> None:
@@ -76,6 +96,66 @@ def root(
 ) -> None:
     """Run MarketLab research workflows."""
     configure_logging(log_level.value)
+
+
+@prices_app.command("fetch", no_args_is_help=True)
+def prices_fetch(
+    symbols_value: str = typer.Argument(
+        ...,
+        metavar="SYMBOL[,SYMBOL...]",
+        help="Comma-separated ticker symbols to fetch.",
+    ),
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First price date to fetch.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last price date to fetch.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for daily price observations.",
+    ),
+    stooq_api_key: str | None = typer.Option(
+        None,
+        "--stooq-api-key",
+        envvar="MARKETLAB_STOOQ_API_KEY",
+        help="Optional Stooq API key.",
+    ),
+) -> None:
+    """Fetch daily OHLCV observations."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        results = fetch_and_write_stooq_daily_prices(
+            symbols=_parse_symbols(symbols_value),
+            start_date=start_date,
+            end_date=end_date,
+            output_root=output_root,
+            api_key=stooq_api_key,
+        )
+    except PriceDataError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    for result in results:
+        typer.echo(
+            f"symbol={result.symbol} source_symbol={result.source_symbol} "
+            f"row_count={result.row_count} observation_path={result.observation_path}"
+        )
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        symbol_count=len(results),
+        output_root=str(output_root),
+    ).success("Fetched daily price observations")
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
@@ -271,6 +351,125 @@ def candidates(
     ).success("Reviewed Bulltard candidates")
 
 
+@bulltard_app.command("validate", no_args_is_help=True)
+def validate_candidates(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Source date to validate.",
+    ),
+    observations_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--observations-root",
+        file_okay=False,
+        help="Root directory containing structured Bulltard observations.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory for Bulltard candidate validation snapshots.",
+    ),
+    limit: int = typer.Option(
+        12,
+        "--limit",
+        min=1,
+        help="Maximum number of candidates to validate.",
+    ),
+    min_dollar_volume: float = typer.Option(
+        DEFAULT_MIN_DOLLAR_VOLUME,
+        "--min-dollar-volume",
+        min=0.0,
+        help="Minimum daily dollar volume for the basic liquidity gate.",
+    ),
+    write_snapshot: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write point-in-time candidate validation snapshots.",
+    ),
+) -> None:
+    """Validate Bulltard candidates against independent price observations."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = validate_bulltard_candidates(
+            source_date=source_date,
+            observations_root=observations_root,
+            price_root=price_root,
+            snapshot_root=snapshot_root,
+            limit=limit,
+            min_dollar_volume=min_dollar_volume,
+            write_snapshot=write_snapshot,
+        )
+    except CandidateValidationError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if result.snapshot_path is not None:
+        typer.echo(f"snapshot_path={result.snapshot_path}")
+    typer.echo(f"candidate_count={len(result.snapshots)}")
+    typer.echo("")
+    typer.echo(result.table)
+
+
+@bulltard_app.command("outcomes", no_args_is_help=True)
+def outcomes(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First candidate snapshot date to replay.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last candidate snapshot date to replay.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory containing Bulltard candidate validation snapshots.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    horizons_value: str = typer.Option(
+        "20,40,65,126",
+        "--horizons",
+        help="Comma-separated forward trading-day horizons.",
+    ),
+) -> None:
+    """Replay forward outcomes for saved Bulltard candidate snapshots."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        result = compute_bulltard_outcomes(
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_root=snapshot_root,
+            price_root=price_root,
+            horizons=_parse_horizons(horizons_value),
+        )
+    except CandidateOutcomeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"outcome_count={len(result.outcomes)}")
+    typer.echo("")
+    typer.echo(result.table)
+
+
 @bulltard_app.command("trades-of-interest", no_args_is_help=True)
 def trades_of_interest(
     recap_path: Path = typer.Argument(
@@ -365,6 +564,29 @@ def daily(
         min=1,
         help="Maximum number of candidates to show in the review table.",
     ),
+    validate_candidates_flag: bool = typer.Option(
+        False,
+        "--validate",
+        help="Also validate candidates against local daily price observations.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory for Bulltard candidate validation snapshots.",
+    ),
+    min_dollar_volume: float = typer.Option(
+        DEFAULT_MIN_DOLLAR_VOLUME,
+        "--min-dollar-volume",
+        min=0.0,
+        help="Minimum daily dollar volume for the basic liquidity gate.",
+    ),
 ) -> None:
     """Run the daily Bulltard candidate workflow."""
 
@@ -406,12 +628,61 @@ def daily(
     typer.echo("")
     typer.echo(result.candidate_table)
 
+    if validate_candidates_flag:
+        try:
+            validation_result = validate_bulltard_candidates(
+                source_date=source_date,
+                observations_root=output_root,
+                price_root=price_root,
+                snapshot_root=snapshot_root,
+                limit=limit,
+                min_dollar_volume=min_dollar_volume,
+                write_snapshot=True,
+            )
+        except CandidateValidationError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo("")
+        typer.echo(f"candidate_validation_snapshot_path={validation_result.snapshot_path}")
+        typer.echo(f"candidate_validation_count={len(validation_result.snapshots)}")
+        typer.echo("")
+        typer.echo(validation_result.table)
+
 
 def _parse_source_date(value: str) -> date:
+    return _parse_date_option(value, option_name="--date")
+
+
+def _parse_date_option(value: str, *, option_name: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise typer.BadParameter("Date must use YYYY-MM-DD format", param_hint="--date") from exc
+        raise typer.BadParameter(
+            "Date must use YYYY-MM-DD format",
+            param_hint=option_name,
+        ) from exc
+
+
+def _parse_symbols(value: str) -> tuple[str, ...]:
+    symbols = tuple(symbol.strip() for symbol in value.split(",") if symbol.strip())
+    if not symbols:
+        raise typer.BadParameter("At least one symbol is required")
+    return symbols
+
+
+def _parse_horizons(value: str) -> tuple[int, ...]:
+    raw_horizons = tuple(part.strip() for part in value.split(",") if part.strip())
+    if not raw_horizons:
+        raise typer.BadParameter("At least one horizon is required", param_hint="--horizons")
+    try:
+        horizons = tuple(int(raw_horizon) for raw_horizon in raw_horizons)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "Horizons must be comma-separated integers",
+            param_hint="--horizons",
+        ) from exc
+    if any(horizon <= 0 for horizon in horizons):
+        raise typer.BadParameter("Horizons must be positive", param_hint="--horizons")
+    return horizons
 
 
 def _parse_extra_tickers(value: str) -> tuple[str, ...]:

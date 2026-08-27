@@ -15,7 +15,14 @@ from marketlab.bulltard.ingest import (
     TradesOfInterestIngestResult,
 )
 from marketlab.bulltard.models import BulltardView, IngestPlan
-from marketlab.cli import app, bulltard_app
+from marketlab.bulltard.outcomes import (
+    CandidateOutcomeResult,
+    ForwardOutcome,
+    OutcomeSummaryRow,
+)
+from marketlab.bulltard.validation import CandidateValidationResult, CandidateValidationSnapshot
+from marketlab.cli import app, bulltard_app, prices_app
+from marketlab.prices import PriceFetchResult
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
 
@@ -23,6 +30,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
 def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert app.info.no_args_is_help is True
     assert bulltard_app.info.no_args_is_help is True
+    assert prices_app.info.no_args_is_help is True
 
 
 def test_typer_no_args_shows_help_without_traceback() -> None:
@@ -41,6 +49,26 @@ def test_bulltard_no_args_shows_help_without_traceback() -> None:
     assert "Bulltard link extraction and ingest utilities." in result.output
     assert "inspect-recap" in result.output
     assert "ingest" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_prices_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["prices"])
+
+    assert result.exit_code != 0
+    assert "Daily OHLCV price utilities." in result.output
+    assert "fetch" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_prices_fetch_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["prices", "fetch"])
+
+    assert result.exit_code != 0
+    assert "Fetch daily OHLCV observations." in result.output
+    assert "SYMBOL[,SYMBOL...]" in result.output
+    assert "--start" in result.output
+    assert "Missing argument" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -84,6 +112,27 @@ def test_candidates_no_args_shows_help_without_missing_option_error() -> None:
     assert result.exit_code != 0
     assert "Review Bulltard ranked candidates with available ticker flow" in result.output
     assert "--date" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_validate_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "validate"])
+
+    assert result.exit_code != 0
+    assert "Validate Bulltard candidates" in result.output
+    assert "--date" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_outcomes_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "outcomes"])
+
+    assert result.exit_code != 0
+    assert "Replay forward outcomes" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
@@ -437,6 +486,328 @@ def test_bulltard_daily_runs_candidate_workflow(
     assert "trades_of_interest_symbols=META,XAR" in result.output
     assert "ticker_detail_symbols=" in result.output
     assert "META    ranked+interest#1" in result.output
+
+
+def test_prices_fetch_outputs_written_observation_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "prices"
+
+    def fake_fetch_and_write_stooq_daily_prices(
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+        api_key: str | None,
+    ) -> tuple[PriceFetchResult, ...]:
+        assert symbols == ("META", "SPY")
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 26)
+        assert api_key == "fixture-key"
+        return (
+            PriceFetchResult(
+                symbol="META",
+                source_symbol="meta.us",
+                observation_path=output_root / "META.jsonl",
+                row_count=100,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_stooq_daily_prices",
+        fake_fetch_and_write_stooq_daily_prices,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "prices",
+            "fetch",
+            "META,SPY",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-26",
+            "--output-root",
+            str(output_root),
+            "--stooq-api-key",
+            "fixture-key",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "symbol=META source_symbol=meta.us row_count=100" in result.output
+    assert str(output_root / "META.jsonl") in result.output
+
+
+def test_bulltard_validate_outputs_snapshot_and_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations_root = tmp_path / "observations" / "bulltard"
+    price_root = tmp_path / "prices"
+    snapshot_root = tmp_path / "snapshots"
+
+    def fake_validate_bulltard_candidates(
+        *,
+        source_date: date,
+        observations_root: Path,
+        price_root: Path,
+        snapshot_root: Path,
+        limit: int,
+        min_dollar_volume: float,
+        write_snapshot: bool,
+    ) -> CandidateValidationResult:
+        assert source_date == date(2026, 8, 26)
+        assert limit == 5
+        assert min_dollar_volume == 10_000_000.0
+        assert write_snapshot is True
+        return CandidateValidationResult(
+            source_date=source_date,
+            snapshots=(_candidate_snapshot(source_date=source_date, symbol="META"),),
+            snapshot_path=snapshot_root / "2026-08-26.jsonl",
+            table="symbol  status\nMETA    confirm",
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.validate_bulltard_candidates",
+        fake_validate_bulltard_candidates,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "validate",
+            "--date",
+            "2026-08-26",
+            "--observations-root",
+            str(observations_root),
+            "--price-root",
+            str(price_root),
+            "--snapshot-root",
+            str(snapshot_root),
+            "--limit",
+            "5",
+            "--min-dollar-volume",
+            "10000000",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"snapshot_path={snapshot_root / '2026-08-26.jsonl'}" in result.output
+    assert "candidate_count=1" in result.output
+    assert "META    confirm" in result.output
+
+
+def test_bulltard_outcomes_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_bulltard_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> CandidateOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 26)
+        assert horizons == (20, 65)
+        return CandidateOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                ForwardOutcome(
+                    source_date=start_date,
+                    symbol="META",
+                    bulltard_source="ranked+interest#1",
+                    source_bucket="ranked+interest",
+                    validation_status="confirm",
+                    detail_bucket="with_detail",
+                    horizon_days=20,
+                    return_value=0.1,
+                    relative_strength_spy=0.05,
+                    max_drawdown=-0.03,
+                ),
+            ),
+            summary_rows=(
+                OutcomeSummaryRow(
+                    cohort="all",
+                    horizon_days=20,
+                    candidate_count=1,
+                    available_count=1,
+                    avg_return=0.1,
+                    hit_rate=1.0,
+                    avg_relative_strength_spy=0.05,
+                    avg_max_drawdown=-0.03,
+                ),
+            ),
+            table="cohort  horizon\nall     20d",
+        )
+
+    monkeypatch.setattr("marketlab.cli.compute_bulltard_outcomes", fake_compute_bulltard_outcomes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "outcomes",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-26",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20,65",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "outcome_count=1" in result.output
+    assert "all     20d" in result.output
+
+
+def test_bulltard_daily_can_validate_after_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "observations" / "bulltard"
+    debug_root = tmp_path / "debug" / "bulltard"
+    price_root = tmp_path / "prices"
+    snapshot_root = tmp_path / "snapshots"
+
+    def fake_run_daily_workflow(
+        *,
+        source_date,
+        recap_path: Path,
+        output_root: Path,
+        debug_root: Path,
+        fetch_ticker_details: bool,
+        top_ranked: int,
+        extra_tickers: tuple[str, ...],
+        limit: int,
+    ) -> DailyWorkflowResult:
+        plan = IngestPlan(
+            source_date=source_date,
+            view=BulltardView.RANKED_OPTION_TRADES,
+            recap_path=recap_path,
+            signed_url="https://jamesbulltard.substack.com/redirect?token=fixture-secret",
+            observation_path=output_root / "ranked_option_trades" / "2026-08-26.jsonl",
+        )
+        return DailyWorkflowResult(
+            source_date=source_date,
+            ranked_result=IngestResult(
+                fetched_view=FetchedView(
+                    plan=plan,
+                    final_url="https://app.jamesbulltard.com/ranked_option_trades",
+                    status_code=200,
+                    content_type="text/html",
+                    byte_count=42,
+                    debug_path=debug_root / "ranked_option_trades" / "2026-08-26.html",
+                ),
+                row_count=40,
+                observation_path=plan.observation_path,
+            ),
+            trades_of_interest_result=None,
+            ticker_results=(),
+            ticker_failures=(),
+            candidate_table="symbol  source\nMETA    ranked",
+        )
+
+    def fake_validate_bulltard_candidates(
+        *,
+        source_date: date,
+        observations_root: Path,
+        price_root: Path,
+        snapshot_root: Path,
+        limit: int,
+        min_dollar_volume: float,
+        write_snapshot: bool,
+    ) -> CandidateValidationResult:
+        assert observations_root == output_root
+        assert price_root == price_root_arg
+        assert snapshot_root == snapshot_root_arg
+        assert limit == 12
+        assert write_snapshot is True
+        return CandidateValidationResult(
+            source_date=source_date,
+            snapshots=(_candidate_snapshot(source_date=source_date, symbol="META"),),
+            snapshot_path=snapshot_root / "2026-08-26.jsonl",
+            table="symbol  status\nMETA    confirm",
+        )
+
+    price_root_arg = price_root
+    snapshot_root_arg = snapshot_root
+    monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
+    monkeypatch.setattr(
+        "marketlab.cli.validate_bulltard_candidates",
+        fake_validate_bulltard_candidates,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "daily",
+            str(FIXTURE_DIR / "recap_with_trades_of_interest.html"),
+            "--date",
+            "2026-08-26",
+            "--output-root",
+            str(output_root),
+            "--debug-root",
+            str(debug_root),
+            "--validate",
+            "--price-root",
+            str(price_root),
+            "--snapshot-root",
+            str(snapshot_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "candidate_validation_count=1" in result.output
+    assert "META    confirm" in result.output
+
+
+def _candidate_snapshot(*, source_date: date, symbol: str) -> CandidateValidationSnapshot:
+    return CandidateValidationSnapshot(
+        source_date=source_date,
+        feature_version="fixture",
+        symbol=symbol,
+        bulltard_source="ranked+interest#1",
+        ranked_side="bullish",
+        ranked_score=1.0,
+        ranked_trade_count=1,
+        ranked_premium=1_000_000.0,
+        interest_rank=1,
+        detail_rows=1,
+        price_date=source_date,
+        close=100.0,
+        dollar_volume=100_000_000.0,
+        return_5d=0.02,
+        return_20d=0.1,
+        return_60d=0.2,
+        ma20_distance=0.03,
+        ma50_distance=0.05,
+        ma200_distance=None,
+        drawdown_60d=-0.04,
+        relative_strength_20d_spy=0.05,
+        relative_strength_20d_qqq=0.03,
+        underlying_liquidity_status="liquid",
+        options_liquidity_status="unknown",
+        validation_status="confirm",
+        validation_reasons=("positive_20d",),
+    )
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
