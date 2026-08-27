@@ -32,7 +32,7 @@ Implemented:
 - Ticker-detail fetch and parser for flow history pages.
 - Candidate review that prioritizes recap interest over raw ranked rows.
 - Daily Bulltard orchestration that captures ranked rows, recap interest, ticker details, and a candidate table.
-- Daily price observation fetch into local JSONL.
+- Daily price observation fetch from Yahoo Finance through `yfinance` into local JSONL.
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation snapshots using price, volume, trend, drawdown, and relative-strength features.
 - Bulltard outcome replay summaries over saved validation snapshots.
@@ -56,7 +56,7 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --top-ranked 3
 ./bin/marketlab bulltard candidates --date 2026-08-26
 ./bin/marketlab bulltard ticker META data/inbox/bulltard/recap-2026-08-26.html --date 2026-08-26
-./bin/marketlab prices fetch META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-26
+./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
 ./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
 ./bin/marketlab bulltard validate --date 2026-08-26
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --validate
@@ -109,7 +109,7 @@ Goal: for each Bulltard candidate, add enough independent evidence and outcome t
 
 Implemented v0 scope:
 
-- Fetch or import daily OHLCV history for candidate tickers plus `SPY` and `QQQ` into local JSONL.
+- Fetch Yahoo Finance daily OHLCV history through `yfinance`, or import local daily OHLCV CSVs, for candidate tickers plus `SPY` and `QQQ` into local JSONL.
 - Apply basic candidate gates:
   - underlying dollar-volume liquidity
   - enough price history for trend and relative-strength features
@@ -127,16 +127,23 @@ Implemented v0 scope:
 
 Current implementation notes:
 
-- `prices fetch` writes independent daily OHLCV observations under `data/observations/prices/daily/`.
+- `prices fetch-yahoo` writes independent daily OHLCV observations under `data/observations/prices/daily/`.
+- `prices fetch` keeps the Stooq path available for keyed/manual-provider use, but it is not the preferred M2 source.
 - `prices import-csv` writes local CSV price observations to the same location, which avoids blocking on a live provider during bring-up.
 - `bulltard validate` reads Bulltard candidates plus local price observations, writes snapshots under `data/snapshots/bulltard/candidates/`, and prints a validation table.
 - `bulltard daily --validate` runs capture and validation together when local price observations are present.
 - `bulltard outcomes` reads saved validation snapshots and local price observations to summarize forward results by source/status/detail cohorts.
 
+Verified live on `2026-08-27`:
+
+- `prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27` fetched 414 rows for each symbol.
+- Additional Yahoo fetches completed price coverage for the ranked `2026-08-26` candidate table.
+- `bulltard validate --date 2026-08-26` produced 12 validation rows with complete price coverage.
+
 Remaining milestone work:
 
 - Run the v0 path on real saved recaps and real price history.
-- Decide whether the Stooq fetch path is reliable enough or whether a keyed/paid data source is needed.
+- Keep watching yfinance/Yahoo reliability; move to a keyed provider only if this path becomes unstable or insufficient.
 - Calibrate the basic liquidity and trend thresholds using outcome summaries instead of intuition.
 - Add repeated-flow cohorts once we have multiple days of ticker-flow observations.
 - Add a real options-liquidity source before treating options liquidity as anything other than `unknown`.
@@ -212,6 +219,8 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `0d39f65` - Fetch daily prices with yfinance
+- `ccdf91a` - Document price CSV import path
 - `b6c23f6` - Import local daily price CSVs
 - `c449f60` - Document candidate validation workflow
 - `8af62a0` - Add Bulltard candidate validation workflow

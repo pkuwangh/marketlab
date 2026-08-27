@@ -21,7 +21,7 @@ Implemented:
 - Ticker detail retrieval and flow-history parsing.
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
 - One-command daily Bulltard workflow for candidate capture.
-- Daily OHLCV price fetch into local observations.
+- Daily OHLCV price fetch from Yahoo Finance through `yfinance` into local observations.
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
 - Bulltard outcome replay summaries from saved validation snapshots.
@@ -121,12 +121,18 @@ Use `--top-ranked N` to also fetch detail for the top N ranked database names, o
 Fetch independent daily OHLCV history for the candidate tickers plus benchmarks:
 
 ```bash
-./bin/marketlab prices fetch META,XAR,SRRK,DKS,QXO,SPY,QQQ \
+./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ \
   --start 2025-01-01 \
-  --end 2026-08-26
+  --end 2026-08-27
 ```
 
-If Stooq requires an API key, set `MARKETLAB_STOOQ_API_KEY` or pass `--stooq-api-key`.
+This uses the actively maintained `yfinance` package. It stores raw `close` and `adjusted_close`; MarketLab uses adjusted close for return/outcome calculations when available.
+
+The older Stooq path remains available as `prices fetch`, but it may require a Stooq API key:
+
+```bash
+./bin/marketlab prices fetch META,SPY --start 2025-01-01 --end 2026-08-27
+```
 
 Or import a local CSV with `Date, Open, High, Low, Close, Volume` columns:
 
