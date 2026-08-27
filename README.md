@@ -21,6 +21,9 @@ Implemented:
 - Ticker detail retrieval and flow-history parsing.
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
 - One-command daily Bulltard workflow for candidate capture.
+- Daily OHLCV price fetch into local observations.
+- Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
+- Bulltard outcome replay summaries from saved validation snapshots.
 
 ## Development
 
@@ -111,6 +114,41 @@ By default, `daily` ingests the ranked database view, parses Trades Of Interest 
 fetches ticker detail for the Trades Of Interest names, and prints the candidate review table.
 Use `--top-ranked N` to also fetch detail for the top N ranked database names, or
 `--no-ticker-details` to skip detail fetches.
+
+## Candidate Validation
+
+Fetch independent daily OHLCV history for the candidate tickers plus benchmarks:
+
+```bash
+./bin/marketlab prices fetch META,XAR,SRRK,DKS,QXO,SPY,QQQ \
+  --start 2025-01-01 \
+  --end 2026-08-26
+```
+
+If Stooq requires an API key, set `MARKETLAB_STOOQ_API_KEY` or pass `--stooq-api-key`.
+
+Validate a captured Bulltard candidate set from local price observations:
+
+```bash
+./bin/marketlab bulltard validate --date 2026-08-26
+```
+
+Or run capture and validation together after prices are present:
+
+```bash
+./bin/marketlab bulltard daily \
+  --date 2026-08-26 \
+  data/inbox/bulltard/recap-2026-08-26.html \
+  --validate
+```
+
+Validation snapshots are written under `data/snapshots/bulltard/candidates/`.
+
+Replay forward outcomes after enough future price rows exist:
+
+```bash
+./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26
+```
 
 If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
 than the database link. For bring-up, use a saved message artifact or a small local text file

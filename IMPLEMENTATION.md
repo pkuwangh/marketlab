@@ -32,6 +32,9 @@ Implemented:
 - Ticker-detail fetch and parser for flow history pages.
 - Candidate review that prioritizes recap interest over raw ranked rows.
 - Daily Bulltard orchestration that captures ranked rows, recap interest, ticker details, and a candidate table.
+- Daily price observation fetch into local JSONL.
+- Bulltard candidate validation snapshots using price, volume, trend, drawdown, and relative-strength features.
+- Bulltard outcome replay summaries over saved validation snapshots.
 
 Verified live on `2026-08-26`:
 
@@ -52,6 +55,10 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --top-ranked 3
 ./bin/marketlab bulltard candidates --date 2026-08-26
 ./bin/marketlab bulltard ticker META data/inbox/bulltard/recap-2026-08-26.html --date 2026-08-26
+./bin/marketlab prices fetch META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-26
+./bin/marketlab bulltard validate --date 2026-08-26
+./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --validate
+./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26
 ```
 
 Development checks:
@@ -67,7 +74,7 @@ uv run pytest -q
 | Milestone | Status | Goal | Exit Criterion |
 | --- | --- | --- | --- |
 | 1. Bulltard Candidate Capture | Complete | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
-| 2. Candidate Validation & Outcome MVP | Next | Make the workflow better than the email by adding independent market data and measuring forward results. | We can replay candidate dates, apply basic universe/liquidity/price gates, attach forward returns/drawdowns, and summarize which Bulltard-derived cohorts have edge. |
+| 2. Candidate Validation & Outcome MVP | In progress | Make the workflow better than the email by adding independent market data and measuring forward results. | We can replay candidate dates, apply basic universe/liquidity/price gates, attach forward returns/drawdowns, and summarize which Bulltard-derived cohorts have edge. |
 | 3. Market Regime MVP | Planned | Size marginal exposure independently from single-name ideas. | SPY/QQQ regime buckets show forward return and drawdown separation, or clearly show no edge. |
 | 4. Portfolio Policy MVP | Planned | Convert regime plus validated opportunities into a bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context. |
 | 5. Visualization & Reporting MVP | Planned | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
@@ -94,28 +101,42 @@ Future changes here should be limited to bugs or sharp edges found while using t
 
 ## Milestone 2 - Candidate Validation & Outcome MVP
 
-This is the next major milestone.
+This is the active milestone.
 
 Goal: for each Bulltard candidate, add enough independent evidence and outcome tracking to tell whether the idea deserves attention and whether this signal family has worked historically.
 
-Initial scope:
+Implemented v0 scope:
 
-- Ingest daily OHLCV history for candidate tickers plus `SPY` and `QQQ`.
-- Add basic candidate gates:
-  - large/liquid underlying
+- Fetch daily OHLCV history for candidate tickers plus `SPY` and `QQQ` into local JSONL.
+- Apply basic candidate gates:
+  - underlying dollar-volume liquidity
   - enough price history for trend and relative-strength features
   - options-liquidity status remains `unknown` until a real options source is wired in
-- Compute deterministic validation features:
+- Compute deterministic price validation features:
   - latest close and dollar volume
   - 5, 20, and 60 trading-day returns
   - distance from 20, 50, and 200-day moving averages
   - drawdown from recent highs
   - relative strength versus `SPY` and `QQQ`
-  - basic volume/trend flags
 - Persist the point-in-time candidate snapshot before outcomes are known.
 - Attach forward 20, 40, 65, and 126 trading-day returns and max drawdowns when enough future data exists.
-- Compare cohorts such as Trades Of Interest versus ranked-only, repeated flow versus one-off flow, and price-confirmed versus price-unconfirmed candidates.
-- Extend `bulltard daily` or add a candidate command so the final table shows validation status, not just Bulltard evidence.
+- Summarize cohorts by Bulltard source bucket, validation status, and whether ticker-flow detail was fetched.
+- Extend `bulltard daily` with `--validate` so the final table can show validation status, not just Bulltard evidence.
+
+Current implementation notes:
+
+- `prices fetch` writes independent daily OHLCV observations under `data/observations/prices/daily/`.
+- `bulltard validate` reads Bulltard candidates plus local price observations, writes snapshots under `data/snapshots/bulltard/candidates/`, and prints a validation table.
+- `bulltard daily --validate` runs capture and validation together when local price observations are present.
+- `bulltard outcomes` reads saved validation snapshots and local price observations to summarize forward results by source/status/detail cohorts.
+
+Remaining milestone work:
+
+- Run the v0 path on real saved recaps and real price history.
+- Decide whether the Stooq fetch path is reliable enough or whether a keyed/paid data source is needed.
+- Calibrate the basic liquidity and trend thresholds using outcome summaries instead of intuition.
+- Add repeated-flow cohorts once we have multiple days of ticker-flow observations.
+- Add a real options-liquidity source before treating options liquidity as anything other than `unknown`.
 
 Non-goals for this milestone:
 
@@ -124,14 +145,14 @@ Non-goals for this milestone:
 - No broad database abstraction unless JSONL stops being workable for these replay queries.
 - No LLM interpretation in the core scoring path.
 
-First "real thing" output:
+First useful M2 outputs:
 
 ```bash
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --validate
 ./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26
 ```
 
-The exact command names can change during implementation, but the deliverable cannot: candidate validation plus measured outcomes.
+The command names can change later, but the deliverable cannot: candidate validation plus measured outcomes.
 
 ## Milestone 3 - Market Regime MVP
 
@@ -188,6 +209,8 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `8af62a0` - Add Bulltard candidate validation workflow
+- `03b9924` - Mark Bulltard capture milestone complete
 - `5f8292d` - Refresh implementation milestones
 - `e015a76` - Run Bulltard daily candidate workflow
 - `b12f96c` - Handle missing ticker flow premiums
