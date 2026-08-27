@@ -42,6 +42,7 @@ from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
     PriceDataError,
     fetch_and_write_stooq_daily_prices,
+    import_daily_price_csv,
 )
 
 
@@ -156,6 +157,60 @@ def prices_fetch(
         symbol_count=len(results),
         output_root=str(output_root),
     ).success("Fetched daily price observations")
+
+
+@prices_app.command("import-csv", no_args_is_help=True)
+def prices_import_csv(
+    symbol: str = typer.Argument(
+        ...,
+        help="Ticker symbol represented by the CSV.",
+    ),
+    csv_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Local CSV with Date, Open, High, Low, Close, Volume columns.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for daily price observations.",
+    ),
+    source: str = typer.Option(
+        "csv",
+        "--source",
+        help="Source label to store with imported rows.",
+    ),
+    source_symbol: str | None = typer.Option(
+        None,
+        "--source-symbol",
+        help="Symbol spelling used by the source CSV.",
+    ),
+) -> None:
+    """Import daily OHLCV observations from a local CSV file."""
+
+    try:
+        result = import_daily_price_csv(
+            symbol=symbol,
+            csv_path=csv_path,
+            output_root=output_root,
+            source=source,
+            source_symbol=source_symbol,
+        )
+    except PriceDataError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(
+        f"symbol={result.symbol} source_symbol={result.source_symbol} "
+        f"row_count={result.row_count} observation_path={result.observation_path}"
+    )
+    logger.bind(
+        symbol=result.symbol,
+        row_count=result.row_count,
+        observation_path=str(result.observation_path),
+    ).success("Imported daily price observations")
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)

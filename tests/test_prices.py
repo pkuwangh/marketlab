@@ -7,6 +7,7 @@ import pytest
 from marketlab.prices import (
     PriceDataError,
     fetch_and_write_stooq_daily_prices,
+    import_daily_price_csv,
     load_price_history,
     parse_stooq_daily_csv,
     to_stooq_symbol,
@@ -56,6 +57,31 @@ def test_parse_stooq_daily_csv_rejects_error_payload() -> None:
             symbol="META",
             source_symbol="meta.us",
         )
+
+
+def test_import_daily_price_csv_writes_local_observations(tmp_path: Path) -> None:
+    csv_path = tmp_path / "meta.csv"
+    csv_path.write_text(
+        "Date,Open,High,Low,Close,Volume\n"
+        "2026-08-24,100,105,99,104,1000000\n"
+        "2026-08-25,104,108,103,107,1200000\n",
+        encoding="utf-8",
+    )
+
+    result = import_daily_price_csv(
+        symbol="META",
+        csv_path=csv_path,
+        output_root=tmp_path / "prices",
+        source="fixture",
+        source_symbol="meta.us",
+    )
+
+    assert result.symbol == "META"
+    assert result.source_symbol == "meta.us"
+    assert result.row_count == 2
+    rows = load_price_history(symbol="META", price_root=tmp_path / "prices")
+    assert rows[0].source == "fixture"
+    assert rows[1].close == 107.0
 
 
 def test_to_stooq_symbol_adds_us_suffix_only_when_needed() -> None:

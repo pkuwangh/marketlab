@@ -72,6 +72,17 @@ def test_prices_fetch_no_args_shows_help_without_missing_argument_error() -> Non
     assert "Traceback" not in result.output
 
 
+def test_prices_import_csv_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["prices", "import-csv"])
+
+    assert result.exit_code != 0
+    assert "Import daily OHLCV observations" in result.output
+    assert "symbol" in result.output
+    assert "csv_path" in result.output
+    assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_inspect_recap_no_args_shows_help_without_missing_argument_error() -> None:
     result = CliRunner().invoke(app, ["bulltard", "inspect-recap"])
 
@@ -539,6 +550,57 @@ def test_prices_fetch_outputs_written_observation_paths(
 
     assert result.exit_code == 0
     assert "symbol=META source_symbol=meta.us row_count=100" in result.output
+    assert str(output_root / "META.jsonl") in result.output
+
+
+def test_prices_import_csv_outputs_written_observation_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "prices"
+    csv_path = tmp_path / "META.csv"
+    csv_path.write_text("Date,Open,High,Low,Close,Volume\n", encoding="utf-8")
+
+    def fake_import_daily_price_csv(
+        *,
+        symbol: str,
+        csv_path: Path,
+        output_root: Path,
+        source: str,
+        source_symbol: str | None,
+    ) -> PriceFetchResult:
+        assert symbol == "META"
+        assert csv_path == csv_path_arg
+        assert source == "manual"
+        assert source_symbol == "meta.us"
+        return PriceFetchResult(
+            symbol="META",
+            source_symbol="meta.us",
+            observation_path=output_root / "META.jsonl",
+            row_count=2,
+        )
+
+    csv_path_arg = csv_path
+    monkeypatch.setattr("marketlab.cli.import_daily_price_csv", fake_import_daily_price_csv)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "prices",
+            "import-csv",
+            "META",
+            str(csv_path),
+            "--output-root",
+            str(output_root),
+            "--source",
+            "manual",
+            "--source-symbol",
+            "meta.us",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "symbol=META source_symbol=meta.us row_count=2" in result.output
     assert str(output_root / "META.jsonl") in result.output
 
 

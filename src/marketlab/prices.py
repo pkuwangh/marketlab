@@ -65,6 +65,37 @@ class PriceFetchResult:
     row_count: int
 
 
+def import_daily_price_csv(
+    *,
+    symbol: str,
+    csv_path: Path,
+    output_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    source: str = "csv",
+    source_symbol: str | None = None,
+) -> PriceFetchResult:
+    """Import daily OHLCV observations from a local CSV file."""
+
+    normalized_symbol = normalize_symbol(symbol)
+    if not csv_path.is_file():
+        raise PriceDataError(f"Price CSV path does not exist or is not a file: {csv_path}")
+    resolved_source_symbol = source_symbol or normalized_symbol
+    rows = parse_stooq_daily_csv(
+        csv_path.read_text(encoding="utf-8"),
+        symbol=normalized_symbol,
+        source_symbol=resolved_source_symbol,
+        source=source,
+    )
+    if not rows:
+        raise PriceDataError(f"No daily price rows found in {csv_path}")
+    observation_path = write_price_observations(rows, output_root=output_root)
+    return PriceFetchResult(
+        symbol=normalized_symbol,
+        source_symbol=resolved_source_symbol,
+        observation_path=observation_path,
+        row_count=len(rows),
+    )
+
+
 def fetch_stooq_daily_prices(
     *,
     symbol: str,
@@ -104,7 +135,9 @@ def fetch_stooq_daily_prices(
             raise PriceDataError(f"Failed to fetch prices for {normalized_symbol}: {exc}") from exc
         if response.status_code >= 400:
             raise PriceDataError(
-                f"Price fetch for {normalized_symbol} failed with HTTP {response.status_code}"
+                f"Price fetch for {normalized_symbol} failed with HTTP {response.status_code}; "
+                "if Stooq requires an API key, set MARKETLAB_STOOQ_API_KEY "
+                "or pass --stooq-api-key"
             )
         rows = parse_stooq_daily_csv(
             response.text,
@@ -161,6 +194,7 @@ def parse_stooq_daily_csv(
     *,
     symbol: str,
     source_symbol: str,
+    source: str = "stooq",
 ) -> tuple[DailyPriceObservation, ...]:
     """Parse Stooq daily CSV text into price observations."""
 
@@ -180,7 +214,7 @@ def parse_stooq_daily_csv(
         try:
             rows.append(
                 DailyPriceObservation(
-                    source="stooq",
+                    source=source,
                     source_symbol=source_symbol,
                     symbol=normalized_symbol,
                     observed_date=date.fromisoformat(_required(row, "Date")),
