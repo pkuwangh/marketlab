@@ -21,7 +21,7 @@ from marketlab.prices import (
     load_price_history,
 )
 
-DEFAULT_OUTCOME_HORIZONS = (20, 40, 65, 126)
+DEFAULT_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 
 
 class CandidateOutcomeError(ValueError):

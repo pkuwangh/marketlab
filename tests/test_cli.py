@@ -24,7 +24,11 @@ from marketlab.bulltard.outcomes import (
     ForwardOutcome,
     OutcomeSummaryRow,
 )
-from marketlab.bulltard.validation import CandidateValidationResult, CandidateValidationSnapshot
+from marketlab.bulltard.validation import (
+    CandidateValidationResult,
+    CandidateValidationSnapshot,
+    CandidateValidationSummary,
+)
 from marketlab.cli import app, bulltard_app, prices_app
 from marketlab.prices import PriceFetchResult
 
@@ -705,6 +709,7 @@ def test_bulltard_validate_outputs_snapshot_and_table(
         return CandidateValidationResult(
             source_date=source_date,
             snapshots=(_candidate_snapshot(source_date=source_date, symbol="META"),),
+            summary=_candidate_validation_summary(candidate_count=1, confirm_count=1),
             snapshot_path=snapshot_root / "2026-08-26.jsonl",
             table="symbol  status\nMETA    confirm",
         )
@@ -737,6 +742,7 @@ def test_bulltard_validate_outputs_snapshot_and_table(
     assert result.exit_code == 0
     assert f"snapshot_path={snapshot_root / '2026-08-26.jsonl'}" in result.output
     assert "candidate_count=1" in result.output
+    assert "validation_summary=candidates:1 confirm:1 watch:0 avoid:0" in result.output
     assert "META    confirm" in result.output
 
 
@@ -884,7 +890,53 @@ def test_bulltard_outcomes_outputs_summary_table(
     assert "all     20d" in result.output
 
 
-def test_bulltard_daily_can_validate_after_capture(
+def test_bulltard_outcomes_defaults_to_short_and_swing_horizons(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_bulltard_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> CandidateOutcomeResult:
+        assert horizons == (1, 5, 20, 40, 65, 126)
+        return CandidateOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(),
+            summary_rows=(),
+            table="No outcome rows found.",
+        )
+
+    monkeypatch.setattr("marketlab.cli.compute_bulltard_outcomes", fake_compute_bulltard_outcomes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "outcomes",
+            "--start",
+            "2026-08-01",
+            "--end",
+            "2026-08-26",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "outcome_count=0" in result.output
+
+
+def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -892,6 +944,7 @@ def test_bulltard_daily_can_validate_after_capture(
     debug_root = tmp_path / "debug" / "bulltard"
     price_root = tmp_path / "prices"
     snapshot_root = tmp_path / "snapshots"
+    events: list[str] = []
 
     def fake_run_daily_workflow(
         *,
@@ -904,6 +957,7 @@ def test_bulltard_daily_can_validate_after_capture(
         extra_tickers: tuple[str, ...],
         limit: int,
     ) -> DailyWorkflowResult:
+        events.append("capture")
         plan = IngestPlan(
             source_date=source_date,
             view=BulltardView.RANKED_OPTION_TRADES,
@@ -931,6 +985,45 @@ def test_bulltard_daily_can_validate_after_capture(
             candidate_table="symbol  source\nMETA    ranked",
         )
 
+    def fake_refresh_candidate_price_set(
+        *,
+        source_date: date,
+        start_date: date,
+        end_date: date,
+        observations_root: Path,
+        price_root: Path,
+        limit: int,
+    ) -> CandidatePriceRefreshResult:
+        assert events == ["capture"]
+        assert source_date == date(2026, 8, 26)
+        assert start_date == date(2025, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert observations_root == output_root
+        assert price_root == price_root_arg
+        assert limit == 12
+        events.append("prices")
+        return CandidatePriceRefreshResult(
+            source_date=source_date,
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("META", "SPY"),
+            price_results=(
+                PriceFetchResult(
+                    symbol="META",
+                    source_symbol="META",
+                    observation_path=price_root / "META.jsonl",
+                    row_count=420,
+                ),
+                PriceFetchResult(
+                    symbol="SPY",
+                    source_symbol="SPY",
+                    observation_path=price_root / "SPY.jsonl",
+                    row_count=420,
+                ),
+            ),
+            price_failures=(),
+        )
+
     def fake_validate_bulltard_candidates(
         *,
         source_date: date,
@@ -941,25 +1034,80 @@ def test_bulltard_daily_can_validate_after_capture(
         min_dollar_volume: float,
         write_snapshot: bool,
     ) -> CandidateValidationResult:
+        assert events == ["capture", "prices"]
         assert observations_root == output_root
         assert price_root == price_root_arg
         assert snapshot_root == snapshot_root_arg
         assert limit == 12
         assert write_snapshot is True
+        events.append("validate")
         return CandidateValidationResult(
             source_date=source_date,
             snapshots=(_candidate_snapshot(source_date=source_date, symbol="META"),),
+            summary=_candidate_validation_summary(candidate_count=1, confirm_count=1),
             snapshot_path=snapshot_root / "2026-08-26.jsonl",
             table="symbol  status\nMETA    confirm",
+        )
+
+    def fake_compute_bulltard_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> CandidateOutcomeResult:
+        assert events == ["capture", "prices", "validate"]
+        assert start_date == date(2026, 8, 1)
+        assert end_date == date(2026, 8, 26)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (1, 5, 20)
+        events.append("outcomes")
+        return CandidateOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                ForwardOutcome(
+                    source_date=date(2026, 8, 26),
+                    symbol="META",
+                    bulltard_source="ranked",
+                    source_bucket="ranked",
+                    validation_status="confirm",
+                    detail_bucket="with_detail",
+                    horizon_days=1,
+                    return_value=0.01,
+                    relative_strength_spy=0.005,
+                    max_drawdown=-0.01,
+                ),
+            ),
+            summary_rows=(
+                OutcomeSummaryRow(
+                    cohort="all",
+                    horizon_days=1,
+                    candidate_count=1,
+                    available_count=1,
+                    avg_return=0.01,
+                    hit_rate=1.0,
+                    avg_relative_strength_spy=0.005,
+                    avg_max_drawdown=-0.01,
+                ),
+            ),
+            table="cohort  horizon\nall     1d",
         )
 
     price_root_arg = price_root
     snapshot_root_arg = snapshot_root
     monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
     monkeypatch.setattr(
+        "marketlab.cli.refresh_candidate_price_set",
+        fake_refresh_candidate_price_set,
+    )
+    monkeypatch.setattr(
         "marketlab.cli.validate_bulltard_candidates",
         fake_validate_bulltard_candidates,
     )
+    monkeypatch.setattr("marketlab.cli.compute_bulltard_outcomes", fake_compute_bulltard_outcomes)
 
     result = CliRunner().invoke(
         app,
@@ -973,17 +1121,35 @@ def test_bulltard_daily_can_validate_after_capture(
             str(output_root),
             "--debug-root",
             str(debug_root),
+            "--fetch-prices",
+            "--price-start",
+            "2025-01-01",
+            "--price-end",
+            "2026-08-28",
             "--validate",
             "--price-root",
             str(price_root),
             "--snapshot-root",
             str(snapshot_root),
+            "--outcomes",
+            "--outcome-start",
+            "2026-08-01",
+            "--outcome-end",
+            "2026-08-26",
+            "--horizons",
+            "1,5,20",
         ],
     )
 
     assert result.exit_code == 0
+    assert events == ["capture", "prices", "validate", "outcomes"]
+    assert "price_symbols=META,SPY" in result.output
+    assert "price_success_count=2" in result.output
     assert "candidate_validation_count=1" in result.output
+    assert "candidate_validation_summary=candidates:1 confirm:1 watch:0 avoid:0" in result.output
     assert "META    confirm" in result.output
+    assert "outcome_count=1" in result.output
+    assert "all     1d" in result.output
 
 
 def _candidate_snapshot(*, source_date: date, symbol: str) -> CandidateValidationSnapshot:
@@ -1014,6 +1180,27 @@ def _candidate_snapshot(*, source_date: date, symbol: str) -> CandidateValidatio
         options_liquidity_status="unknown",
         validation_status="confirm",
         validation_reasons=("positive_20d",),
+    )
+
+
+def _candidate_validation_summary(
+    *,
+    candidate_count: int,
+    confirm_count: int = 0,
+    watch_count: int = 0,
+    avoid_count: int = 0,
+    missing_price_count: int = 0,
+    thin_underlying_count: int = 0,
+    unknown_options_liquidity_count: int = 1,
+) -> CandidateValidationSummary:
+    return CandidateValidationSummary(
+        candidate_count=candidate_count,
+        confirm_count=confirm_count,
+        watch_count=watch_count,
+        avoid_count=avoid_count,
+        missing_price_count=missing_price_count,
+        thin_underlying_count=thin_underlying_count,
+        unknown_options_liquidity_count=unknown_options_liquidity_count,
     )
 
 

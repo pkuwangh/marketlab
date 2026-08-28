@@ -104,8 +104,22 @@ class CandidateValidationResult:
 
     source_date: date
     snapshots: tuple[CandidateValidationSnapshot, ...]
+    summary: CandidateValidationSummary
     snapshot_path: Path | None
     table: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateValidationSummary:
+    """Aggregate validation counts for one candidate set."""
+
+    candidate_count: int
+    confirm_count: int
+    watch_count: int
+    avoid_count: int
+    missing_price_count: int
+    thin_underlying_count: int
+    unknown_options_liquidity_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +171,7 @@ def validate_bulltard_candidates(
         )
         for review in reviews
     )
+    summary = summarize_candidate_validation_snapshots(snapshots)
     snapshot_path = (
         write_candidate_validation_snapshots(
             snapshots,
@@ -175,8 +190,31 @@ def validate_bulltard_candidates(
     return CandidateValidationResult(
         source_date=source_date,
         snapshots=snapshots,
+        summary=summary,
         snapshot_path=snapshot_path,
         table=table,
+    )
+
+
+def summarize_candidate_validation_snapshots(
+    snapshots: tuple[CandidateValidationSnapshot, ...],
+) -> CandidateValidationSummary:
+    """Summarize validation statuses and missing-data counts."""
+
+    return CandidateValidationSummary(
+        candidate_count=len(snapshots),
+        confirm_count=sum(1 for snapshot in snapshots if snapshot.validation_status == "confirm"),
+        watch_count=sum(1 for snapshot in snapshots if snapshot.validation_status == "watch"),
+        avoid_count=sum(1 for snapshot in snapshots if snapshot.validation_status == "avoid"),
+        missing_price_count=sum(
+            1 for snapshot in snapshots if "missing_price_history" in snapshot.validation_reasons
+        ),
+        thin_underlying_count=sum(
+            1 for snapshot in snapshots if snapshot.underlying_liquidity_status == "thin"
+        ),
+        unknown_options_liquidity_count=sum(
+            1 for snapshot in snapshots if snapshot.options_liquidity_status == "unknown"
+        ),
     )
 
 

@@ -115,6 +115,12 @@ def test_validate_bulltard_candidates_writes_price_validation_snapshot(
     )
     assert result.snapshots[2].validation_status == "avoid"
     assert result.snapshots[2].validation_reasons == ("thin_underlying",)
+    assert result.summary.candidate_count == 3
+    assert result.summary.confirm_count == 1
+    assert result.summary.watch_count == 0
+    assert result.summary.avoid_count == 2
+    assert result.summary.thin_underlying_count == 1
+    assert result.summary.unknown_options_liquidity_count == 3
     assert "opt_liq" in result.table
     assert "unknown" in result.table
 
