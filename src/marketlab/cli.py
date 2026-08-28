@@ -56,8 +56,10 @@ from marketlab.prices import (
 from marketlab.regime import (
     DEFAULT_REGIME_SNAPSHOT_ROOT,
     RegimeError,
+    RegimeOutcomeResult,
     RegimePriceRefreshResult,
     RegimeSnapshotResult,
+    compute_regime_outcomes,
     compute_regime_snapshot,
     refresh_regime_prices,
 )
@@ -373,6 +375,56 @@ def regime_snapshot(
         raise typer.BadParameter(str(exc)) from exc
 
     _echo_regime_snapshot_result(result)
+
+
+@regime_app.command("outcomes", no_args_is_help=True)
+def regime_outcomes(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First market regime snapshot date to replay.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last market regime snapshot date to replay.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    horizons_value: str = typer.Option(
+        DEFAULT_OUTCOME_HORIZONS_VALUE,
+        "--horizons",
+        help="Comma-separated forward trading-day horizons.",
+    ),
+) -> None:
+    """Replay forward SPY/QQQ outcomes for saved market regimes."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        result = compute_regime_outcomes(
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_root=snapshot_root,
+            price_root=price_root,
+            horizons=_parse_horizons(horizons_value),
+        )
+    except RegimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_regime_outcome_result(result)
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
@@ -1118,6 +1170,12 @@ def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
     typer.echo(f"regime_score={snapshot.score}")
     typer.echo(f"regime_confidence={snapshot.confidence}")
     typer.echo(f"missing_regime_symbols={','.join(snapshot.missing_symbols)}")
+    typer.echo("")
+    typer.echo(result.table)
+
+
+def _echo_regime_outcome_result(result: RegimeOutcomeResult) -> None:
+    typer.echo(f"regime_outcome_count={len(result.outcomes)}")
     typer.echo("")
     typer.echo(result.table)
 

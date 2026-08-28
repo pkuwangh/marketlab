@@ -3,9 +3,13 @@ from pathlib import Path
 
 from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import (
+    RegimeComponentScore,
+    RegimeSnapshot,
+    compute_regime_outcomes,
     compute_regime_snapshot,
     load_regime_snapshot,
     refresh_regime_prices,
+    write_regime_snapshot,
 )
 
 
@@ -137,6 +141,79 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
     assert calls == list(result.requested_symbols)
     assert len(result.price_results) == 7
     assert result.price_failures == ()
+
+
+def test_compute_regime_outcomes_summarizes_market_buckets(tmp_path: Path) -> None:
+    source_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_regime_snapshot(
+        _snapshot(source_date=source_date, regime="risk_on", score=5),
+        snapshot_root=snapshot_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=source_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=source_date,
+        closes=[100.0 + index * 2 for index in range(30)],
+    )
+
+    result = compute_regime_outcomes(
+        start_date=source_date,
+        end_date=source_date,
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(20,),
+    )
+
+    assert len(result.outcomes) == 1
+    assert result.outcomes[0].regime == "risk_on"
+    assert round(result.outcomes[0].spy_return or 0.0, 4) == 0.2
+    assert round(result.outcomes[0].qqq_return or 0.0, 4) == 0.4
+    risk_on_row = next(row for row in result.summary_rows if row.bucket == "regime:risk_on")
+    assert risk_on_row.snapshot_count == 1
+    assert risk_on_row.available_count == 1
+    assert round(risk_on_row.avg_spy_return or 0.0, 4) == 0.2
+    assert "regime:risk_on" in result.table
+
+
+def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:
+    return RegimeSnapshot(
+        source_date=source_date,
+        feature_version="fixture_features",
+        model_version="fixture_model",
+        price_date=source_date,
+        regime=regime,
+        score=score,
+        confidence="high",
+        components=(
+            RegimeComponentScore(
+                name="trend",
+                score=2,
+                status="constructive",
+                reason="fixture",
+            ),
+        ),
+        missing_symbols=(),
+        spy_return_20d=0.05,
+        spy_return_60d=0.10,
+        spy_ma50_distance=0.03,
+        spy_ma200_distance=0.08,
+        spy_realized_vol_20d=0.12,
+        qqq_return_20d=0.06,
+        qqq_ma50_distance=0.04,
+        qqq_ma200_distance=0.09,
+        rsp_spy_relative_20d=0.01,
+        iwm_spy_relative_20d=0.01,
+        hyg_tlt_relative_20d=0.02,
+        vix_close=16.0,
+    )
 
 
 def _write_price_history(

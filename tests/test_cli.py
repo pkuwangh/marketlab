@@ -33,6 +33,9 @@ from marketlab.cli import app, bulltard_app, prices_app, regime_app
 from marketlab.prices import PriceFetchResult
 from marketlab.regime import (
     RegimeComponentScore,
+    RegimeForwardOutcome,
+    RegimeOutcomeResult,
+    RegimeOutcomeSummaryRow,
     RegimePriceRefreshResult,
     RegimeSnapshot,
     RegimeSnapshotResult,
@@ -114,6 +117,17 @@ def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> No
     assert "Compute a market regime snapshot" in result.output
     assert "--date" in result.output
     assert "--fetch-prices" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regime_outcomes_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "outcomes"])
+
+    assert result.exit_code != 0
+    assert "Replay forward SPY/QQQ outcomes" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
@@ -798,6 +812,85 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime=risk_on" in result.output
     assert "regime_score=5" in result.output
     assert "trend     +2     constructive" in result.output
+
+
+def test_regime_outcomes_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> RegimeOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20, 65)
+        return RegimeOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                RegimeForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    regime="risk_on",
+                    score=5,
+                    confidence="high",
+                    horizon_days=20,
+                    spy_return=0.05,
+                    qqq_return=0.08,
+                    spy_max_drawdown=-0.02,
+                    qqq_max_drawdown=-0.03,
+                ),
+            ),
+            summary_rows=(
+                RegimeOutcomeSummaryRow(
+                    bucket="regime:risk_on",
+                    horizon_days=20,
+                    snapshot_count=1,
+                    available_count=1,
+                    avg_spy_return=0.05,
+                    avg_qqq_return=0.08,
+                    avg_spy_max_drawdown=-0.02,
+                    avg_qqq_max_drawdown=-0.03,
+                ),
+            ),
+            table="bucket          horizon\nregime:risk_on  20d",
+        )
+
+    snapshot_root_arg = snapshot_root
+    price_root_arg = price_root
+    monkeypatch.setattr("marketlab.cli.compute_regime_outcomes", fake_compute_regime_outcomes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20,65",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_outcome_count=1" in result.output
+    assert "regime:risk_on  20d" in result.output
 
 
 def test_bulltard_validate_outputs_snapshot_and_table(

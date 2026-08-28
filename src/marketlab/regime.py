@@ -23,6 +23,7 @@ from marketlab.prices import (
 
 DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
 DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX")
+DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v0"
 
@@ -129,6 +130,47 @@ class RegimeSnapshotResult:
     source_date: date
     snapshot: RegimeSnapshot
     snapshot_path: Path | None
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeForwardOutcome:
+    """One forward market outcome from one regime snapshot."""
+
+    source_date: date
+    price_date: date | None
+    regime: str
+    score: int
+    confidence: str
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeOutcomeSummaryRow:
+    """Aggregate forward market outcome row for one regime bucket and horizon."""
+
+    bucket: str
+    horizon_days: int
+    snapshot_count: int
+    available_count: int
+    avg_spy_return: float | None
+    avg_qqq_return: float | None
+    avg_spy_max_drawdown: float | None
+    avg_qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeOutcomeResult:
+    """Result of one market regime outcome replay."""
+
+    start_date: date
+    end_date: date
+    outcomes: tuple[RegimeForwardOutcome, ...]
+    summary_rows: tuple[RegimeOutcomeSummaryRow, ...]
     table: str
 
 
@@ -315,6 +357,128 @@ def format_regime_snapshot(snapshot: RegimeSnapshot) -> str:
     return _format_table(rows)
 
 
+def compute_regime_outcomes(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+) -> RegimeOutcomeResult:
+    """Replay forward SPY/QQQ outcomes for saved market regime snapshots."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    snapshots = _load_regime_snapshots_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+    )
+    if not snapshots:
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    outcomes = tuple(
+        outcome
+        for snapshot in snapshots
+        for outcome in _regime_snapshot_outcomes(
+            snapshot=snapshot,
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    summary_rows = summarize_regime_outcomes(outcomes)
+    table = format_regime_outcome_summary(summary_rows)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        snapshot_count=len(snapshots),
+        outcome_count=len(outcomes),
+    ).success("Computed market regime outcomes")
+    return RegimeOutcomeResult(
+        start_date=start_date,
+        end_date=end_date,
+        outcomes=outcomes,
+        summary_rows=summary_rows,
+        table=table,
+    )
+
+
+def summarize_regime_outcomes(
+    outcomes: tuple[RegimeForwardOutcome, ...],
+) -> tuple[RegimeOutcomeSummaryRow, ...]:
+    """Summarize forward market outcomes by regime bucket."""
+
+    buckets: dict[str, list[RegimeForwardOutcome]] = {"all": list(outcomes)}
+    for outcome in outcomes:
+        buckets.setdefault(f"regime:{outcome.regime}", []).append(outcome)
+
+    rows: list[RegimeOutcomeSummaryRow] = []
+    for bucket in sorted(buckets):
+        bucket_outcomes = tuple(buckets[bucket])
+        for horizon in sorted({outcome.horizon_days for outcome in bucket_outcomes}):
+            horizon_outcomes = tuple(
+                outcome for outcome in bucket_outcomes if outcome.horizon_days == horizon
+            )
+            available = tuple(
+                outcome
+                for outcome in horizon_outcomes
+                if outcome.spy_return is not None and outcome.qqq_return is not None
+            )
+            rows.append(
+                RegimeOutcomeSummaryRow(
+                    bucket=bucket,
+                    horizon_days=horizon,
+                    snapshot_count=len(horizon_outcomes),
+                    available_count=len(available),
+                    avg_spy_return=_average(outcome.spy_return for outcome in available),
+                    avg_qqq_return=_average(outcome.qqq_return for outcome in available),
+                    avg_spy_max_drawdown=_average(
+                        outcome.spy_max_drawdown for outcome in available
+                    ),
+                    avg_qqq_max_drawdown=_average(
+                        outcome.qqq_max_drawdown for outcome in available
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def format_regime_outcome_summary(rows: tuple[RegimeOutcomeSummaryRow, ...]) -> str:
+    """Format market regime outcome summaries as a compact table."""
+
+    if not rows:
+        return "No regime outcome rows found."
+
+    table = [
+        [
+            "bucket",
+            "horizon",
+            "snapshots",
+            "available",
+            "avg_spy",
+            "avg_qqq",
+            "spy_dd",
+            "qqq_dd",
+        ]
+    ]
+    for row in rows:
+        table.append(
+            [
+                row.bucket,
+                f"{row.horizon_days}d",
+                str(row.snapshot_count),
+                str(row.available_count),
+                _format_percent(row.avg_spy_return),
+                _format_percent(row.avg_qqq_return),
+                _format_percent(row.avg_spy_max_drawdown),
+                _format_percent(row.avg_qqq_max_drawdown),
+            ]
+        )
+    return _format_table(table)
+
+
 def _load_histories(
     *,
     symbols: tuple[str, ...],
@@ -327,6 +491,52 @@ def _load_histories(
         except PriceDataError as exc:
             raise RegimeError(str(exc)) from exc
     return histories
+
+
+def _load_regime_snapshots_in_range(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path,
+) -> tuple[RegimeSnapshot, ...]:
+    snapshots: list[RegimeSnapshot] = []
+    for path in sorted(snapshot_root.glob("*.json")):
+        try:
+            source_date = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if start_date <= source_date <= end_date:
+            snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+            if snapshot is not None:
+                snapshots.append(snapshot)
+    return tuple(snapshots)
+
+
+def _regime_snapshot_outcomes(
+    *,
+    snapshot: RegimeSnapshot,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[RegimeForwardOutcome, ...]:
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _exact_date_index(spy_history, snapshot.price_date)
+    qqq_index = _exact_date_index(qqq_history, snapshot.price_date)
+    return tuple(
+        RegimeForwardOutcome(
+            source_date=snapshot.source_date,
+            price_date=snapshot.price_date,
+            regime=snapshot.regime,
+            score=snapshot.score,
+            confidence=snapshot.confidence,
+            horizon_days=horizon,
+            spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+            qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+            spy_max_drawdown=_forward_max_drawdown(spy_history, index=spy_index, horizon=horizon),
+            qqq_max_drawdown=_forward_max_drawdown(qqq_history, index=qqq_index, horizon=horizon),
+        )
+        for horizon in horizons
+    )
 
 
 def _symbol_features(
@@ -566,6 +776,55 @@ def _asof_index(history: tuple[DailyPriceObservation, ...], source_date: date) -
     return None
 
 
+def _exact_date_index(
+    history: tuple[DailyPriceObservation, ...],
+    observed_date: date | None,
+) -> int | None:
+    if observed_date is None:
+        return None
+    for index, row in enumerate(history):
+        if row.observed_date == observed_date:
+            return index
+    return None
+
+
+def _forward_return(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    horizon: int,
+) -> float | None:
+    if index is None:
+        return None
+    future_index = index + horizon
+    if future_index >= len(history):
+        return None
+    current_close = history[index].return_close
+    if current_close == 0:
+        return None
+    return history[future_index].return_close / current_close - 1.0
+
+
+def _forward_max_drawdown(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    horizon: int,
+) -> float | None:
+    if index is None:
+        return None
+    future_index = index + horizon
+    if future_index >= len(history):
+        return None
+    current_close = history[index].return_close
+    if current_close == 0:
+        return None
+    lows = [row.return_close for row in history[index + 1 : future_index + 1]]
+    if not lows:
+        return None
+    return min(lows) / current_close - 1.0
+
+
 def _lookback_return(
     history: tuple[DailyPriceObservation, ...],
     *,
@@ -667,8 +926,21 @@ def _optional_float(value: object) -> float | None:
     return float(value) if value is not None else None
 
 
+def _average(values) -> float | None:
+    clean = [value for value in values if value is not None]
+    if not clean:
+        return None
+    return sum(clean) / len(clean)
+
+
 def _format_score(value: int) -> str:
     return f"{value:+d}"
+
+
+def _format_percent(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value * 100:+.1f}%"
 
 
 def _format_table(rows: list[list[str]]) -> str:
