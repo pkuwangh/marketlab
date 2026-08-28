@@ -53,6 +53,14 @@ from marketlab.prices import (
     fetch_and_write_yahoo_daily_prices,
     import_daily_price_csv,
 )
+from marketlab.regime import (
+    DEFAULT_REGIME_SNAPSHOT_ROOT,
+    RegimeError,
+    RegimePriceRefreshResult,
+    RegimeSnapshotResult,
+    compute_regime_snapshot,
+    refresh_regime_prices,
+)
 
 
 class LogLevel(StrEnum):
@@ -77,8 +85,13 @@ prices_app = typer.Typer(
     help="Daily OHLCV price utilities.",
     no_args_is_help=True,
 )
+regime_app = typer.Typer(
+    help="Market regime utilities.",
+    no_args_is_help=True,
+)
 app.add_typer(bulltard_app, name="bulltard")
 app.add_typer(prices_app, name="prices")
+app.add_typer(regime_app, name="regime")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
 DEFAULT_OUTCOME_HORIZONS_VALUE = "1,5,20,40,65,126"
@@ -276,6 +289,90 @@ def prices_import_csv(
         row_count=result.row_count,
         observation_path=str(result.observation_path),
     ).success("Imported daily price observations")
+
+
+@regime_app.command("snapshot", no_args_is_help=True)
+def regime_snapshot(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Market regime date to compute.",
+    ),
+    fetch_prices_flag: bool = typer.Option(
+        False,
+        "--fetch-prices",
+        help="Also refresh Yahoo daily prices for regime proxies.",
+    ),
+    price_start_value: str | None = typer.Option(
+        None,
+        "--price-start",
+        metavar="YYYY-MM-DD",
+        help=(
+            "First price date for --fetch-prices. "
+            f"Defaults to {DEFAULT_DAILY_PRICE_LOOKBACK_DAYS} days before --date."
+        ),
+    ),
+    price_end_value: str | None = typer.Option(
+        None,
+        "--price-end",
+        metavar="YYYY-MM-DD",
+        help="Last price date for --fetch-prices. Defaults to today.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory for market regime snapshots.",
+    ),
+    write_snapshot: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write the market regime snapshot.",
+    ),
+) -> None:
+    """Compute a market regime snapshot from price proxies."""
+
+    source_date = _parse_source_date(source_date_value)
+    if fetch_prices_flag:
+        price_start = (
+            _parse_date_option(price_start_value, option_name="--price-start")
+            if price_start_value
+            else source_date - timedelta(days=DEFAULT_DAILY_PRICE_LOOKBACK_DAYS)
+        )
+        price_end = (
+            _parse_date_option(price_end_value, option_name="--price-end")
+            if price_end_value
+            else date.today()
+        )
+        try:
+            price_refresh_result = refresh_regime_prices(
+                start_date=price_start,
+                end_date=price_end,
+                price_root=price_root,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_regime_price_refresh_result(price_refresh_result)
+        typer.echo("")
+
+    try:
+        result = compute_regime_snapshot(
+            source_date=source_date,
+            price_root=price_root,
+            snapshot_root=snapshot_root,
+            write_snapshot=write_snapshot,
+        )
+    except RegimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_regime_snapshot_result(result)
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
@@ -994,6 +1091,35 @@ def _echo_price_refresh_result(result: CandidatePriceRefreshResult) -> None:
         )
     for failure in result.price_failures:
         typer.echo(f"price_failure={failure.symbol} error={failure.error}")
+
+
+def _echo_regime_price_refresh_result(result: RegimePriceRefreshResult) -> None:
+    typer.echo(f"regime_price_symbols={','.join(result.requested_symbols)}")
+    typer.echo(f"regime_price_success_count={len(result.price_results)}")
+    typer.echo(f"regime_price_failure_count={len(result.price_failures)}")
+    for price_result in result.price_results:
+        typer.echo(
+            f"regime_price_result={price_result.symbol} row_count={price_result.row_count} "
+            f"observation_path={price_result.observation_path}"
+        )
+    for failure in result.price_failures:
+        typer.echo(f"regime_price_failure={failure.symbol} error={failure.error}")
+
+
+def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
+    if result.snapshot_path is not None:
+        typer.echo(f"regime_snapshot_path={result.snapshot_path}")
+    snapshot = result.snapshot
+    typer.echo(f"regime_date={snapshot.source_date.isoformat()}")
+    typer.echo(
+        f"regime_price_date={snapshot.price_date.isoformat() if snapshot.price_date else ''}"
+    )
+    typer.echo(f"regime={snapshot.regime}")
+    typer.echo(f"regime_score={snapshot.score}")
+    typer.echo(f"regime_confidence={snapshot.confidence}")
+    typer.echo(f"missing_regime_symbols={','.join(snapshot.missing_symbols)}")
+    typer.echo("")
+    typer.echo(result.table)
 
 
 def _format_validation_summary(

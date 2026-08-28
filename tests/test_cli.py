@@ -29,8 +29,14 @@ from marketlab.bulltard.validation import (
     CandidateValidationSnapshot,
     CandidateValidationSummary,
 )
-from marketlab.cli import app, bulltard_app, prices_app
+from marketlab.cli import app, bulltard_app, prices_app, regime_app
 from marketlab.prices import PriceFetchResult
+from marketlab.regime import (
+    RegimeComponentScore,
+    RegimePriceRefreshResult,
+    RegimeSnapshot,
+    RegimeSnapshotResult,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
 
@@ -39,6 +45,7 @@ def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert app.info.no_args_is_help is True
     assert bulltard_app.info.no_args_is_help is True
     assert prices_app.info.no_args_is_help is True
+    assert regime_app.info.no_args_is_help is True
 
 
 def test_typer_no_args_shows_help_without_traceback() -> None:
@@ -69,6 +76,15 @@ def test_prices_no_args_shows_help_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
+def test_regime_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["regime"])
+
+    assert result.exit_code != 0
+    assert "Market regime utilities." in result.output
+    assert "snapshot" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_prices_fetch_no_args_shows_help_without_missing_argument_error() -> None:
     result = CliRunner().invoke(app, ["prices", "fetch"])
 
@@ -88,6 +104,17 @@ def test_prices_fetch_yahoo_no_args_shows_help_without_missing_argument_error() 
     assert "SYMBOL[,SYMBOL...]" in result.output
     assert "--start" in result.output
     assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "snapshot"])
+
+    assert result.exit_code != 0
+    assert "Compute a market regime snapshot" in result.output
+    assert "--date" in result.output
+    assert "--fetch-prices" in result.output
+    assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -684,6 +711,95 @@ def test_prices_import_csv_outputs_written_observation_path(
     assert str(output_root / "META.jsonl") in result.output
 
 
+def test_regime_snapshot_fetches_prices_and_outputs_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_root = tmp_path / "prices"
+    snapshot_root = tmp_path / "regime"
+    events: list[str] = []
+
+    def fake_refresh_regime_prices(
+        *,
+        start_date: date,
+        end_date: date,
+        price_root: Path,
+    ) -> RegimePriceRefreshResult:
+        assert start_date == date(2025, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert price_root == price_root_arg
+        events.append("prices")
+        return RegimePriceRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("SPY", "QQQ"),
+            price_results=(
+                PriceFetchResult(
+                    symbol="SPY",
+                    source_symbol="SPY",
+                    observation_path=price_root / "SPY.jsonl",
+                    row_count=420,
+                ),
+            ),
+            price_failures=(),
+        )
+
+    def fake_compute_regime_snapshot(
+        *,
+        source_date: date,
+        price_root: Path,
+        snapshot_root: Path,
+        write_snapshot: bool,
+    ) -> RegimeSnapshotResult:
+        assert events == ["prices"]
+        assert source_date == date(2026, 8, 28)
+        assert price_root == price_root_arg
+        assert snapshot_root == snapshot_root_arg
+        assert write_snapshot is True
+        events.append("snapshot")
+        snapshot = _regime_snapshot(source_date=source_date)
+        return RegimeSnapshotResult(
+            source_date=source_date,
+            snapshot=snapshot,
+            snapshot_path=snapshot_root / "2026-08-28.json",
+            table="component  score  status\ntrend     +2     constructive",
+        )
+
+    price_root_arg = price_root
+    snapshot_root_arg = snapshot_root
+    monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
+    monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "snapshot",
+            "--date",
+            "2026-08-28",
+            "--fetch-prices",
+            "--price-start",
+            "2025-01-01",
+            "--price-end",
+            "2026-08-28",
+            "--price-root",
+            str(price_root),
+            "--snapshot-root",
+            str(snapshot_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert events == ["prices", "snapshot"]
+    assert "regime_price_symbols=SPY,QQQ" in result.output
+    assert "regime_price_success_count=1" in result.output
+    assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
+    assert "regime_date=2026-08-28" in result.output
+    assert "regime=risk_on" in result.output
+    assert "regime_score=5" in result.output
+    assert "trend     +2     constructive" in result.output
+
+
 def test_bulltard_validate_outputs_snapshot_and_table(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1199,6 +1315,39 @@ def _candidate_validation_summary(
         avoid_count=avoid_count,
         missing_price_count=missing_price_count,
         thin_underlying_count=thin_underlying_count,
+    )
+
+
+def _regime_snapshot(*, source_date: date) -> RegimeSnapshot:
+    return RegimeSnapshot(
+        source_date=source_date,
+        feature_version="fixture_features",
+        model_version="fixture_model",
+        price_date=source_date,
+        regime="risk_on",
+        score=5,
+        confidence="high",
+        components=(
+            RegimeComponentScore(
+                name="trend",
+                score=2,
+                status="constructive",
+                reason="fixture trend",
+            ),
+        ),
+        missing_symbols=(),
+        spy_return_20d=0.05,
+        spy_return_60d=0.12,
+        spy_ma50_distance=0.04,
+        spy_ma200_distance=0.10,
+        spy_realized_vol_20d=0.12,
+        qqq_return_20d=0.06,
+        qqq_ma50_distance=0.05,
+        qqq_ma200_distance=0.12,
+        rsp_spy_relative_20d=0.01,
+        iwm_spy_relative_20d=0.02,
+        hyg_tlt_relative_20d=0.03,
+        vix_close=16.0,
     )
 
 
