@@ -798,7 +798,10 @@ def daily(
         None,
         "--outcome-start",
         metavar="YYYY-MM-DD",
-        help="First candidate snapshot date to replay for --outcomes. Defaults to --date.",
+        help=(
+            "First candidate snapshot date to replay for --outcomes. "
+            "Defaults to the earliest saved snapshot date, or --date when none exists."
+        ),
     ),
     outcome_end_value: str | None = typer.Option(
         None,
@@ -906,7 +909,7 @@ def daily(
         outcome_start = (
             _parse_date_option(outcome_start_value, option_name="--outcome-start")
             if outcome_start_value
-            else source_date
+            else _default_outcome_start(snapshot_root=snapshot_root, fallback=source_date)
         )
         outcome_end = (
             _parse_date_option(outcome_end_value, option_name="--outcome-end")
@@ -968,6 +971,16 @@ def _parse_horizons(value: str) -> tuple[int, ...]:
 
 def _parse_extra_tickers(value: str) -> tuple[str, ...]:
     return tuple(symbol.strip() for symbol in value.split(",") if symbol.strip())
+
+
+def _default_outcome_start(*, snapshot_root: Path, fallback: date) -> date:
+    snapshot_dates = []
+    for path in snapshot_root.glob("*.jsonl"):
+        try:
+            snapshot_dates.append(date.fromisoformat(path.stem))
+        except ValueError:
+            continue
+    return min(snapshot_dates, default=fallback)
 
 
 def _echo_price_refresh_result(result: CandidatePriceRefreshResult) -> None:

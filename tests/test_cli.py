@@ -1098,6 +1098,8 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
 
     price_root_arg = price_root
     snapshot_root_arg = snapshot_root
+    snapshot_root.mkdir(parents=True)
+    (snapshot_root / "2026-08-01.jsonl").write_text("", encoding="utf-8")
     monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
     monkeypatch.setattr(
         "marketlab.cli.refresh_candidate_price_set",
@@ -1132,8 +1134,6 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
             "--snapshot-root",
             str(snapshot_root),
             "--outcomes",
-            "--outcome-start",
-            "2026-08-01",
             "--outcome-end",
             "2026-08-26",
             "--horizons",
