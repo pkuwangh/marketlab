@@ -119,7 +119,6 @@ class CandidateValidationSummary:
     avoid_count: int
     missing_price_count: int
     thin_underlying_count: int
-    unknown_options_liquidity_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,9 +211,6 @@ def summarize_candidate_validation_snapshots(
         thin_underlying_count=sum(
             1 for snapshot in snapshots if snapshot.underlying_liquidity_status == "thin"
         ),
-        unknown_options_liquidity_count=sum(
-            1 for snapshot in snapshots if snapshot.options_liquidity_status == "unknown"
-        ),
     )
 
 
@@ -281,7 +277,6 @@ def format_candidate_validation_snapshots(
             "rs_spy20",
             "ma50",
             "dd60",
-            "opt_liq",
             "reason",
         ]
     ]
@@ -297,7 +292,6 @@ def format_candidate_validation_snapshots(
                 _format_percent(snapshot.relative_strength_20d_spy),
                 _format_percent(snapshot.ma50_distance),
                 _format_percent(snapshot.drawdown_60d),
-                snapshot.options_liquidity_status,
                 ",".join(snapshot.validation_reasons),
             ]
         )

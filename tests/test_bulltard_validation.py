@@ -120,9 +120,8 @@ def test_validate_bulltard_candidates_writes_price_validation_snapshot(
     assert result.summary.watch_count == 0
     assert result.summary.avoid_count == 2
     assert result.summary.thin_underlying_count == 1
-    assert result.summary.unknown_options_liquidity_count == 3
-    assert "opt_liq" in result.table
-    assert "unknown" in result.table
+    assert "dollar_vol" in result.table
+    assert "opt_liq" not in result.table
 
     loaded = load_candidate_validation_snapshots(
         source_date=source_date,

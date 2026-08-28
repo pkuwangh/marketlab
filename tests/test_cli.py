@@ -1191,7 +1191,6 @@ def _candidate_validation_summary(
     avoid_count: int = 0,
     missing_price_count: int = 0,
     thin_underlying_count: int = 0,
-    unknown_options_liquidity_count: int = 1,
 ) -> CandidateValidationSummary:
     return CandidateValidationSummary(
         candidate_count=candidate_count,
@@ -1200,7 +1199,6 @@ def _candidate_validation_summary(
         avoid_count=avoid_count,
         missing_price_count=missing_price_count,
         thin_underlying_count=thin_underlying_count,
-        unknown_options_liquidity_count=unknown_options_liquidity_count,
     )
 
 

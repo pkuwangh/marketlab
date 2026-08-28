@@ -1005,8 +1005,7 @@ def _format_validation_summary(
         f"{prefix}=candidates:{summary.candidate_count} "
         f"confirm:{summary.confirm_count} watch:{summary.watch_count} "
         f"avoid:{summary.avoid_count} missing_price:{summary.missing_price_count} "
-        f"thin_underlying:{summary.thin_underlying_count} "
-        f"unknown_options_liquidity:{summary.unknown_options_liquidity_count}"
+        f"thin_underlying:{summary.thin_underlying_count}"
     )
 
 

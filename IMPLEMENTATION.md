@@ -113,9 +113,9 @@ Implemented v0 scope:
 
 - Fetch Yahoo Finance daily OHLCV history through `yfinance`, or import local daily OHLCV CSVs, for candidate tickers plus `SPY` and `QQQ` into local JSONL.
 - Apply basic candidate gates:
-  - underlying dollar-volume liquidity
+  - stock dollar-volume liquidity as the current overall liquidity proxy
   - enough price history for trend and relative-strength features
-  - options-liquidity status remains `unknown` until a real options source is wired in
+  - options-liquidity evidence is not part of the visible gate until a real options source is useful
 - Compute deterministic price validation features:
   - latest close and dollar volume
   - 5, 20, and 60 trading-day returns
@@ -151,7 +151,7 @@ Follow-up calibration work:
 - Keep watching yfinance/Yahoo reliability; move to a keyed provider only if this path becomes unstable or insufficient.
 - Calibrate the basic liquidity and trend thresholds using outcome summaries instead of intuition.
 - Add repeated-flow cohorts once we have multiple days of ticker-flow observations.
-- Add a real options-liquidity source before treating options liquidity as anything other than `unknown`; do not fake this gate.
+- Add a real options-liquidity source only if it improves outcome analysis; until then, stock dollar volume is the liquidity gate.
 
 Non-goals for this milestone:
 
