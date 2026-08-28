@@ -7,7 +7,7 @@
 MarketLab should become a deterministic market research system that answers three useful questions:
 
 - What is the market regime and marginal risk budget?
-- Which large, options-liquid candidates deserve attention now?
+- Which large, liquid candidates deserve attention now?
 - Did prior signals work against forward returns, drawdowns, and relative returns?
 
 Bulltard is one evidence source for candidate generation. It is not the final decision engine, and duplicating the Bulltard email is not enough. Every milestone below must make the workflow more useful than reading the email directly.
@@ -36,6 +36,8 @@ Implemented:
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation snapshots using price, volume, trend, drawdown, and relative-strength features.
 - Bulltard outcome replay summaries over saved validation snapshots.
+- Market regime snapshots using SPY/QQQ trend, SPY volatility/VIX, RSP/IWM participation, and HYG/TLT risk appetite.
+- Market regime outcome replay summaries over saved regime snapshots.
 
 Verified live on `2026-08-26`:
 
@@ -56,8 +58,10 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --top-ranked 3
 ./bin/marketlab bulltard candidates --date 2026-08-26
 ./bin/marketlab bulltard ticker META data/inbox/bulltard/recap-2026-08-26.html --date 2026-08-26
-./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes
+./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes
 ./bin/marketlab bulltard refresh-prices --date 2026-08-26 --start 2025-01-01
+./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
+./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
 ./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
 ./bin/marketlab bulltard validate --date 2026-08-26
@@ -79,7 +83,7 @@ uv run pytest -q
 | --- | --- | --- | --- |
 | 1. Bulltard Candidate Capture | Complete | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
 | 2. Candidate Validation & Outcome MVP | Complete | Make the workflow better than the email by adding independent market data and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
-| 3. Market Regime MVP | Planned | Size marginal exposure independently from single-name ideas. | SPY/QQQ regime buckets show forward return and drawdown separation, or clearly show no edge. |
+| 3. Market Regime MVP | Complete | Size marginal exposure independently from single-name ideas. | Regime snapshots score market context, save point-in-time records, and replay buckets against forward SPY/QQQ returns and drawdowns. |
 | 4. Portfolio Policy MVP | Planned | Convert regime plus validated opportunities into a bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context. |
 | 5. Visualization & Reporting MVP | Planned | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
 | 6. Evidence Expansion & Agents | Later | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
@@ -139,11 +143,13 @@ Current implementation notes:
 - Daily outcome replay defaults to the earliest saved validation snapshot through the current `--date`, so prior signals are evaluated as history accumulates.
 - `bulltard outcomes` reads saved validation snapshots and local price observations to summarize forward results by source/status/detail cohorts.
 
-Verified live on `2026-08-27`:
+Verified live:
 
 - `prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27` fetched 414 rows for each symbol.
 - Additional Yahoo fetches completed price coverage for the ranked `2026-08-26` candidate table.
 - `bulltard validate --date 2026-08-26` produced 12 validation rows with complete price coverage.
+- `regime snapshot --date 2026-08-28 --fetch-prices` fetched all seven regime proxies and produced `risk_on` with score `4`.
+- `regime outcomes --start 2026-08-28 --end 2026-08-28` replayed the saved regime snapshot; same-day forward horizons correctly showed zero available rows.
 
 Follow-up calibration work:
 
@@ -171,14 +177,50 @@ The command names can change later, but the deliverable cannot: candidate valida
 
 ## Milestone 3 - Market Regime MVP
 
+Current status: complete for the v0 research loop.
+
 Goal: answer whether the current market supports more exposure, less exposure, or selectivity only.
 
-Scope:
+Implemented v0 scope:
 
-- Build a basic regime score from major index trend, volatility, and breadth proxies.
-- Store regime observations by date.
-- Evaluate regime buckets against forward market returns and drawdowns.
+- Refresh Yahoo Finance daily OHLCV history for regime proxies:
+  - `SPY`, `QQQ`, `IWM`, `RSP`, `HYG`, `TLT`, `^VIX`
+- Build a basic deterministic regime score from:
+  - SPY/QQQ trend and moving-average posture
+  - SPY realized volatility and VIX
+  - RSP/SPY and IWM/SPY participation
+  - HYG/TLT risk appetite
+- Store one market regime snapshot per date under `data/snapshots/regime/market/`.
+- Label the market as `risk_on`, `neutral`, or `risk_off` with a simple confidence level and component reasons.
+- Evaluate regime buckets against forward SPY/QQQ returns and drawdowns.
+- Integrate regime snapshot and regime outcome replay into `bulltard daily --regime`.
+
+Current implementation notes:
+
+- `regime snapshot --fetch-prices` refreshes the regime proxy price set and writes a snapshot.
+- `regime outcomes` replays saved regime snapshots against forward SPY/QQQ behavior.
+- `bulltard daily --fetch-prices --regime --validate --outcomes` now runs the combined candidate plus regime loop.
+
+First useful M3 outputs:
+
+```bash
+./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
+./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
+./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes
+```
+
+Follow-up calibration work:
+
+- Run the v0 regime score across enough saved days to see whether buckets separate returns or simply say "no edge."
+- Tune thresholds only from replay evidence, not from today’s read.
+- Add breadth/volatility/credit proxies only when they improve measured separation.
 - Use Bulltard broad-market commentary later as an overlay, not as the first implementation.
+
+Non-goals for this milestone:
+
+- No portfolio sizing policy.
+- No trade automation.
+- No optimization loop over thresholds.
 
 ## Milestone 4 - Portfolio Policy MVP
 
@@ -224,6 +266,9 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `68c38e8` - Add regime to Bulltard daily workflow
+- `dc873b7` - Replay market regime outcomes
+- `30a628c` - Add market regime snapshots
 - `51fd905` - Replay saved outcomes from daily workflow
 - `186fe71` - Run daily validation with price refresh
 - `4cedf90` - Refresh candidate prices automatically
