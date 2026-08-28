@@ -176,11 +176,47 @@ def test_compute_regime_outcomes_summarizes_market_buckets(tmp_path: Path) -> No
     assert result.outcomes[0].regime == "risk_on"
     assert round(result.outcomes[0].spy_return or 0.0, 4) == 0.2
     assert round(result.outcomes[0].qqq_return or 0.0, 4) == 0.4
+    assert result.outcomes[0].spy_max_drawdown == 0.0
+    assert result.outcomes[0].qqq_max_drawdown == 0.0
     risk_on_row = next(row for row in result.summary_rows if row.bucket == "regime:risk_on")
     assert risk_on_row.snapshot_count == 1
     assert risk_on_row.available_count == 1
     assert round(risk_on_row.avg_spy_return or 0.0, 4) == 0.2
     assert "regime:risk_on" in result.table
+
+
+def test_compute_regime_outcomes_hides_unavailable_summary_rows(tmp_path: Path) -> None:
+    source_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_regime_snapshot(
+        _snapshot(source_date=source_date, regime="risk_on", score=5),
+        snapshot_root=snapshot_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=source_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=source_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+
+    result = compute_regime_outcomes(
+        start_date=source_date,
+        end_date=source_date,
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(20, 40),
+    )
+
+    assert "20d" in result.table
+    assert "40d" not in result.table
+    assert "+0.0%" not in result.table
 
 
 def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:

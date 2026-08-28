@@ -890,6 +890,7 @@ def test_regime_outcomes_outputs_summary_table(
 
     assert result.exit_code == 0
     assert "regime_outcome_count=1" in result.output
+    assert "available_regime_outcome_count=1" in result.output
     assert "regime:risk_on  20d" in result.output
 
 
@@ -1096,6 +1097,7 @@ def test_bulltard_outcomes_outputs_summary_table(
 
     assert result.exit_code == 0
     assert "outcome_count=1" in result.output
+    assert "available_outcome_count=1" in result.output
     assert "all     20d" in result.output
 
 
@@ -1143,6 +1145,7 @@ def test_bulltard_outcomes_defaults_to_short_and_swing_horizons(
 
     assert result.exit_code == 0
     assert "outcome_count=0" in result.output
+    assert "available_outcome_count=0" in result.output
 
 
 def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
@@ -1491,7 +1494,9 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
     assert "candidate_validation_summary=candidates:1 confirm:1 watch:0 avoid:0" in result.output
     assert "META    confirm" in result.output
     assert "outcome_count=1" in result.output
+    assert "available_outcome_count=1" in result.output
     assert "regime_outcome_count=1" in result.output
+    assert "available_regime_outcome_count=1" in result.output
     assert "all     1d" in result.output
     assert "regime:risk_on  1d" in result.output
 

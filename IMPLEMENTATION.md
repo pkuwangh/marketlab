@@ -142,6 +142,7 @@ Current implementation notes:
 - `bulltard daily --fetch-prices --validate --outcomes` runs capture, price refresh, validation, and outcome replay in one workflow.
 - Daily outcome replay defaults to the earliest saved validation snapshot through the current `--date`, so prior signals are evaluated as history accumulates.
 - `bulltard outcomes` reads saved validation snapshots and local price observations to summarize forward results by source/status/detail cohorts.
+- Outcome tables report both attempted signal rows and rows with enough forward price data; default tables hide horizons with no available forward data.
 
 Verified live:
 
@@ -200,6 +201,7 @@ Current implementation notes:
 - `regime snapshot --fetch-prices` refreshes the regime proxy price set and writes a snapshot.
 - `regime outcomes` replays saved regime snapshots against forward SPY/QQQ behavior.
 - `bulltard daily --fetch-prices --regime --validate --outcomes` now runs the combined candidate plus regime loop.
+- Regime outcome tables report available forward rows separately and omit empty horizons from the default display.
 
 First useful M3 outputs:
 

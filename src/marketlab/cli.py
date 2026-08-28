@@ -35,6 +35,7 @@ from marketlab.bulltard.ingest import (
 from marketlab.bulltard.models import BulltardView
 from marketlab.bulltard.outcomes import (
     CandidateOutcomeError,
+    CandidateOutcomeResult,
     compute_bulltard_outcomes,
 )
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
@@ -797,6 +798,7 @@ def outcomes(
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"outcome_count={len(result.outcomes)}")
+    typer.echo(f"available_outcome_count={_available_candidate_outcome_count(result)}")
     typer.echo("")
     typer.echo(result.table)
 
@@ -1114,6 +1116,7 @@ def daily(
             raise typer.BadParameter(str(exc)) from exc
         typer.echo("")
         typer.echo(f"outcome_count={len(outcome_result.outcomes)}")
+        typer.echo(f"available_outcome_count={_available_candidate_outcome_count(outcome_result)}")
         typer.echo("")
         typer.echo(outcome_result.table)
 
@@ -1240,8 +1243,21 @@ def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
 
 def _echo_regime_outcome_result(result: RegimeOutcomeResult) -> None:
     typer.echo(f"regime_outcome_count={len(result.outcomes)}")
+    typer.echo(f"available_regime_outcome_count={_available_regime_outcome_count(result)}")
     typer.echo("")
     typer.echo(result.table)
+
+
+def _available_candidate_outcome_count(result: CandidateOutcomeResult) -> int:
+    return sum(1 for outcome in result.outcomes if outcome.return_value is not None)
+
+
+def _available_regime_outcome_count(result: RegimeOutcomeResult) -> int:
+    return sum(
+        1
+        for outcome in result.outcomes
+        if outcome.spy_return is not None and outcome.qqq_return is not None
+    )
 
 
 def _format_validation_summary(

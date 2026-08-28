@@ -165,14 +165,15 @@ def summarize_outcomes(outcomes: tuple[ForwardOutcome, ...]) -> tuple[OutcomeSum
 def format_outcome_summary(rows: tuple[OutcomeSummaryRow, ...]) -> str:
     """Format outcome summaries as a compact table."""
 
-    if not rows:
-        return "No outcome rows found."
+    available_rows = tuple(row for row in rows if row.available_count > 0)
+    if not available_rows:
+        return "No available outcome rows found."
 
     table = [
         [
             "cohort",
             "horizon",
-            "candidates",
+            "signals",
             "available",
             "avg_return",
             "hit_rate",
@@ -180,7 +181,7 @@ def format_outcome_summary(rows: tuple[OutcomeSummaryRow, ...]) -> str:
             "avg_drawdown",
         ]
     ]
-    for row in rows:
+    for row in available_rows:
         table.append(
             [
                 row.cohort,
@@ -190,7 +191,7 @@ def format_outcome_summary(rows: tuple[OutcomeSummaryRow, ...]) -> str:
                 _format_percent(row.avg_return),
                 _format_percent(row.hit_rate),
                 _format_percent(row.avg_relative_strength_spy),
-                _format_percent(row.avg_max_drawdown),
+                _format_drawdown(row.avg_max_drawdown),
             ]
         )
     return _format_table(table)
@@ -330,7 +331,7 @@ def _forward_max_drawdown(
     lows = [row.return_close for row in history[index + 1 : future_index + 1]]
     if not lows:
         return None
-    return min(lows) / current_close - 1.0
+    return min(0.0, min(lows) / current_close - 1.0)
 
 
 def _source_bucket(snapshot: CandidateValidationSnapshot) -> str:
@@ -361,6 +362,12 @@ def _format_percent(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value * 100:+.1f}%"
+
+
+def _format_drawdown(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{min(0.0, value) * 100:.1f}%"
 
 
 def _format_table(rows: list[list[str]]) -> str:

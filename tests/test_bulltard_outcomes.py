@@ -69,10 +69,58 @@ def test_compute_bulltard_outcomes_summarizes_candidate_cohorts(tmp_path: Path) 
     confirm_row = _summary_row(result, "status:confirm")
     assert round(confirm_row.avg_return or 0.0, 4) == 0.2
     assert round(confirm_row.avg_relative_strength_spy or 0.0, 4) == 0.18
+    assert confirm_row.avg_max_drawdown == 0.0
     avoid_row = _summary_row(result, "status:avoid")
     assert round(avoid_row.avg_return or 0.0, 4) == -0.2
+    assert round(avoid_row.avg_max_drawdown or 0.0, 4) == -0.2
     assert "source:ranked+interest" in result.table
     assert "status:confirm" in result.table
+
+
+def test_compute_bulltard_outcomes_hides_unavailable_summary_rows(
+    tmp_path: Path,
+) -> None:
+    source_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_candidate_validation_snapshots(
+        (
+            _snapshot(
+                source_date=source_date,
+                symbol="META",
+                bulltard_source="ranked",
+                validation_status="confirm",
+                detail_rows=1,
+            ),
+        ),
+        snapshot_root=snapshot_root,
+        source_date=source_date,
+    )
+    _write_price_history(
+        price_root,
+        symbol="META",
+        start=source_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=source_date,
+        closes=[100.0 for _index in range(30)],
+    )
+
+    result = compute_bulltard_outcomes(
+        start_date=source_date,
+        end_date=source_date,
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(20, 40),
+    )
+
+    assert "signals" in result.table
+    assert "20d" in result.table
+    assert "40d" not in result.table
+    assert "+0.0%" not in result.table
 
 
 def test_compute_bulltard_outcomes_uses_adjusted_close_for_returns(tmp_path: Path) -> None:
