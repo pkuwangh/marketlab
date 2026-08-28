@@ -1153,6 +1153,7 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
     debug_root = tmp_path / "debug" / "bulltard"
     price_root = tmp_path / "prices"
     snapshot_root = tmp_path / "snapshots"
+    regime_snapshot_root = tmp_path / "regime"
     events: list[str] = []
 
     def fake_run_daily_workflow(
@@ -1210,7 +1211,7 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         assert observations_root == output_root
         assert price_root == price_root_arg
         assert limit == 12
-        events.append("prices")
+        events.append("candidate_prices")
         return CandidatePriceRefreshResult(
             source_date=source_date,
             start_date=start_date,
@@ -1233,6 +1234,54 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
             price_failures=(),
         )
 
+    def fake_refresh_regime_prices(
+        *,
+        start_date: date,
+        end_date: date,
+        price_root: Path,
+        symbols: tuple[str, ...],
+    ) -> RegimePriceRefreshResult:
+        assert events == ["capture", "candidate_prices"]
+        assert start_date == date(2025, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert price_root == price_root_arg
+        assert symbols == ("IWM", "RSP", "HYG", "TLT", "^VIX")
+        events.append("regime_prices")
+        return RegimePriceRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=symbols,
+            price_results=(
+                PriceFetchResult(
+                    symbol="IWM",
+                    source_symbol="IWM",
+                    observation_path=price_root / "IWM.jsonl",
+                    row_count=420,
+                ),
+            ),
+            price_failures=(),
+        )
+
+    def fake_compute_regime_snapshot(
+        *,
+        source_date: date,
+        price_root: Path,
+        snapshot_root: Path,
+        write_snapshot: bool,
+    ) -> RegimeSnapshotResult:
+        assert events == ["capture", "candidate_prices", "regime_prices"]
+        assert source_date == date(2026, 8, 26)
+        assert price_root == price_root_arg
+        assert snapshot_root == regime_snapshot_root_arg
+        assert write_snapshot is True
+        events.append("regime_snapshot")
+        return RegimeSnapshotResult(
+            source_date=source_date,
+            snapshot=_regime_snapshot(source_date=source_date),
+            snapshot_path=snapshot_root / "2026-08-26.json",
+            table="component  score  status\ntrend     +2     constructive",
+        )
+
     def fake_validate_bulltard_candidates(
         *,
         source_date: date,
@@ -1243,7 +1292,12 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         min_dollar_volume: float,
         write_snapshot: bool,
     ) -> CandidateValidationResult:
-        assert events == ["capture", "prices"]
+        assert events == [
+            "capture",
+            "candidate_prices",
+            "regime_prices",
+            "regime_snapshot",
+        ]
         assert observations_root == output_root
         assert price_root == price_root_arg
         assert snapshot_root == snapshot_root_arg
@@ -1266,13 +1320,19 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         price_root: Path,
         horizons: tuple[int, ...],
     ) -> CandidateOutcomeResult:
-        assert events == ["capture", "prices", "validate"]
+        assert events == [
+            "capture",
+            "candidate_prices",
+            "regime_prices",
+            "regime_snapshot",
+            "validate",
+        ]
         assert start_date == date(2026, 8, 1)
         assert end_date == date(2026, 8, 26)
         assert snapshot_root == snapshot_root_arg
         assert price_root == price_root_arg
         assert horizons == (1, 5, 20)
-        events.append("outcomes")
+        events.append("candidate_outcomes")
         return CandidateOutcomeResult(
             start_date=start_date,
             end_date=end_date,
@@ -1305,20 +1365,80 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
             table="cohort  horizon\nall     1d",
         )
 
+    def fake_compute_regime_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> RegimeOutcomeResult:
+        assert events == [
+            "capture",
+            "candidate_prices",
+            "regime_prices",
+            "regime_snapshot",
+            "validate",
+            "candidate_outcomes",
+        ]
+        assert start_date == date(2026, 8, 1)
+        assert end_date == date(2026, 8, 26)
+        assert snapshot_root == regime_snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (1, 5, 20)
+        events.append("regime_outcomes")
+        return RegimeOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                RegimeForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    regime="risk_on",
+                    score=5,
+                    confidence="high",
+                    horizon_days=1,
+                    spy_return=0.01,
+                    qqq_return=0.02,
+                    spy_max_drawdown=-0.01,
+                    qqq_max_drawdown=-0.02,
+                ),
+            ),
+            summary_rows=(
+                RegimeOutcomeSummaryRow(
+                    bucket="regime:risk_on",
+                    horizon_days=1,
+                    snapshot_count=1,
+                    available_count=1,
+                    avg_spy_return=0.01,
+                    avg_qqq_return=0.02,
+                    avg_spy_max_drawdown=-0.01,
+                    avg_qqq_max_drawdown=-0.02,
+                ),
+            ),
+            table="bucket          horizon\nregime:risk_on  1d",
+        )
+
     price_root_arg = price_root
     snapshot_root_arg = snapshot_root
+    regime_snapshot_root_arg = regime_snapshot_root
     snapshot_root.mkdir(parents=True)
     (snapshot_root / "2026-08-01.jsonl").write_text("", encoding="utf-8")
+    regime_snapshot_root.mkdir(parents=True)
+    (regime_snapshot_root / "2026-08-01.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
     monkeypatch.setattr(
         "marketlab.cli.refresh_candidate_price_set",
         fake_refresh_candidate_price_set,
     )
+    monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
+    monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
     monkeypatch.setattr(
         "marketlab.cli.validate_bulltard_candidates",
         fake_validate_bulltard_candidates,
     )
     monkeypatch.setattr("marketlab.cli.compute_bulltard_outcomes", fake_compute_bulltard_outcomes)
+    monkeypatch.setattr("marketlab.cli.compute_regime_outcomes", fake_compute_regime_outcomes)
 
     result = CliRunner().invoke(
         app,
@@ -1333,6 +1453,9 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
             "--debug-root",
             str(debug_root),
             "--fetch-prices",
+            "--regime",
+            "--regime-snapshot-root",
+            str(regime_snapshot_root),
             "--price-start",
             "2025-01-01",
             "--price-end",
@@ -1351,14 +1474,26 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
     )
 
     assert result.exit_code == 0
-    assert events == ["capture", "prices", "validate", "outcomes"]
+    assert events == [
+        "capture",
+        "candidate_prices",
+        "regime_prices",
+        "regime_snapshot",
+        "validate",
+        "candidate_outcomes",
+        "regime_outcomes",
+    ]
     assert "price_symbols=META,SPY" in result.output
     assert "price_success_count=2" in result.output
+    assert "regime_price_symbols=IWM,RSP,HYG,TLT,^VIX" in result.output
+    assert "regime=risk_on" in result.output
     assert "candidate_validation_count=1" in result.output
     assert "candidate_validation_summary=candidates:1 confirm:1 watch:0 avoid:0" in result.output
     assert "META    confirm" in result.output
     assert "outcome_count=1" in result.output
+    assert "regime_outcome_count=1" in result.output
     assert "all     1d" in result.output
+    assert "regime:risk_on  1d" in result.output
 
 
 def _candidate_snapshot(*, source_date: date, symbol: str) -> CandidateValidationSnapshot:

@@ -943,6 +943,17 @@ def daily(
         "--outcomes",
         help="Also replay forward outcomes from saved validation snapshots.",
     ),
+    compute_regime_flag: bool = typer.Option(
+        False,
+        "--regime",
+        help="Also compute a market regime snapshot.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-snapshot-root",
+        file_okay=False,
+        help="Root directory for market regime snapshots.",
+    ),
     outcome_start_value: str | None = typer.Option(
         None,
         "--outcome-start",
@@ -1029,6 +1040,32 @@ def daily(
         typer.echo("")
         _echo_price_refresh_result(price_refresh_result)
 
+        if compute_regime_flag:
+            try:
+                regime_price_refresh_result = refresh_regime_prices(
+                    start_date=price_start,
+                    end_date=price_end,
+                    price_root=price_root,
+                    symbols=("IWM", "RSP", "HYG", "TLT", "^VIX"),
+                )
+            except RegimeError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            typer.echo("")
+            _echo_regime_price_refresh_result(regime_price_refresh_result)
+
+    if compute_regime_flag:
+        try:
+            regime_result = compute_regime_snapshot(
+                source_date=source_date,
+                price_root=price_root,
+                snapshot_root=regime_snapshot_root,
+                write_snapshot=True,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo("")
+        _echo_regime_snapshot_result(regime_result)
+
     if validate_candidates_flag:
         try:
             validation_result = validate_bulltard_candidates(
@@ -1080,6 +1117,32 @@ def daily(
         typer.echo("")
         typer.echo(outcome_result.table)
 
+        if compute_regime_flag:
+            regime_outcome_start = (
+                _parse_date_option(outcome_start_value, option_name="--outcome-start")
+                if outcome_start_value
+                else _default_outcome_start(
+                    snapshot_root=regime_snapshot_root, fallback=source_date
+                )
+            )
+            regime_outcome_end = (
+                _parse_date_option(outcome_end_value, option_name="--outcome-end")
+                if outcome_end_value
+                else source_date
+            )
+            try:
+                regime_outcome_result = compute_regime_outcomes(
+                    start_date=regime_outcome_start,
+                    end_date=regime_outcome_end,
+                    snapshot_root=regime_snapshot_root,
+                    price_root=price_root,
+                    horizons=_parse_horizons(horizons_value),
+                )
+            except RegimeError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            typer.echo("")
+            _echo_regime_outcome_result(regime_outcome_result)
+
 
 def _parse_source_date(value: str) -> date:
     return _parse_date_option(value, option_name="--date")
@@ -1124,11 +1187,12 @@ def _parse_extra_tickers(value: str) -> tuple[str, ...]:
 
 def _default_outcome_start(*, snapshot_root: Path, fallback: date) -> date:
     snapshot_dates = []
-    for path in snapshot_root.glob("*.jsonl"):
-        try:
-            snapshot_dates.append(date.fromisoformat(path.stem))
-        except ValueError:
-            continue
+    for pattern in ("*.jsonl", "*.json"):
+        for path in snapshot_root.glob(pattern):
+            try:
+                snapshot_dates.append(date.fromisoformat(path.stem))
+            except ValueError:
+                continue
     return min(snapshot_dates, default=fallback)
 
 
