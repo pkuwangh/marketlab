@@ -1,10 +1,12 @@
+import json
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
 import httpx
 
-from marketlab.bulltard.daily import run_daily_workflow
+from marketlab.bulltard.daily import refresh_candidate_prices, run_daily_workflow
+from marketlab.prices import PriceDataError, PriceFetchResult
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
 
@@ -87,6 +89,154 @@ def test_run_daily_workflow_can_skip_ticker_details(tmp_path: Path) -> None:
     assert requested_ticker_paths == []
 
 
+def test_refresh_candidate_prices_fetches_candidates_and_benchmarks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    observations_root = tmp_path / "observations" / "bulltard"
+    price_root = tmp_path / "prices"
+    _write_jsonl(
+        observations_root / "ranked_option_trades" / "2026-08-26.jsonl",
+        [
+            {
+                "source_date": "2026-08-26",
+                "symbol": "INTC",
+                "side": "bullish",
+                "score": 19.0,
+                "trade_count": 31,
+                "premium": 74508194.5,
+            }
+        ],
+    )
+    _write_jsonl(
+        observations_root / "trades_of_interest" / "2026-08-26.jsonl",
+        [
+            {
+                "source_date": "2026-08-26",
+                "rank": 1,
+                "symbol": "META",
+                "note": "Recap interest note.",
+            }
+        ],
+    )
+    calls: list[str] = []
+
+    def fake_fetch_and_write_yahoo_daily_prices(
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+        downloader,
+    ) -> tuple[PriceFetchResult, ...]:
+        assert start_date == date(2025, 1, 1)
+        assert end_date == date(2026, 8, 27)
+        assert output_root == price_root
+        calls.extend(symbols)
+        return tuple(
+            PriceFetchResult(
+                symbol=symbol,
+                source_symbol=symbol,
+                observation_path=price_root / f"{symbol}.jsonl",
+                row_count=414,
+            )
+            for symbol in symbols
+        )
+
+    monkeypatch.setattr(
+        "marketlab.bulltard.daily.fetch_and_write_yahoo_daily_prices",
+        fake_fetch_and_write_yahoo_daily_prices,
+    )
+
+    result = refresh_candidate_prices(
+        source_date=date(2026, 8, 26),
+        start_date=date(2025, 1, 1),
+        end_date=date(2026, 8, 27),
+        observations_root=observations_root,
+        price_root=price_root,
+        limit=10,
+    )
+
+    assert result.requested_symbols == ("META", "INTC", "SPY", "QQQ")
+    assert calls == ["META", "INTC", "SPY", "QQQ"]
+    assert [price_result.symbol for price_result in result.price_results] == [
+        "META",
+        "INTC",
+        "SPY",
+        "QQQ",
+    ]
+    assert result.price_failures == ()
+
+
+def test_refresh_candidate_prices_records_partial_failures(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    observations_root = tmp_path / "observations" / "bulltard"
+    price_root = tmp_path / "prices"
+    _write_jsonl(
+        observations_root / "ranked_option_trades" / "2026-08-26.jsonl",
+        [
+            {
+                "source_date": "2026-08-26",
+                "symbol": "GOOD",
+                "side": "bullish",
+                "score": 5.0,
+                "trade_count": 1,
+                "premium": 1000000.0,
+            },
+            {
+                "source_date": "2026-08-26",
+                "symbol": "BAD",
+                "side": "bullish",
+                "score": 4.0,
+                "trade_count": 1,
+                "premium": 900000.0,
+            },
+        ],
+    )
+
+    def fake_fetch_and_write_yahoo_daily_prices(
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+        downloader,
+    ) -> tuple[PriceFetchResult, ...]:
+        symbol = symbols[0]
+        if symbol == "BAD":
+            raise PriceDataError("fixture failure")
+        return (
+            PriceFetchResult(
+                symbol=symbol,
+                source_symbol=symbol,
+                observation_path=price_root / f"{symbol}.jsonl",
+                row_count=10,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.bulltard.daily.fetch_and_write_yahoo_daily_prices",
+        fake_fetch_and_write_yahoo_daily_prices,
+    )
+
+    result = refresh_candidate_prices(
+        source_date=date(2026, 8, 26),
+        start_date=date(2025, 1, 1),
+        end_date=date(2026, 8, 27),
+        observations_root=observations_root,
+        price_root=price_root,
+        limit=10,
+        extra_symbols=(),
+    )
+
+    assert [price_result.symbol for price_result in result.price_results] == ["GOOD"]
+    assert len(result.price_failures) == 1
+    assert result.price_failures[0].symbol == "BAD"
+    assert result.price_failures[0].error == "fixture failure"
+
+
 def _handler(
     *,
     requested_ticker_paths: list[str],
@@ -111,3 +261,12 @@ def _handler(
         return httpx.Response(404)
 
     return handler
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )

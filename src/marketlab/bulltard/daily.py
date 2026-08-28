@@ -31,6 +31,14 @@ from marketlab.bulltard.ingest import (
     normalize_ticker_symbol,
 )
 from marketlab.bulltard.models import BulltardView
+from marketlab.bulltard.validation import BENCHMARK_SYMBOLS
+from marketlab.prices import (
+    DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    PriceDataError,
+    PriceFetchResult,
+    dedupe_symbols,
+    fetch_and_write_yahoo_daily_prices,
+)
 
 
 class DailyWorkflowError(ValueError):
@@ -43,6 +51,26 @@ class TickerIngestFailure:
 
     symbol: str
     error: str
+
+
+@dataclass(frozen=True, slots=True)
+class PriceRefreshFailure:
+    """One failed candidate price refresh."""
+
+    symbol: str
+    error: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidatePriceRefreshResult:
+    """Result of refreshing prices for one Bulltard candidate set."""
+
+    source_date: date
+    start_date: date
+    end_date: date
+    requested_symbols: tuple[str, ...]
+    price_results: tuple[PriceFetchResult, ...]
+    price_failures: tuple[PriceRefreshFailure, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +184,73 @@ def run_daily_workflow(
     finally:
         if owns_client:
             active_client.close()
+
+
+def refresh_candidate_prices(
+    *,
+    source_date: date,
+    start_date: date,
+    end_date: date,
+    observations_root: Path = DEFAULT_OBSERVATIONS_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    limit: int = 12,
+    extra_symbols: tuple[str, ...] = BENCHMARK_SYMBOLS,
+    downloader=None,
+) -> CandidatePriceRefreshResult:
+    """Refresh Yahoo price observations for Bulltard candidates and benchmarks."""
+
+    if end_date < start_date:
+        raise DailyWorkflowError("Price refresh end date must be on or after start date")
+
+    try:
+        reviews = load_candidate_reviews(
+            source_date=source_date,
+            observations_root=observations_root,
+            limit=limit,
+        )
+    except CandidateReviewError as exc:
+        raise DailyWorkflowError(str(exc)) from exc
+
+    requested_symbols = dedupe_symbols(
+        tuple(review.symbol for review in reviews) + tuple(extra_symbols)
+    )
+    price_results: list[PriceFetchResult] = []
+    price_failures: list[PriceRefreshFailure] = []
+    for symbol in requested_symbols:
+        try:
+            price_results.extend(
+                fetch_and_write_yahoo_daily_prices(
+                    symbols=(symbol,),
+                    start_date=start_date,
+                    end_date=end_date,
+                    output_root=price_root,
+                    downloader=downloader,
+                )
+            )
+        except PriceDataError as exc:
+            price_failures.append(PriceRefreshFailure(symbol=symbol, error=str(exc)))
+            logger.bind(
+                source_date=source_date.isoformat(),
+                symbol=symbol,
+                error=str(exc),
+            ).error("Failed candidate price refresh")
+
+    result = CandidatePriceRefreshResult(
+        source_date=source_date,
+        start_date=start_date,
+        end_date=end_date,
+        requested_symbols=requested_symbols,
+        price_results=tuple(price_results),
+        price_failures=tuple(price_failures),
+    )
+    logger.bind(
+        source_date=source_date.isoformat(),
+        requested_symbols=len(requested_symbols),
+        price_successes=len(price_results),
+        price_failures=len(price_failures),
+        price_root=str(price_root),
+    ).success("Refreshed Bulltard candidate prices")
+    return result
 
 
 def _try_ingest_trades_of_interest(

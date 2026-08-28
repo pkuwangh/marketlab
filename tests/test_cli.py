@@ -6,7 +6,11 @@ import pytest
 from typer.testing import CliRunner
 
 from marketlab import __version__
-from marketlab.bulltard.daily import DailyWorkflowResult
+from marketlab.bulltard.daily import (
+    CandidatePriceRefreshResult,
+    DailyWorkflowResult,
+    PriceRefreshFailure,
+)
 from marketlab.bulltard.ingest import (
     FetchedTickerPage,
     FetchedView,
@@ -144,6 +148,17 @@ def test_validate_no_args_shows_help_without_missing_option_error() -> None:
     assert result.exit_code != 0
     assert "Validate Bulltard candidates" in result.output
     assert "--date" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_refresh_prices_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["bulltard", "refresh-prices"])
+
+    assert result.exit_code != 0
+    assert "Refresh Yahoo prices for captured Bulltard candidates" in result.output
+    assert "--date" in result.output
+    assert "--start" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
@@ -723,6 +738,75 @@ def test_bulltard_validate_outputs_snapshot_and_table(
     assert f"snapshot_path={snapshot_root / '2026-08-26.jsonl'}" in result.output
     assert "candidate_count=1" in result.output
     assert "META    confirm" in result.output
+
+
+def test_bulltard_refresh_prices_outputs_successes_and_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations_root = tmp_path / "observations" / "bulltard"
+    price_root = tmp_path / "prices"
+
+    def fake_refresh_candidate_price_set(
+        *,
+        source_date: date,
+        start_date: date,
+        end_date: date,
+        observations_root: Path,
+        price_root: Path,
+        limit: int,
+    ) -> CandidatePriceRefreshResult:
+        assert source_date == date(2026, 8, 26)
+        assert start_date == date(2025, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert limit == 12
+        return CandidatePriceRefreshResult(
+            source_date=source_date,
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("META", "SPY"),
+            price_results=(
+                PriceFetchResult(
+                    symbol="META",
+                    source_symbol="META",
+                    observation_path=price_root / "META.jsonl",
+                    row_count=420,
+                ),
+            ),
+            price_failures=(PriceRefreshFailure(symbol="SPY", error="fixture failure"),),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.refresh_candidate_price_set", fake_refresh_candidate_price_set
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "refresh-prices",
+            "--date",
+            "2026-08-26",
+            "--start",
+            "2025-01-01",
+            "--end",
+            "2026-08-28",
+            "--observations-root",
+            str(observations_root),
+            "--price-root",
+            str(price_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "price_symbols=META,SPY" in result.output
+    assert "price_success_count=1" in result.output
+    assert "price_failure_count=1" in result.output
+    assert (
+        f"price_result=META row_count=420 observation_path={price_root / 'META.jsonl'}"
+        in result.output
+    )
+    assert "price_failure=SPY error=fixture failure" in result.output
 
 
 def test_bulltard_outcomes_outputs_summary_table(

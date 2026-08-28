@@ -15,7 +15,11 @@ from marketlab.bulltard.candidates import (
     format_candidate_reviews,
     load_candidate_reviews,
 )
-from marketlab.bulltard.daily import DailyWorkflowError, run_daily_workflow
+from marketlab.bulltard.daily import (
+    DailyWorkflowError,
+    refresh_candidate_prices as refresh_candidate_price_set,
+    run_daily_workflow,
+)
 from marketlab.bulltard.ingest import (
     DEFAULT_DEBUG_ROOT,
     DEFAULT_OBSERVATIONS_ROOT,
@@ -525,6 +529,76 @@ def validate_candidates(
     typer.echo(f"candidate_count={len(result.snapshots)}")
     typer.echo("")
     typer.echo(result.table)
+
+
+@bulltard_app.command("refresh-prices", no_args_is_help=True)
+def refresh_prices(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Source date whose captured candidates should drive the price refresh.",
+    ),
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First price date to fetch.",
+    ),
+    end_date_value: str | None = typer.Option(
+        None,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last price date to fetch. Defaults to today.",
+    ),
+    observations_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--observations-root",
+        file_okay=False,
+        help="Root directory containing structured Bulltard observations.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory for daily price observations.",
+    ),
+    limit: int = typer.Option(
+        12,
+        "--limit",
+        min=1,
+        help="Maximum number of candidates whose prices should be refreshed.",
+    ),
+) -> None:
+    """Refresh Yahoo prices for captured Bulltard candidates and benchmarks."""
+
+    source_date = _parse_source_date(source_date_value)
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = (
+        _parse_date_option(end_date_value, option_name="--end") if end_date_value else date.today()
+    )
+    try:
+        result = refresh_candidate_price_set(
+            source_date=source_date,
+            start_date=start_date,
+            end_date=end_date,
+            observations_root=observations_root,
+            price_root=price_root,
+            limit=limit,
+        )
+    except DailyWorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"price_symbols={','.join(result.requested_symbols)}")
+    typer.echo(f"price_success_count={len(result.price_results)}")
+    typer.echo(f"price_failure_count={len(result.price_failures)}")
+    for price_result in result.price_results:
+        typer.echo(
+            f"price_result={price_result.symbol} row_count={price_result.row_count} "
+            f"observation_path={price_result.observation_path}"
+        )
+    for failure in result.price_failures:
+        typer.echo(f"price_failure={failure.symbol} error={failure.error}")
 
 
 @bulltard_app.command("outcomes", no_args_is_help=True)
