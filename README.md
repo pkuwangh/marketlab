@@ -8,7 +8,7 @@ See `IMPLEMENTATION.md` for milestone status and the next research deliverables.
 
 ## Current Baseline
 
-Milestone 1 is complete: the repo can capture the daily Bulltard candidate set from a saved recap before the signed link expires.
+Milestones 1 and 2 are complete: the repo can capture the daily Bulltard candidate set, refresh independent price history, validate candidates, and replay forward outcomes.
 
 Implemented:
 
@@ -20,7 +20,7 @@ Implemented:
 - Trades Of Interest parsing from the recap.
 - Ticker detail retrieval and flow-history parsing.
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
-- One-command daily Bulltard workflow for candidate capture.
+- One-command daily Bulltard workflow for candidate capture, optional price refresh, validation, and outcome replay.
 - Daily OHLCV price fetch from Yahoo Finance through `yfinance` into local observations.
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
@@ -116,9 +116,34 @@ fetches ticker detail for the Trades Of Interest names, and prints the candidate
 Use `--top-ranked N` to also fetch detail for the top N ranked database names, or
 `--no-ticker-details` to skip detail fetches.
 
+Run the full M2 daily research loop:
+
+```bash
+./bin/marketlab bulltard daily \
+  --date 2026-08-28 \
+  data/inbox/bulltard/recap-2026-08-28.html \
+  --fetch-prices \
+  --validate \
+  --outcomes
+```
+
+`--fetch-prices` refreshes Yahoo daily prices for the captured candidates plus `SPY` and `QQQ`.
+The default price window starts 550 calendar days before `--date` and ends today. `--outcomes`
+replays saved validation snapshots from the earliest saved snapshot through `--date` by default.
+Use `--outcome-start` and `--outcome-end` to override that replay window.
+
 ## Candidate Validation
 
-Fetch independent daily OHLCV history for the candidate tickers plus benchmarks:
+For normal daily use, let `bulltard daily --fetch-prices` refresh the candidate price set. To refresh a captured date explicitly:
+
+```bash
+./bin/marketlab bulltard refresh-prices \
+  --date 2026-08-26 \
+  --start 2025-01-01 \
+  --end 2026-08-27
+```
+
+You can still fetch independent daily OHLCV history for arbitrary tickers:
 
 ```bash
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ \
@@ -146,13 +171,15 @@ Validate a captured Bulltard candidate set from local price observations:
 ./bin/marketlab bulltard validate --date 2026-08-26
 ```
 
-Or run capture and validation together after prices are present:
+Or run capture, price refresh, validation, and saved-snapshot outcome replay together:
 
 ```bash
 ./bin/marketlab bulltard daily \
-  --date 2026-08-26 \
-  data/inbox/bulltard/recap-2026-08-26.html \
-  --validate
+  --date 2026-08-28 \
+  data/inbox/bulltard/recap-2026-08-28.html \
+  --fetch-prices \
+  --validate \
+  --outcomes
 ```
 
 Validation snapshots are written under `data/snapshots/bulltard/candidates/`.

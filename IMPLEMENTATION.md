@@ -31,7 +31,7 @@ Implemented:
 - Trades Of Interest parsing from the recap email.
 - Ticker-detail fetch and parser for flow history pages.
 - Candidate review that prioritizes recap interest over raw ranked rows.
-- Daily Bulltard orchestration that captures ranked rows, recap interest, ticker details, and a candidate table.
+- Daily Bulltard orchestration that captures ranked rows, recap interest, ticker details, candidate prices, validation snapshots, and outcome summaries.
 - Daily price observation fetch from Yahoo Finance through `yfinance` into local JSONL.
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation snapshots using price, volume, trend, drawdown, and relative-strength features.
@@ -56,6 +56,8 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --top-ranked 3
 ./bin/marketlab bulltard candidates --date 2026-08-26
 ./bin/marketlab bulltard ticker META data/inbox/bulltard/recap-2026-08-26.html --date 2026-08-26
+./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes
+./bin/marketlab bulltard refresh-prices --date 2026-08-26 --start 2025-01-01
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
 ./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
 ./bin/marketlab bulltard validate --date 2026-08-26
@@ -76,7 +78,7 @@ uv run pytest -q
 | Milestone | Status | Goal | Exit Criterion |
 | --- | --- | --- | --- |
 | 1. Bulltard Candidate Capture | Complete | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
-| 2. Candidate Validation & Outcome MVP | In progress | Make the workflow better than the email by adding independent market data and measuring forward results. | We can replay candidate dates, apply basic universe/liquidity/price gates, attach forward returns/drawdowns, and summarize which Bulltard-derived cohorts have edge. |
+| 2. Candidate Validation & Outcome MVP | Complete | Make the workflow better than the email by adding independent market data and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
 | 3. Market Regime MVP | Planned | Size marginal exposure independently from single-name ideas. | SPY/QQQ regime buckets show forward return and drawdown separation, or clearly show no edge. |
 | 4. Portfolio Policy MVP | Planned | Convert regime plus validated opportunities into a bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context. |
 | 5. Visualization & Reporting MVP | Planned | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
@@ -103,7 +105,7 @@ Future changes here should be limited to bugs or sharp edges found while using t
 
 ## Milestone 2 - Candidate Validation & Outcome MVP
 
-This is the active milestone.
+Current status: complete for the v0 research loop.
 
 Goal: for each Bulltard candidate, add enough independent evidence and outcome tracking to tell whether the idea deserves attention and whether this signal family has worked historically.
 
@@ -121,17 +123,20 @@ Implemented v0 scope:
   - drawdown from recent highs
   - relative strength versus `SPY` and `QQQ`
 - Persist the point-in-time candidate snapshot before outcomes are known.
-- Attach forward 20, 40, 65, and 126 trading-day returns and max drawdowns when enough future data exists.
+- Attach forward 1, 5, 20, 40, 65, and 126 trading-day returns and max drawdowns when enough future data exists.
 - Summarize cohorts by Bulltard source bucket, validation status, and whether ticker-flow detail was fetched.
-- Extend `bulltard daily` with `--validate` so the final table can show validation status, not just Bulltard evidence.
+- Print validation summary counts so the daily output is readable without opening JSONL.
+- Extend `bulltard daily` with `--fetch-prices`, `--validate`, and `--outcomes` so one command can run the M2 loop.
 
 Current implementation notes:
 
 - `prices fetch-yahoo` writes independent daily OHLCV observations under `data/observations/prices/daily/`.
 - `prices fetch` keeps the Stooq path available for keyed/manual-provider use, but it is not the preferred M2 source.
 - `prices import-csv` writes local CSV price observations to the same location, which avoids blocking on a live provider during bring-up.
+- `bulltard refresh-prices` refreshes Yahoo prices for the captured candidate set plus `SPY` and `QQQ`.
 - `bulltard validate` reads Bulltard candidates plus local price observations, writes snapshots under `data/snapshots/bulltard/candidates/`, and prints a validation table.
-- `bulltard daily --validate` runs capture and validation together when local price observations are present.
+- `bulltard daily --fetch-prices --validate --outcomes` runs capture, price refresh, validation, and outcome replay in one workflow.
+- Daily outcome replay defaults to the earliest saved validation snapshot through the current `--date`, so prior signals are evaluated as history accumulates.
 - `bulltard outcomes` reads saved validation snapshots and local price observations to summarize forward results by source/status/detail cohorts.
 
 Verified live on `2026-08-27`:
@@ -140,13 +145,13 @@ Verified live on `2026-08-27`:
 - Additional Yahoo fetches completed price coverage for the ranked `2026-08-26` candidate table.
 - `bulltard validate --date 2026-08-26` produced 12 validation rows with complete price coverage.
 
-Remaining milestone work:
+Follow-up calibration work:
 
 - Run the v0 path on real saved recaps and real price history.
 - Keep watching yfinance/Yahoo reliability; move to a keyed provider only if this path becomes unstable or insufficient.
 - Calibrate the basic liquidity and trend thresholds using outcome summaries instead of intuition.
 - Add repeated-flow cohorts once we have multiple days of ticker-flow observations.
-- Add a real options-liquidity source before treating options liquidity as anything other than `unknown`.
+- Add a real options-liquidity source before treating options liquidity as anything other than `unknown`; do not fake this gate.
 
 Non-goals for this milestone:
 
@@ -158,8 +163,8 @@ Non-goals for this milestone:
 First useful M2 outputs:
 
 ```bash
-./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --validate
-./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26
+./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes
+./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-28
 ```
 
 The command names can change later, but the deliverable cannot: candidate validation plus measured outcomes.
@@ -219,6 +224,9 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `51fd905` - Replay saved outcomes from daily workflow
+- `186fe71` - Run daily validation with price refresh
+- `4cedf90` - Refresh candidate prices automatically
 - `0d39f65` - Fetch daily prices with yfinance
 - `ccdf91a` - Document price CSV import path
 - `b6c23f6` - Import local daily price CSVs
