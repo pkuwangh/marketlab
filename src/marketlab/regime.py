@@ -44,6 +44,10 @@ REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v0"
 REGIME_ACTION_VERSION = "regime_action_v0"
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
+REGIME_PRESSURE_VERSION = "regime_pressure_v0"
+PRESSURE_LOOKBACK_SAMPLES = 252
+MIN_PRESSURE_FEATURE_SAMPLES = 20
+MIN_PRESSURE_BUCKET_SAMPLES = 20
 
 
 class RegimeError(ValueError):
@@ -88,6 +92,50 @@ class RegimeComponentScore:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimePressureFeature:
+    """One normalized point-in-time feature used by stretch/washout pressure."""
+
+    source_date: date
+    pressure_version: str
+    family: str
+    name: str
+    raw_value: float | None
+    percentile: float | None
+    normalized_score: float | None
+    stretch_score: float | None
+    washout_score: float | None
+    sample_count: int
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_date": self.source_date.isoformat(),
+            "pressure_version": self.pressure_version,
+            "family": self.family,
+            "name": self.name,
+            "raw_value": self.raw_value,
+            "percentile": self.percentile,
+            "normalized_score": self.normalized_score,
+            "stretch_score": self.stretch_score,
+            "washout_score": self.washout_score,
+            "sample_count": self.sample_count,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePressureSnapshot:
+    """Normalized stretch/washout pressure for one regime date."""
+
+    source_date: date
+    pressure_version: str
+    stretch_pressure_score: float
+    washout_pressure_score: float
+    confidence: str
+    features: tuple[RegimePressureFeature, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RegimeSnapshot:
     """Point-in-time market regime snapshot."""
 
@@ -119,6 +167,11 @@ class RegimeSnapshot:
     washout_score: int = 0
     action_confidence: str = "low"
     action_reason: str = "Action state not computed"
+    pressure_version: str = REGIME_PRESSURE_VERSION
+    stretch_pressure_score: float | None = None
+    washout_pressure_score: float | None = None
+    pressure_confidence: str = "low"
+    pressure_features: tuple[RegimePressureFeature, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +205,11 @@ class RegimeSnapshot:
             "washout_score": self.washout_score,
             "action_confidence": self.action_confidence,
             "action_reason": self.action_reason,
+            "pressure_version": self.pressure_version,
+            "stretch_pressure_score": self.stretch_pressure_score,
+            "washout_pressure_score": self.washout_pressure_score,
+            "pressure_confidence": self.pressure_confidence,
+            "pressure_features": [feature.to_dict() for feature in self.pressure_features],
         }
 
 
@@ -194,6 +252,8 @@ class RegimeSnapshotResult:
     signal_table: str = ""
     contradictions: tuple[str, ...] = ()
     action: RegimeActionState | None = None
+    pressure: RegimePressureSnapshot | None = None
+    pressure_table: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,6 +393,52 @@ class RegimeActionOutcomeResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimePressureForwardOutcome:
+    """One forward market outcome from one normalized pressure snapshot."""
+
+    source_date: date
+    price_date: date | None
+    stretch_pressure_score: float
+    washout_pressure_score: float
+    stretch_pressure_percentile: float | None
+    washout_pressure_percentile: float | None
+    pressure_sample_count: int
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePressureOutcomeSummaryRow:
+    """Aggregate forward outcome row for one pressure bucket."""
+
+    bucket: str
+    horizon_days: int
+    pressure_count: int
+    available_count: int
+    avg_stretch_pressure: float | None
+    avg_washout_pressure: float | None
+    avg_spy_return: float | None
+    avg_qqq_return: float | None
+    avg_spy_max_drawdown: float | None
+    avg_qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePressureOutcomeResult:
+    """Result of replaying normalized pressure buckets against forward outcomes."""
+
+    start_date: date
+    end_date: date
+    pressures: tuple[RegimePressureSnapshot, ...]
+    outcomes: tuple[RegimePressureForwardOutcome, ...]
+    summary_rows: tuple[RegimePressureOutcomeSummaryRow, ...]
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
 class _SymbolFeatures:
     symbol: str
     price_date: date | None
@@ -342,6 +448,108 @@ class _SymbolFeatures:
     ma50_distance: float | None
     ma200_distance: float | None
     realized_vol_20d: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PressureFeatureSpec:
+    family: str
+    name: str
+    mode: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PressureFeatureSample:
+    asof_date: date
+    value: float
+
+
+PRESSURE_FEATURE_SPECS = (
+    _PressureFeatureSpec(
+        family="trend",
+        name="spy_return_20d",
+        mode="high_stretch_low_washout",
+        reason="SPY short-term momentum relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="trend",
+        name="spy_return_60d",
+        mode="high_stretch_low_washout",
+        reason="SPY medium-term momentum relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="trend",
+        name="qqq_return_20d",
+        mode="high_stretch_low_washout",
+        reason="QQQ short-term momentum relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="trend",
+        name="spy_ma50_distance",
+        mode="high_stretch_low_washout",
+        reason="SPY extension versus 50d trend relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="trend",
+        name="qqq_ma50_distance",
+        mode="high_stretch_low_washout",
+        reason="QQQ extension versus 50d trend relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="volatility",
+        name="spy_realized_vol_20d",
+        mode="low_stretch_high_washout",
+        reason="SPY realized volatility normalized as complacency versus panic",
+    ),
+    _PressureFeatureSpec(
+        family="volatility",
+        name="vix_close",
+        mode="low_stretch_high_washout",
+        reason="VIX normalized as complacency versus panic",
+    ),
+    _PressureFeatureSpec(
+        family="volatility",
+        name="vvix_close",
+        mode="low_stretch_high_washout",
+        reason="VVIX normalized as complacency versus panic",
+    ),
+    _PressureFeatureSpec(
+        family="breadth",
+        name="rsp_spy_relative_20d",
+        mode="low_weakness_pressure",
+        reason="Equal-weight participation weakness relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="breadth",
+        name="iwm_spy_relative_20d",
+        mode="low_weakness_pressure",
+        reason="Small-cap participation weakness relative to its own history",
+    ),
+    _PressureFeatureSpec(
+        family="credit",
+        name="hyg_tlt_relative_20d",
+        mode="low_weakness_pressure",
+        reason="High-yield risk appetite relative to Treasury duration",
+    ),
+    _PressureFeatureSpec(
+        family="credit",
+        name="credit_spread",
+        mode="low_stretch_high_washout",
+        reason="High-yield credit spreads normalized as complacency versus stress",
+    ),
+    _PressureFeatureSpec(
+        family="liquidity",
+        name="financial_conditions",
+        mode="low_stretch_high_washout",
+        reason="Financial conditions normalized as loose versus tight",
+    ),
+    _PressureFeatureSpec(
+        family="rates",
+        name="yield_curve",
+        mode="low_stretch_only",
+        reason="10y-2y curve inversion contributes de-risk pressure",
+    ),
+)
 
 
 def refresh_regime_prices(
@@ -468,6 +676,15 @@ def compute_regime_snapshot(
         features=features,
         market_series=market_series,
     )
+    pressure = derive_regime_pressure_snapshot(
+        source_date=source_date,
+        feature_history=_pressure_feature_history_from_observations(
+            source_date=source_date,
+            histories=histories,
+            market_series_histories=market_series_histories,
+        ),
+    )
+    snapshot = _snapshot_with_pressure(snapshot=snapshot, pressure=pressure)
     action = derive_regime_action_state(snapshot=snapshot, signals=signals)
     snapshot = _snapshot_with_action(snapshot=snapshot, action=action)
     snapshot_path = (
@@ -494,6 +711,9 @@ def compute_regime_snapshot(
         stretch_score=action.stretch_score,
         washout_score=action.washout_score,
         action_confidence=action.confidence,
+        stretch_pressure_score=pressure.stretch_pressure_score,
+        washout_pressure_score=pressure.washout_pressure_score,
+        pressure_confidence=pressure.confidence,
         snapshot_path=str(snapshot_path) if snapshot_path else None,
         market_signal_count=len(signals),
         market_signal_contradiction_count=len(contradictions),
@@ -509,6 +729,8 @@ def compute_regime_snapshot(
         signal_table=signal_table,
         contradictions=contradictions,
         action=action,
+        pressure=pressure,
+        pressure_table=format_regime_pressure_features(pressure.features),
     )
 
 
@@ -1103,9 +1325,13 @@ def _signal_value(
     name: str,
 ) -> float | None:
     signal = _signal_by_name(signals, family=family, name=name)
-    if signal is None or not isinstance(signal.value, float):
+    if (
+        signal is None
+        or isinstance(signal.value, bool)
+        or not isinstance(signal.value, int | float)
+    ):
         return None
-    return signal.value
+    return float(signal.value)
 
 
 def _signal_by_name(
@@ -1118,6 +1344,364 @@ def _signal_by_name(
         if signal.family == family and signal.name == name:
             return signal
     return None
+
+
+def derive_regime_pressure_snapshot(
+    *,
+    source_date: date,
+    feature_history: dict[str, tuple[_PressureFeatureSample, ...]],
+) -> RegimePressureSnapshot:
+    """Normalize regime features into stretch and washout pressure scores."""
+
+    features = tuple(
+        _pressure_feature(
+            source_date=source_date,
+            spec=spec,
+            samples=feature_history.get(spec.name, ()),
+        )
+        for spec in PRESSURE_FEATURE_SPECS
+    )
+    return RegimePressureSnapshot(
+        source_date=source_date,
+        pressure_version=REGIME_PRESSURE_VERSION,
+        stretch_pressure_score=_aggregate_pressure_score(features, field_name="stretch_score"),
+        washout_pressure_score=_aggregate_pressure_score(features, field_name="washout_score"),
+        confidence=_pressure_confidence(features),
+        features=features,
+    )
+
+
+def format_regime_pressure_features(features: tuple[RegimePressureFeature, ...]) -> str:
+    """Format normalized pressure features as a compact table."""
+
+    if not features:
+        return "No regime pressure features found."
+
+    rows = [
+        [
+            "family",
+            "feature",
+            "raw",
+            "pctile",
+            "stretch",
+            "washout",
+            "samples",
+            "basis",
+        ]
+    ]
+    for feature in features:
+        rows.append(
+            [
+                feature.family,
+                feature.name,
+                _format_pressure_raw(feature),
+                _format_percentile(feature.percentile),
+                _format_pressure_score(feature.stretch_score),
+                _format_pressure_score(feature.washout_score),
+                str(feature.sample_count),
+                feature.reason,
+            ]
+        )
+    return _format_table(rows)
+
+
+def _snapshot_with_pressure(
+    *,
+    snapshot: RegimeSnapshot,
+    pressure: RegimePressureSnapshot,
+) -> RegimeSnapshot:
+    return replace(
+        snapshot,
+        pressure_version=pressure.pressure_version,
+        stretch_pressure_score=pressure.stretch_pressure_score,
+        washout_pressure_score=pressure.washout_pressure_score,
+        pressure_confidence=pressure.confidence,
+        pressure_features=pressure.features,
+    )
+
+
+def _pressure_feature(
+    *,
+    source_date: date,
+    spec: _PressureFeatureSpec,
+    samples: tuple[_PressureFeatureSample, ...],
+) -> RegimePressureFeature:
+    clean_samples = tuple(
+        sample
+        for sample in sorted(samples, key=lambda row: row.asof_date)
+        if sample.asof_date <= source_date and math.isfinite(sample.value)
+    )
+    if not clean_samples:
+        return RegimePressureFeature(
+            source_date=source_date,
+            pressure_version=REGIME_PRESSURE_VERSION,
+            family=spec.family,
+            name=spec.name,
+            raw_value=None,
+            percentile=None,
+            normalized_score=None,
+            stretch_score=None,
+            washout_score=None,
+            sample_count=0,
+            reason="No point-in-time value available",
+        )
+
+    lookback_samples = clean_samples[-PRESSURE_LOOKBACK_SAMPLES:]
+    raw_value = lookback_samples[-1].value
+    sample_count = len(lookback_samples)
+    if sample_count < MIN_PRESSURE_FEATURE_SAMPLES:
+        return RegimePressureFeature(
+            source_date=source_date,
+            pressure_version=REGIME_PRESSURE_VERSION,
+            family=spec.family,
+            name=spec.name,
+            raw_value=raw_value,
+            percentile=None,
+            normalized_score=None,
+            stretch_score=None,
+            washout_score=None,
+            sample_count=sample_count,
+            reason=f"Insufficient history: {sample_count}/{MIN_PRESSURE_FEATURE_SAMPLES}",
+        )
+
+    percentile = _percentile_rank(raw_value, tuple(sample.value for sample in lookback_samples))
+    normalized_score = _clamp(percentile * 2.0 - 1.0, -1.0, 1.0)
+    stretch_score, washout_score = _pressure_scores_from_normalized_score(
+        normalized_score=normalized_score,
+        mode=spec.mode,
+    )
+    return RegimePressureFeature(
+        source_date=source_date,
+        pressure_version=REGIME_PRESSURE_VERSION,
+        family=spec.family,
+        name=spec.name,
+        raw_value=raw_value,
+        percentile=percentile,
+        normalized_score=normalized_score,
+        stretch_score=stretch_score,
+        washout_score=washout_score,
+        sample_count=sample_count,
+        reason=spec.reason,
+    )
+
+
+def _pressure_scores_from_normalized_score(
+    *,
+    normalized_score: float,
+    mode: str,
+) -> tuple[float, float]:
+    if mode == "high_stretch_low_washout":
+        return max(normalized_score, 0.0), max(-normalized_score, 0.0)
+    if mode == "low_stretch_high_washout":
+        return max(-normalized_score, 0.0), max(normalized_score, 0.0)
+    if mode == "low_weakness_pressure":
+        weakness_score = max(-normalized_score, 0.0)
+        return weakness_score, weakness_score
+    if mode == "low_stretch_only":
+        return max(-normalized_score, 0.0), 0.0
+    raise RegimeError(f"Unknown pressure feature mode: {mode}")
+
+
+def _aggregate_pressure_score(
+    features: tuple[RegimePressureFeature, ...],
+    *,
+    field_name: str,
+) -> float:
+    family_scores: dict[str, list[float]] = {}
+    for feature in features:
+        score = getattr(feature, field_name)
+        if score is not None:
+            family_scores.setdefault(feature.family, []).append(score)
+    family_averages = [sum(scores) / len(scores) for scores in family_scores.values() if scores]
+    if not family_averages:
+        return 0.0
+    return sum(family_averages) / len(family_averages)
+
+
+def _pressure_confidence(features: tuple[RegimePressureFeature, ...]) -> str:
+    usable_features = tuple(feature for feature in features if feature.normalized_score is not None)
+    if not usable_features:
+        return "low"
+
+    family_count = len({feature.family for feature in usable_features})
+    min_sample_count = min(feature.sample_count for feature in usable_features)
+    if len(usable_features) >= 8 and family_count >= 5 and min_sample_count >= 126:
+        return "high"
+    if len(usable_features) >= 5 and family_count >= 3 and min_sample_count >= 60:
+        return "medium"
+    return "low"
+
+
+def _pressure_feature_history_from_observations(
+    *,
+    source_date: date,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    market_series_histories: dict[str, tuple[MarketSeriesObservation, ...]],
+) -> dict[str, tuple[_PressureFeatureSample, ...]]:
+    feature_samples: dict[str, list[_PressureFeatureSample]] = {
+        spec.name: [] for spec in PRESSURE_FEATURE_SPECS
+    }
+    sample_dates = _pressure_sample_dates(source_date=source_date, histories=histories)
+    for sample_date in sample_dates:
+        features = {
+            symbol: _symbol_features(
+                symbol=symbol,
+                source_date=sample_date,
+                history=history,
+            )
+            for symbol, history in histories.items()
+        }
+        market_series = {
+            series_id: _market_series_asof(history, sample_date)
+            for series_id, history in market_series_histories.items()
+        }
+        values = _pressure_feature_values_from_observations(
+            features=features,
+            market_series=market_series,
+        )
+        _append_pressure_feature_samples(
+            feature_samples=feature_samples,
+            sample_date=sample_date,
+            values=values,
+        )
+    return {name: tuple(samples) for name, samples in feature_samples.items()}
+
+
+def _pressure_feature_history_from_snapshots(
+    *,
+    snapshots: tuple[RegimeSnapshot, ...],
+    signals_by_date: dict[date, tuple[MarketSignal, ...]],
+) -> dict[str, tuple[_PressureFeatureSample, ...]]:
+    feature_samples: dict[str, list[_PressureFeatureSample]] = {
+        spec.name: [] for spec in PRESSURE_FEATURE_SPECS
+    }
+    for snapshot in sorted(snapshots, key=lambda row: row.source_date):
+        values = _pressure_feature_values_from_snapshot(
+            snapshot=snapshot,
+            signals=signals_by_date.get(snapshot.source_date, ()),
+        )
+        _append_pressure_feature_samples(
+            feature_samples=feature_samples,
+            sample_date=snapshot.source_date,
+            values=values,
+        )
+    return {name: tuple(samples) for name, samples in feature_samples.items()}
+
+
+def _append_pressure_feature_samples(
+    *,
+    feature_samples: dict[str, list[_PressureFeatureSample]],
+    sample_date: date,
+    values: dict[str, float | None],
+) -> None:
+    for spec in PRESSURE_FEATURE_SPECS:
+        value = values.get(spec.name)
+        if value is not None and math.isfinite(value):
+            feature_samples[spec.name].append(
+                _PressureFeatureSample(asof_date=sample_date, value=value)
+            )
+
+
+def _pressure_sample_dates(
+    *,
+    source_date: date,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+) -> tuple[date, ...]:
+    spy_dates = tuple(
+        row.observed_date for row in histories.get("SPY", ()) if row.observed_date <= source_date
+    )
+    if spy_dates:
+        return spy_dates
+    return tuple(
+        sorted(
+            {
+                row.observed_date
+                for history in histories.values()
+                for row in history
+                if row.observed_date <= source_date
+            }
+        )
+    )
+
+
+def _pressure_feature_values_from_observations(
+    *,
+    features: dict[str, _SymbolFeatures],
+    market_series: dict[str, MarketSeriesObservation | None],
+) -> dict[str, float | None]:
+    spy = features.get("SPY", _empty_symbol_features("SPY"))
+    qqq = features.get("QQQ", _empty_symbol_features("QQQ"))
+    rsp = features.get("RSP", _empty_symbol_features("RSP"))
+    iwm = features.get("IWM", _empty_symbol_features("IWM"))
+    hyg = features.get("HYG", _empty_symbol_features("HYG"))
+    tlt = features.get("TLT", _empty_symbol_features("TLT"))
+    vix = features.get("^VIX", _empty_symbol_features("^VIX"))
+    vvix = features.get("^VVIX", _empty_symbol_features("^VVIX"))
+    ten_year = market_series.get("DGS10")
+    two_year = market_series.get("DGS2")
+    return {
+        "spy_return_20d": spy.return_20d,
+        "spy_return_60d": spy.return_60d,
+        "qqq_return_20d": qqq.return_20d,
+        "spy_ma50_distance": spy.ma50_distance,
+        "qqq_ma50_distance": qqq.ma50_distance,
+        "spy_realized_vol_20d": spy.realized_vol_20d,
+        "vix_close": vix.close,
+        "vvix_close": vvix.close,
+        "rsp_spy_relative_20d": _relative_return(rsp, spy),
+        "iwm_spy_relative_20d": _relative_return(iwm, spy),
+        "hyg_tlt_relative_20d": _relative_return(hyg, tlt),
+        "credit_spread": _market_series_value(market_series.get("BAMLH0A0HYM2")),
+        "financial_conditions": _market_series_value(market_series.get("NFCI")),
+        "yield_curve": (
+            ten_year.value - two_year.value
+            if ten_year is not None and two_year is not None
+            else None
+        ),
+    }
+
+
+def _pressure_feature_values_from_snapshot(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> dict[str, float | None]:
+    return {
+        "spy_return_20d": snapshot.spy_return_20d,
+        "spy_return_60d": snapshot.spy_return_60d,
+        "qqq_return_20d": snapshot.qqq_return_20d,
+        "spy_ma50_distance": snapshot.spy_ma50_distance,
+        "qqq_ma50_distance": snapshot.qqq_ma50_distance,
+        "spy_realized_vol_20d": snapshot.spy_realized_vol_20d,
+        "vix_close": snapshot.vix_close,
+        "vvix_close": snapshot.vvix_close,
+        "rsp_spy_relative_20d": snapshot.rsp_spy_relative_20d,
+        "iwm_spy_relative_20d": snapshot.iwm_spy_relative_20d,
+        "hyg_tlt_relative_20d": snapshot.hyg_tlt_relative_20d,
+        "credit_spread": _signal_value(signals, family="credit", name="credit_spread"),
+        "financial_conditions": _signal_value(
+            signals,
+            family="liquidity",
+            name="financial_conditions",
+        ),
+        "yield_curve": _signal_value(signals, family="rates", name="yield_curve"),
+    }
+
+
+def _market_series_value(row: MarketSeriesObservation | None) -> float | None:
+    return row.value if row is not None else None
+
+
+def _percentile_rank(value: float, values: tuple[float, ...]) -> float:
+    if not values:
+        return 0.5
+    less_count = sum(1 for sample in values if sample < value)
+    equal_count = sum(1 for sample in values if sample == value)
+    return (less_count + 0.5 * equal_count) / len(values)
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return min(upper, max(lower, value))
 
 
 def compute_regime_outcomes(
@@ -1285,6 +1869,85 @@ def compute_regime_action_outcomes(
     )
 
 
+def compute_regime_pressure_outcomes(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+) -> RegimePressureOutcomeResult:
+    """Replay normalized pressure buckets against forward SPY/QQQ outcomes."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    snapshots = _load_regime_snapshots_through(
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+    )
+    target_snapshots = tuple(
+        snapshot for snapshot in snapshots if start_date <= snapshot.source_date <= end_date
+    )
+    if not target_snapshots:
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+
+    signals_by_date = _load_market_signals_by_source_date_through(
+        end_date=end_date,
+        signal_snapshot_root=signal_snapshot_root,
+    )
+    feature_history = _pressure_feature_history_from_snapshots(
+        snapshots=snapshots,
+        signals_by_date=signals_by_date,
+    )
+    pressure_pairs = tuple(
+        (
+            snapshot,
+            derive_regime_pressure_snapshot(
+                source_date=snapshot.source_date,
+                feature_history=feature_history,
+            ),
+        )
+        for snapshot in snapshots
+    )
+    pressures_by_date = {pressure.source_date: pressure for _snapshot, pressure in pressure_pairs}
+    pressure_percentiles = _pressure_percentiles_by_date(
+        tuple(pressure for _snapshot, pressure in pressure_pairs)
+    )
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    outcomes = tuple(
+        outcome
+        for snapshot in target_snapshots
+        for outcome in _regime_pressure_outcomes(
+            snapshot=snapshot,
+            pressure=pressures_by_date[snapshot.source_date],
+            pressure_percentile=pressure_percentiles[snapshot.source_date],
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    target_pressures = tuple(
+        pressures_by_date[snapshot.source_date] for snapshot in target_snapshots
+    )
+    summary_rows = summarize_regime_pressure_outcomes(outcomes)
+    table = format_regime_pressure_outcome_summary(summary_rows)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        pressure_count=len(target_pressures),
+        outcome_count=len(outcomes),
+    ).success("Computed market regime pressure outcomes")
+    return RegimePressureOutcomeResult(
+        start_date=start_date,
+        end_date=end_date,
+        pressures=target_pressures,
+        outcomes=outcomes,
+        summary_rows=summary_rows,
+        table=table,
+    )
+
+
 def summarize_regime_outcomes(
     outcomes: tuple[RegimeForwardOutcome, ...],
 ) -> tuple[RegimeOutcomeSummaryRow, ...]:
@@ -1428,6 +2091,53 @@ def summarize_regime_action_outcomes(
     return tuple(rows)
 
 
+def summarize_regime_pressure_outcomes(
+    outcomes: tuple[RegimePressureForwardOutcome, ...],
+) -> tuple[RegimePressureOutcomeSummaryRow, ...]:
+    """Summarize forward market outcomes by normalized pressure bucket."""
+
+    buckets: dict[str, list[RegimePressureForwardOutcome]] = {"all": list(outcomes)}
+    for outcome in outcomes:
+        for bucket in _regime_pressure_buckets(outcome):
+            buckets.setdefault(bucket, []).append(outcome)
+
+    rows: list[RegimePressureOutcomeSummaryRow] = []
+    for bucket in sorted(buckets):
+        bucket_outcomes = tuple(buckets[bucket])
+        for horizon in sorted({outcome.horizon_days for outcome in bucket_outcomes}):
+            horizon_outcomes = tuple(
+                outcome for outcome in bucket_outcomes if outcome.horizon_days == horizon
+            )
+            available = tuple(
+                outcome
+                for outcome in horizon_outcomes
+                if outcome.spy_return is not None and outcome.qqq_return is not None
+            )
+            rows.append(
+                RegimePressureOutcomeSummaryRow(
+                    bucket=bucket,
+                    horizon_days=horizon,
+                    pressure_count=len(horizon_outcomes),
+                    available_count=len(available),
+                    avg_stretch_pressure=_average(
+                        outcome.stretch_pressure_score for outcome in horizon_outcomes
+                    ),
+                    avg_washout_pressure=_average(
+                        outcome.washout_pressure_score for outcome in horizon_outcomes
+                    ),
+                    avg_spy_return=_average(outcome.spy_return for outcome in available),
+                    avg_qqq_return=_average(outcome.qqq_return for outcome in available),
+                    avg_spy_max_drawdown=_average(
+                        outcome.spy_max_drawdown for outcome in available
+                    ),
+                    avg_qqq_max_drawdown=_average(
+                        outcome.qqq_max_drawdown for outcome in available
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
 def format_regime_outcome_summary(rows: tuple[RegimeOutcomeSummaryRow, ...]) -> str:
     """Format market regime outcome summaries as a compact table."""
 
@@ -1555,6 +2265,47 @@ def format_regime_action_outcome_summary(
     return _format_table(table)
 
 
+def format_regime_pressure_outcome_summary(
+    rows: tuple[RegimePressureOutcomeSummaryRow, ...],
+) -> str:
+    """Format normalized pressure forward outcome summaries as a compact table."""
+
+    available_rows = tuple(row for row in rows if row.available_count > 0)
+    if not available_rows:
+        return "No available regime pressure outcome rows found."
+
+    table = [
+        [
+            "bucket",
+            "horizon",
+            "pressures",
+            "available",
+            "stretch",
+            "washout",
+            "avg_spy",
+            "avg_qqq",
+            "spy_dd",
+            "qqq_dd",
+        ]
+    ]
+    for row in available_rows:
+        table.append(
+            [
+                row.bucket,
+                f"{row.horizon_days}d",
+                str(row.pressure_count),
+                str(row.available_count),
+                _format_pressure_score(row.avg_stretch_pressure),
+                _format_pressure_score(row.avg_washout_pressure),
+                _format_percent(row.avg_spy_return),
+                _format_percent(row.avg_qqq_return),
+                _format_drawdown(row.avg_spy_max_drawdown),
+                _format_drawdown(row.avg_qqq_max_drawdown),
+            ]
+        )
+    return _format_table(table)
+
+
 def _load_histories(
     *,
     symbols: tuple[str, ...],
@@ -1615,6 +2366,24 @@ def _load_regime_snapshots_in_range(
     return tuple(snapshots)
 
 
+def _load_regime_snapshots_through(
+    *,
+    end_date: date,
+    snapshot_root: Path,
+) -> tuple[RegimeSnapshot, ...]:
+    snapshots: list[RegimeSnapshot] = []
+    for path in sorted(snapshot_root.glob("*.json")):
+        try:
+            source_date = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if source_date <= end_date:
+            snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+            if snapshot is not None:
+                snapshots.append(snapshot)
+    return tuple(snapshots)
+
+
 def _load_market_signals_in_range(
     *,
     start_date: date,
@@ -1635,6 +2404,25 @@ def _load_market_signals_in_range(
                 )
             )
     return tuple(signals)
+
+
+def _load_market_signals_by_source_date_through(
+    *,
+    end_date: date,
+    signal_snapshot_root: Path,
+) -> dict[date, tuple[MarketSignal, ...]]:
+    signals_by_date: dict[date, tuple[MarketSignal, ...]] = {}
+    for path in sorted(signal_snapshot_root.glob("*.jsonl")):
+        try:
+            source_date = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if source_date <= end_date:
+            signals_by_date[source_date] = load_market_signal_snapshot(
+                source_date=source_date,
+                snapshot_root=signal_snapshot_root,
+            )
+    return signals_by_date
 
 
 def _load_action_signals(
@@ -1705,6 +2493,77 @@ def _regime_action_outcomes(
         )
         for horizon in horizons
     )
+
+
+def _regime_pressure_outcomes(
+    *,
+    snapshot: RegimeSnapshot,
+    pressure: RegimePressureSnapshot,
+    pressure_percentile: tuple[float | None, float | None, int],
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[RegimePressureForwardOutcome, ...]:
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _exact_date_index(spy_history, snapshot.price_date)
+    qqq_index = _exact_date_index(qqq_history, snapshot.price_date)
+    stretch_percentile, washout_percentile, pressure_sample_count = pressure_percentile
+    return tuple(
+        RegimePressureForwardOutcome(
+            source_date=snapshot.source_date,
+            price_date=snapshot.price_date,
+            stretch_pressure_score=pressure.stretch_pressure_score,
+            washout_pressure_score=pressure.washout_pressure_score,
+            stretch_pressure_percentile=stretch_percentile,
+            washout_pressure_percentile=washout_percentile,
+            pressure_sample_count=pressure_sample_count,
+            horizon_days=horizon,
+            spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+            qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+            spy_max_drawdown=_forward_max_drawdown(spy_history, index=spy_index, horizon=horizon),
+            qqq_max_drawdown=_forward_max_drawdown(qqq_history, index=qqq_index, horizon=horizon),
+        )
+        for horizon in horizons
+    )
+
+
+def _pressure_percentiles_by_date(
+    pressures: tuple[RegimePressureSnapshot, ...],
+) -> dict[date, tuple[float | None, float | None, int]]:
+    percentiles: dict[date, tuple[float | None, float | None, int]] = {}
+    stretch_values: list[float] = []
+    washout_values: list[float] = []
+    for pressure in sorted(pressures, key=lambda row: row.source_date):
+        stretch_values.append(pressure.stretch_pressure_score)
+        washout_values.append(pressure.washout_pressure_score)
+        sample_count = min(len(stretch_values), len(washout_values))
+        if sample_count < MIN_PRESSURE_BUCKET_SAMPLES:
+            percentiles[pressure.source_date] = (None, None, sample_count)
+            continue
+        percentiles[pressure.source_date] = (
+            _percentile_rank(pressure.stretch_pressure_score, tuple(stretch_values)),
+            _percentile_rank(pressure.washout_pressure_score, tuple(washout_values)),
+            sample_count,
+        )
+    return percentiles
+
+
+def _regime_pressure_buckets(outcome: RegimePressureForwardOutcome) -> tuple[str, ...]:
+    if outcome.stretch_pressure_percentile is None or outcome.washout_pressure_percentile is None:
+        return ("pressure:insufficient_history",)
+
+    buckets: list[str] = []
+    if outcome.stretch_pressure_percentile >= 0.95:
+        buckets.append("stretch:top_5")
+    if outcome.stretch_pressure_percentile >= 0.90:
+        buckets.append("stretch:top_10")
+    if outcome.washout_pressure_percentile >= 0.95:
+        buckets.append("washout:top_5")
+    if outcome.washout_pressure_percentile >= 0.90:
+        buckets.append("washout:top_10")
+    if not buckets:
+        buckets.append("pressure:below_top_10")
+    return tuple(buckets)
 
 
 def _market_signal_outcomes(
@@ -2129,6 +2988,13 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         washout_score=int(row.get("washout_score", 0)),
         action_confidence=str(row.get("action_confidence", "low")),
         action_reason=str(row.get("action_reason", "Action state not computed")),
+        pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),
+        stretch_pressure_score=_optional_float(row.get("stretch_pressure_score")),
+        washout_pressure_score=_optional_float(row.get("washout_pressure_score")),
+        pressure_confidence=str(row.get("pressure_confidence", "low")),
+        pressure_features=tuple(
+            _pressure_feature_from_dict(feature) for feature in row.get("pressure_features", ())
+        ),
     )
 
 
@@ -2141,6 +3007,22 @@ def _component_from_dict(row: dict[str, Any]) -> RegimeComponentScore:
     )
 
 
+def _pressure_feature_from_dict(row: dict[str, Any]) -> RegimePressureFeature:
+    return RegimePressureFeature(
+        source_date=date.fromisoformat(str(row["source_date"])),
+        pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),
+        family=str(row["family"]),
+        name=str(row["name"]),
+        raw_value=_optional_float(row.get("raw_value")),
+        percentile=_optional_float(row.get("percentile")),
+        normalized_score=_optional_float(row.get("normalized_score")),
+        stretch_score=_optional_float(row.get("stretch_score")),
+        washout_score=_optional_float(row.get("washout_score")),
+        sample_count=int(row.get("sample_count", 0)),
+        reason=str(row.get("reason", "")),
+    )
+
+
 def _optional_float(value: object) -> float | None:
     return float(value) if value is not None else None
 
@@ -2150,6 +3032,36 @@ def _average(values) -> float | None:
     if not clean:
         return None
     return sum(clean) / len(clean)
+
+
+def _format_pressure_raw(feature: RegimePressureFeature) -> str:
+    value = feature.raw_value
+    if value is None:
+        return "-"
+    if (
+        feature.name.startswith(("spy_return", "qqq_return"))
+        or feature.name.endswith("_distance")
+        or feature.name.endswith("_relative_20d")
+        or feature.name == "spy_realized_vol_20d"
+    ):
+        return _format_percent(value)
+    if feature.name == "credit_spread":
+        return f"{value:.2f}%"
+    if feature.name == "yield_curve":
+        return f"{value:+.2f}pp"
+    return _format_index(value)
+
+
+def _format_percentile(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value * 100:.1f}%"
+
+
+def _format_pressure_score(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}"
 
 
 def _format_score(value: int) -> str:

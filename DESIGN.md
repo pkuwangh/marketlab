@@ -233,6 +233,13 @@ The regime label alone is insufficient. A strong index trend can be healthy or d
 
 The stretch and washout views should be calibrated as rare tail alerts. A normal `risk_on` reading is not automatically a top warning, and a normal `risk_off` reading is not automatically a bottom signal.
 
+Because these inputs use different units, the regime engine should not combine them by raw thresholds alone. Each feature should first be projected into a common point-in-time pressure space using its own historical distribution. A practical v0 approach is rolling percentile normalization:
+
+- Convert each raw feature into a percentile versus the trailing as-of sample that would have been known on that date.
+- Map the percentile into stretch pressure, washout pressure, or both based on the feature's economic meaning.
+- Aggregate within each signal family first, then aggregate family scores so one dense family does not overwhelm sparse but important evidence.
+- Use top pressure percentiles for calibration/backtests, while keeping any hard-threshold action classifier as a transparent baseline comparator rather than the final policy.
+
 | **Family**              | **Candidate inputs**                                                               | **Question answered**                                                           |
 |-------------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | Trend / structure       | Price vs. moving averages, slope, distance from highs, term trend, momentum        | Is the market structurally advancing or deteriorating?                          |

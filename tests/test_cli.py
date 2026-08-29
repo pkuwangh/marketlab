@@ -46,6 +46,10 @@ from marketlab.regime import (
     RegimeForwardOutcome,
     RegimeOutcomeResult,
     RegimeOutcomeSummaryRow,
+    RegimePressureForwardOutcome,
+    RegimePressureOutcomeResult,
+    RegimePressureOutcomeSummaryRow,
+    RegimePressureSnapshot,
     RegimePriceRefreshResult,
     RegimeSnapshot,
     RegimeSnapshotResult,
@@ -179,6 +183,17 @@ def test_regime_action_outcomes_no_args_shows_help_without_missing_option_error(
 
     assert result.exit_code != 0
     assert "Replay forward SPY/QQQ outcomes for rare regime action states" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regime_pressure_outcomes_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "pressure-outcomes"])
+
+    assert result.exit_code != 0
+    assert "Replay forward SPY/QQQ outcomes for normalized pressure buckets" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
     assert "Missing option" not in result.output
@@ -942,6 +957,15 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
                 reason="No rare-action threshold crossed; maintain current posture",
                 evidence=("strong SPY rally",),
             ),
+            pressure=RegimePressureSnapshot(
+                source_date=source_date,
+                pressure_version="fixture_pressure",
+                stretch_pressure_score=0.42,
+                washout_pressure_score=0.08,
+                confidence="medium",
+                features=(),
+            ),
+            pressure_table="family  feature         stretch\ntrend   spy_return_20d  0.42",
         )
 
     price_root_arg = price_root
@@ -1006,6 +1030,11 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "stretch_score=1" in result.output
     assert "washout_score=0" in result.output
     assert "action_confidence=high" in result.output
+    assert "pressure_feature_count=0" in result.output
+    assert "stretch_pressure_score=0.42" in result.output
+    assert "washout_pressure_score=0.08" in result.output
+    assert "pressure_confidence=medium" in result.output
+    assert "trend   spy_return_20d  0.42" in result.output
     assert "trend     +2     constructive" in result.output
 
 
@@ -1199,6 +1228,110 @@ def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
     assert "available_regime_action_outcome_count=1" in result.output
     assert "scale_down_protect  1" in result.output
     assert "action:scale_down_protect  20d" in result.output
+
+
+def test_regime_pressure_outcomes_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_pressure_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> RegimePressureOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert signal_snapshot_root == signal_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20, 65)
+        return RegimePressureOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            pressures=(
+                RegimePressureSnapshot(
+                    source_date=date(2026, 8, 1),
+                    pressure_version="fixture",
+                    stretch_pressure_score=0.91,
+                    washout_pressure_score=0.05,
+                    confidence="high",
+                    features=(),
+                ),
+            ),
+            outcomes=(
+                RegimePressureForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    stretch_pressure_score=0.91,
+                    washout_pressure_score=0.05,
+                    stretch_pressure_percentile=0.96,
+                    washout_pressure_percentile=0.20,
+                    pressure_sample_count=200,
+                    horizon_days=20,
+                    spy_return=-0.02,
+                    qqq_return=-0.04,
+                    spy_max_drawdown=-0.06,
+                    qqq_max_drawdown=-0.08,
+                ),
+            ),
+            summary_rows=(
+                RegimePressureOutcomeSummaryRow(
+                    bucket="stretch:top_5",
+                    horizon_days=20,
+                    pressure_count=1,
+                    available_count=1,
+                    avg_stretch_pressure=0.91,
+                    avg_washout_pressure=0.05,
+                    avg_spy_return=-0.02,
+                    avg_qqq_return=-0.04,
+                    avg_spy_max_drawdown=-0.06,
+                    avg_qqq_max_drawdown=-0.08,
+                ),
+            ),
+            table="bucket         horizon\nstretch:top_5  20d",
+        )
+
+    snapshot_root_arg = snapshot_root
+    signal_root_arg = signal_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_pressure_outcomes",
+        fake_compute_regime_pressure_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "pressure-outcomes",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--signal-root",
+            str(signal_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20,65",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_pressure_count=1" in result.output
+    assert "regime_pressure_outcome_count=1" in result.output
+    assert "available_regime_pressure_outcome_count=1" in result.output
+    assert "stretch:top_5  20d" in result.output
 
 
 def test_regime_signal_outcomes_outputs_summary_table(

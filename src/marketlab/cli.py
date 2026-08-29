@@ -68,11 +68,13 @@ from marketlab.regime import (
     RegimeActionOutcomeResult,
     RegimeError,
     RegimeOutcomeResult,
+    RegimePressureOutcomeResult,
     RegimePriceRefreshResult,
     RegimeSnapshotResult,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_outcomes,
+    compute_regime_pressure_outcomes,
     compute_regime_snapshot,
     refresh_regime_prices,
 )
@@ -656,6 +658,63 @@ def regime_action_outcomes(
         raise typer.BadParameter(str(exc)) from exc
 
     _echo_regime_action_outcome_result(result)
+
+
+@regime_app.command("pressure-outcomes", no_args_is_help=True)
+def regime_pressure_outcomes(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First market regime snapshot date to replay.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last market regime snapshot date to replay.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    horizons_value: str = typer.Option(
+        DEFAULT_OUTCOME_HORIZONS_VALUE,
+        "--horizons",
+        help="Comma-separated forward trading-day horizons.",
+    ),
+) -> None:
+    """Replay forward SPY/QQQ outcomes for normalized pressure buckets."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        result = compute_regime_pressure_outcomes(
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_root=snapshot_root,
+            signal_snapshot_root=signal_snapshot_root,
+            price_root=price_root,
+            horizons=_parse_horizons(horizons_value),
+        )
+    except RegimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_regime_pressure_outcome_result(result)
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
@@ -1431,11 +1490,19 @@ def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
         typer.echo(f"washout_score={result.action.washout_score}")
         typer.echo(f"action_confidence={result.action.confidence}")
         typer.echo(f"action_reason={result.action.reason}")
+    if result.pressure is not None:
+        typer.echo(f"pressure_feature_count={len(result.pressure.features)}")
+        typer.echo(f"stretch_pressure_score={result.pressure.stretch_pressure_score:.2f}")
+        typer.echo(f"washout_pressure_score={result.pressure.washout_pressure_score:.2f}")
+        typer.echo(f"pressure_confidence={result.pressure.confidence}")
     typer.echo(f"missing_regime_symbols={','.join(snapshot.missing_symbols)}")
     typer.echo(f"market_signal_contradictions={';'.join(result.contradictions)}")
     if result.signal_table:
         typer.echo("")
         typer.echo(result.signal_table)
+    if result.pressure_table:
+        typer.echo("")
+        typer.echo(result.pressure_table)
     typer.echo("")
     typer.echo(result.table)
 
@@ -1455,6 +1522,16 @@ def _echo_regime_action_outcome_result(result: RegimeActionOutcomeResult) -> Non
     )
     typer.echo("")
     typer.echo(result.frequency_table)
+    typer.echo("")
+    typer.echo(result.table)
+
+
+def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) -> None:
+    typer.echo(f"regime_pressure_count={len(result.pressures)}")
+    typer.echo(f"regime_pressure_outcome_count={len(result.outcomes)}")
+    typer.echo(
+        f"available_regime_pressure_outcome_count={_available_regime_pressure_outcome_count(result)}"
+    )
     typer.echo("")
     typer.echo(result.table)
 
@@ -1481,6 +1558,14 @@ def _available_regime_outcome_count(result: RegimeOutcomeResult) -> int:
 
 
 def _available_regime_action_outcome_count(result: RegimeActionOutcomeResult) -> int:
+    return sum(
+        1
+        for outcome in result.outcomes
+        if outcome.spy_return is not None and outcome.qqq_return is not None
+    )
+
+
+def _available_regime_pressure_outcome_count(result: RegimePressureOutcomeResult) -> int:
     return sum(
         1
         for outcome in result.outcomes

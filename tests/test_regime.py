@@ -14,6 +14,7 @@ from marketlab.regime import (
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_outcomes,
+    compute_regime_pressure_outcomes,
     compute_regime_snapshot,
     derive_regime_action_state,
     load_regime_snapshot,
@@ -130,6 +131,11 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.action_state == "no_change"
     assert result.snapshot.stretch_score == 1
     assert result.snapshot.washout_score == 0
+    assert result.pressure is not None
+    assert result.snapshot.stretch_pressure_score is not None
+    assert result.snapshot.washout_pressure_score is not None
+    assert len(result.pressure.features) == 14
+    assert "spy_return_20d" in result.pressure_table
     assert result.snapshot.missing_symbols == ()
     assert result.contradictions == ()
     assert [component.name for component in result.snapshot.components] == [
@@ -166,6 +172,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert loaded == result.snapshot
     assert loaded is not None
     assert loaded.action_state == "no_change"
+    assert loaded.stretch_pressure_score == result.snapshot.stretch_pressure_score
 
 
 def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path) -> None:
@@ -611,6 +618,61 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
     assert round(action_row.avg_spy_return or 0.0, 4) == round(20.0 / 102.0, 4)
     assert "scale_down_protect" in result.frequency_table
     assert "action:scale_up_redeploy" in result.table
+
+
+def test_compute_regime_pressure_outcomes_summarizes_top_pressure_buckets(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    for index in range(35):
+        write_regime_snapshot(
+            _snapshot(
+                source_date=start_date + timedelta(days=index),
+                regime="risk_on",
+                score=5,
+                spy_return_20d=index / 200.0,
+                spy_return_60d=index / 180.0,
+                spy_ma50_distance=index / 220.0,
+                qqq_return_20d=index / 160.0,
+                qqq_ma50_distance=index / 180.0,
+                spy_realized_vol_20d=0.35 - index / 200.0,
+                vix_close=32.0 - index / 2.0,
+                vvix_close=130.0 - index,
+            ),
+            snapshot_root=snapshot_root,
+        )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0 + index for index in range(80)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=start_date,
+        closes=[100.0 + index * 1.5 for index in range(80)],
+    )
+
+    result = compute_regime_pressure_outcomes(
+        start_date=start_date + timedelta(days=24),
+        end_date=start_date + timedelta(days=34),
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=tmp_path / "signals",
+        price_root=price_root,
+        horizons=(20,),
+    )
+
+    assert len(result.pressures) == 11
+    assert len(result.outcomes) == 11
+    stretch_row = next(row for row in result.summary_rows if row.bucket == "stretch:top_10")
+    assert stretch_row.pressure_count == 11
+    assert stretch_row.available_count == 11
+    assert stretch_row.avg_stretch_pressure is not None
+    assert stretch_row.avg_stretch_pressure > 0.4
+    assert "stretch:top_10" in result.table
 
 
 def _snapshot(
