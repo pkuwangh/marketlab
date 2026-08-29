@@ -62,6 +62,12 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         start=start,
         closes=[16.0 for _index in range(230)],
     )
+    _write_price_history(
+        price_root,
+        symbol="^VVIX",
+        start=start,
+        closes=[85.0 for _index in range(230)],
+    )
 
     result = compute_regime_snapshot(
         source_date=source_date,
@@ -86,13 +92,15 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     ]
     assert "trend" in result.table
     assert "constructive" in result.table
-    assert [signal.family for signal in result.signals] == [
-        "trend",
-        "volatility",
-        "breadth",
-        "credit",
+    assert [(signal.family, signal.name) for signal in result.signals] == [
+        ("trend", "price_proxy"),
+        ("volatility", "price_proxy"),
+        ("breadth", "price_proxy"),
+        ("credit", "price_proxy"),
+        ("volatility", "vol_of_vol"),
     ]
     assert "price_proxy" in result.signal_table
+    assert "vol_of_vol" in result.signal_table
 
     loaded_signals = load_market_signal_snapshot(
         source_date=source_date,
@@ -124,6 +132,8 @@ def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path
     assert result.snapshot.regime == "neutral"
     assert result.snapshot.confidence == "low"
     assert "QQQ" in result.snapshot.missing_symbols
+    assert "^VVIX" in result.snapshot.missing_symbols
+    assert "vol_of_vol" in result.signal_table
     assert "missing" in result.table
 
 
@@ -155,9 +165,18 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         downloader=downloader,
     )
 
-    assert result.requested_symbols == ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX")
+    assert result.requested_symbols == (
+        "SPY",
+        "QQQ",
+        "IWM",
+        "RSP",
+        "HYG",
+        "TLT",
+        "^VIX",
+        "^VVIX",
+    )
     assert calls == list(result.requested_symbols)
-    assert len(result.price_results) == 7
+    assert len(result.price_results) == 8
     assert result.price_failures == ()
 
 
@@ -267,6 +286,7 @@ def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:
         iwm_spy_relative_20d=0.01,
         hyg_tlt_relative_20d=0.02,
         vix_close=16.0,
+        vvix_close=85.0,
     )
 
 

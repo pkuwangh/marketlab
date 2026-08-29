@@ -1493,6 +1493,7 @@ def _regime_snapshot(*, source_date: date) -> RegimeSnapshot:
         iwm_spy_relative_20d=0.02,
         hyg_tlt_relative_20d=0.03,
         vix_close=16.0,
+        vvix_close=85.0,
     )
 
 

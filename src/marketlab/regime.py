@@ -30,7 +30,7 @@ from marketlab.prices import (
 )
 
 DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
-DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX")
+DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX", "^VVIX")
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v0"
@@ -102,6 +102,7 @@ class RegimeSnapshot:
     iwm_spy_relative_20d: float | None
     hyg_tlt_relative_20d: float | None
     vix_close: float | None
+    vvix_close: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -128,6 +129,7 @@ class RegimeSnapshot:
             "iwm_spy_relative_20d": self.iwm_spy_relative_20d,
             "hyg_tlt_relative_20d": self.hyg_tlt_relative_20d,
             "vix_close": self.vix_close,
+            "vvix_close": self.vvix_close,
         }
 
 
@@ -272,6 +274,7 @@ def compute_regime_snapshot(
     }
     components = _score_components(features)
     score = sum(component.score for component in components)
+    missing_market_signal_count = 1 if features["^VVIX"].price_date is None else 0
     missing_symbols = tuple(
         symbol for symbol, symbol_features in features.items() if symbol_features.price_date is None
     )
@@ -282,7 +285,11 @@ def compute_regime_snapshot(
         price_date=features["SPY"].price_date,
         regime=_regime_label(score),
         score=score,
-        confidence=_confidence(score=score, components=components),
+        confidence=_confidence(
+            score=score,
+            components=components,
+            missing_market_signal_count=missing_market_signal_count,
+        ),
         components=components,
         missing_symbols=missing_symbols,
         spy_return_20d=features["SPY"].return_20d,
@@ -297,11 +304,12 @@ def compute_regime_snapshot(
         iwm_spy_relative_20d=_relative_return(features["IWM"], features["SPY"]),
         hyg_tlt_relative_20d=_relative_return(features["HYG"], features["TLT"]),
         vix_close=features["^VIX"].close,
+        vvix_close=features["^VVIX"].close,
     )
     snapshot_path = (
         write_regime_snapshot(snapshot, snapshot_root=snapshot_root) if write_snapshot else None
     )
-    signals = _market_signals_from_snapshot(snapshot)
+    signals = _market_signals_from_snapshot(snapshot, features=features)
     try:
         signal_snapshot_path = (
             write_market_signal_snapshot(signals, snapshot_root=signal_snapshot_root)
@@ -384,8 +392,12 @@ def format_regime_snapshot(snapshot: RegimeSnapshot) -> str:
     return _format_table(rows)
 
 
-def _market_signals_from_snapshot(snapshot: RegimeSnapshot) -> tuple[MarketSignal, ...]:
-    return tuple(
+def _market_signals_from_snapshot(
+    snapshot: RegimeSnapshot,
+    *,
+    features: dict[str, _SymbolFeatures],
+) -> tuple[MarketSignal, ...]:
+    signals = [
         MarketSignal(
             source_date=snapshot.source_date,
             feature_version=MARKET_SIGNAL_FEATURE_VERSION,
@@ -401,6 +413,52 @@ def _market_signals_from_snapshot(snapshot: RegimeSnapshot) -> tuple[MarketSigna
             reason=component.reason,
         )
         for component in snapshot.components
+    ]
+    signals.append(_vvix_signal(snapshot=snapshot, features=features["^VVIX"]))
+    return tuple(signals)
+
+
+def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> MarketSignal:
+    if features.close is None:
+        return MarketSignal(
+            source_date=snapshot.source_date,
+            feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+            family="volatility",
+            name="vol_of_vol",
+            status="missing",
+            score=0,
+            value=None,
+            unit="index",
+            source="yahoo_vvix",
+            observed_date=None,
+            availability_date=None,
+            reason="VVIX is unavailable",
+        )
+    if features.close >= 120.0:
+        status = "stressed"
+        score = -1
+        reason = "VVIX shows elevated volatility-of-volatility"
+    elif features.close <= 90.0:
+        status = "calm"
+        score = 1
+        reason = "VVIX shows contained volatility-of-volatility"
+    else:
+        status = "mixed"
+        score = 0
+        reason = "VVIX is neither calm nor stressed"
+    return MarketSignal(
+        source_date=snapshot.source_date,
+        feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+        family="volatility",
+        name="vol_of_vol",
+        status=status,
+        score=score,
+        value=features.close,
+        unit="index",
+        source="yahoo_vvix",
+        observed_date=features.price_date,
+        availability_date=features.price_date,
+        reason=reason,
     )
 
 
@@ -819,15 +877,26 @@ def _regime_label(score: int) -> str:
     return "neutral"
 
 
-def _confidence(*, score: int, components: tuple[RegimeComponentScore, ...]) -> str:
+def _confidence(
+    *,
+    score: int,
+    components: tuple[RegimeComponentScore, ...],
+    missing_market_signal_count: int = 0,
+) -> str:
     available_components = sum(1 for component in components if component.status != "missing")
     if available_components < 3:
         return "low"
     if abs(score) >= 4:
-        return "high"
-    if abs(score) >= 2:
+        confidence = "high"
+    elif abs(score) >= 2:
+        confidence = "medium"
+    else:
+        confidence = "low"
+    if missing_market_signal_count > 0 and confidence == "high":
         return "medium"
-    return "low"
+    if missing_market_signal_count > 0 and confidence == "medium":
+        return "low"
+    return confidence
 
 
 def _relative_return(
@@ -980,6 +1049,7 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         iwm_spy_relative_20d=_optional_float(row["iwm_spy_relative_20d"]),
         hyg_tlt_relative_20d=_optional_float(row["hyg_tlt_relative_20d"]),
         vix_close=_optional_float(row["vix_close"]),
+        vvix_close=_optional_float(row.get("vvix_close")),
     )
 
 
