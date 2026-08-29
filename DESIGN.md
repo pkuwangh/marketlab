@@ -1,7 +1,7 @@
 # Market Regime & Large-Cap Opportunity Research System
 
-**High-Level Design - Version 0.6**
-**Status:** Core-first design baseline for implementation
+**High-Level Design - Version 0.7**
+**Status:** Two-engine, market-regime-first implementation baseline
 **Primary audience:** coding/research agents and the human researcher
 
 > **Purpose:** Build a durable, testable research process that (1) sizes marginal market exposure while maintaining a permanent long-term core in SPY/QQQ and (2) identifies unusually attractive multi-month opportunities in large, fundamentally viable, options-liquid individual stocks.
@@ -18,6 +18,8 @@
 | Overlay        | Monetize or reshape exposure around the core                     | Covered calls, cash-secured puts, defined-risk option structures |
 
 This document stays at the system-design level while including the implementation architecture needed for reproducibility: Python orchestration, bounded agents, immutable time snapshots, local-first storage, an incremental Codex-to-API runtime path, and a visualization layer designed for both exploratory research and auditable backtests. The research system has two coordinated engines: a SPY/QQQ market-regime engine and a large-cap single-name opportunity engine.
+
+The market-regime engine is the current implementation priority. Bulltard is useful candidate-generation evidence for the single-name engine, but it is not the source of truth for overall market regime. Market regime should be built primarily from independent market inputs such as index price structure, volatility structure, breadth, credit/liquidity, and sentiment/positioning.
 
 ## Implementation Bias
 
@@ -99,6 +101,17 @@ The exact neutral beta target and allowable tactical range should be specified l
 
 The top-level system should be a conventional Python research application. It owns workflow, data provenance, model execution, portfolio calculations, opportunity-state transitions, and persistence. Agents are invoked as bounded analytical workers inside that application rather than acting as the system of record or deciding the control flow themselves. The market-regime and single-name engines are peer research modules that share data, point-in-time semantics, backtesting infrastructure, and the portfolio-policy layer.
 
+## Engine separation and current priority
+
+The two engines answer different questions and should not be blended prematurely:
+
+| Engine | Primary question | Primary evidence | Current priority |
+|---|---|---|---|
+| Market regime | How much marginal SPY/QQQ beta and dry powder should be carried? | Trend, VIX/VVIX/volatility term structure, breadth, credit/liquidity, sentiment/positioning | Primary near-term engine |
+| Single-name opportunity | Which large liquid stocks deserve tactical research attention? | Bulltard signals, price/relative strength, fundamentals, catalysts, options liquidity | Secondary until regime evidence is credible |
+
+Portfolio policy should wait until the market-regime engine has a more credible evidence base than simple index trend. The single-name engine can continue collecting candidates in parallel, but it should not drive aggregate market exposure.
+
 | Component            | Primary responsibility                                                                                                      | Design rule                                                     |
 |----------------------|-----------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------|
 | Python orchestrator  | Run ingestion, validation, snapshot creation, shared feature calculation, regime scoring, opportunity gating/ranking, lifecycle transitions, portfolio policy, and report generation. | Owns deterministic control flow. |
@@ -177,7 +190,7 @@ The model should be ensemble-like: several independent families vote on the regi
 | Breadth                 | Advance/decline, % above key averages, new highs/lows, equal-weight vs. cap-weight | Is participation confirming the index?                                          |
 | Liquidity / credit      | Credit spreads, rates, financial conditions, dollar, liquidity proxies             | Is the macro financing backdrop supportive or restrictive?                      |
 | Sentiment / positioning | Fear/greed, put/call, surveys, flows, CTA/positioning proxies, social sentiment    | Are investors euphoric, fearful, crowded, or under-positioned?                  |
-| External research       | Bulltard market commentary, database statistics, recurring option-flow patterns    | Does an independent discretionary/data source confirm or contradict the regime? |
+| External overlay        | Discretionary market commentary, app-level statistics, recurring option-flow patterns | Does outside research confirm or contradict the independent regime model? |
 
 ## Regime output
 
@@ -211,11 +224,11 @@ The highest-value design decision is the mapping layer between a statistical reg
 
 # 7. Bulltard Research Module
 
-The subscription should be treated as a structured research source rather than a stream of ephemeral trade ideas. It serves two roles: (1) an external market/regime input and (2) the primary candidate generator for the single-name opportunity engine. The objective is to learn which parts of the service contain persistent information and which are noise; a mention or flow event does not automatically pass our own eligibility or validation gates.
+The subscription should be treated as a structured research source rather than a stream of ephemeral trade ideas. Its primary role is candidate generation for the single-name opportunity engine. If broad market commentary is present, it may be captured later as an external discretionary overlay, but it must not be the foundation of the market-regime engine. The objective is to learn which parts of the service contain persistent information and which are noise; a mention or flow event does not automatically pass our own eligibility or validation gates.
 
 ## Bulltard observations to ingest
 
-- Market regime / SPY commentary and key technical levels.
+- Broad market / SPY commentary and key technical levels when present, as an external overlay only.
 
 - Changes to the author's open book, including adds, closes, sizing language, and stated thesis.
 
@@ -494,12 +507,13 @@ Build the simplest version that can teach us something, then add sophistication 
 | **Phase** | **Scope** | **Exit criterion** |
 |---|---|---|
 | 0. Design / bootstrap | Agree on objectives, portfolio constraints, and a minimal local CLI | Design baseline accepted; deterministic CLI runs locally |
-| 1. Bulltard signal-ingest MVP | Ingest one useful Bulltard view into structured candidate rows; define the smallest signal taxonomy needed for those rows | We can produce a daily candidate list from a real recap and inspect the rows |
-| 2. Candidate outcome MVP | Add large-cap gate, option-liquidity gate, basic price/relative-strength context, and forward return/drawdown labels | We can replay historical candidates and measure 20/40/65/126d outcomes |
-| 3. Regime MVP | Trend + volatility + breadth; simple interpretable composite for SPY/QQQ | Clear out-of-sample separation of forward outcomes or explicit "no edge" result |
-| 4. Portfolio policy | Map regime to bounded beta/cash risk budget and combine with validated single-name opportunities | Policy adds risk-adjusted value vs. fixed-policy benchmark |
-| 5. Expand evidence | Liquidity/credit, sentiment, richer fundamentals/revisions, Bulltard-derived features, sector context | Each added family shows incremental out-of-sample value |
-| 6. Iterate | Periodic review, feature retirement, parameter freezes, candidate/outcome monitoring | Stable research cadence without constant curve-fitting |
+| 1. Market-regime foundation | Build point-in-time SPY/QQQ trend, realized volatility, basic VIX, breadth proxy, and credit proxy snapshots | We can create and replay daily regime snapshots against forward SPY/QQQ returns and drawdowns |
+| 2. Market-regime signal expansion | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit observations | We can inspect family-level signals and compare their forward outcome separation |
+| 3. Regime calibration | Backtest family scores, disagreement states, transitions, and thresholds before mapping them to portfolio policy | The regime model either separates forward risk/reward out of sample or explicitly records "no edge" |
+| 4. Single-name candidate pipeline | Ingest Bulltard candidates and validate them with independent price, liquidity, fundamentals, catalysts, and outcomes | We can measure whether candidate subsets outperform comparable large-cap names and benchmarks |
+| 5. Portfolio policy | Map calibrated regime to bounded beta/cash risk budget and combine with validated single-name opportunities | Policy adds risk-adjusted value vs. fixed-policy benchmark |
+| 6. Visualization and reporting | Render regime components, disagreements, transitions, candidates, and outcomes from versioned inputs | Important charts and reports are reproducible from CLI commands |
+| 7. Iterate | Periodic review, feature retirement, parameter freezes, candidate/outcome monitoring | Stable research cadence without constant curve-fitting |
 
 # 12. Key Design Risks
 
@@ -544,8 +558,8 @@ Build the simplest version that can teach us something, then add sophistication 
 
 - Which independent fundamental/estimate-revision data sources are practical and point-in-time enough for v0?
 
-| Recommended immediate next step: implement one end-to-end Bulltard candidate path. From a saved recap, use the signed link to retrieve one useful view, parse candidate rows, save those rows locally, then inspect whether they are the right inputs for large-cap filtering and forward-return testing. |
-|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Recommended immediate next step: expand the independent market-regime engine. Add a market-signal snapshot layer for volatility structure, sentiment/positioning, stronger breadth, and credit/liquidity evidence; then replay those families against forward SPY/QQQ returns and drawdowns before implementing portfolio policy. |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 # 14. Implementation Infrastructure
 
@@ -749,15 +763,22 @@ marketlab/
 
 # 17. Near-Term Implementation Decisions
 
-- Define the v0 large-cap eligible universe and keep its thresholds configurable; prefer a conservative liquid universe over broad coverage.
+- Keep the two-engine split explicit in code and documentation: `regime` owns aggregate market context, while `bulltard` and later `opportunity` own single-name candidate evidence.
 
-- Define the first option-liquidity score/gate: underlying dollar volume, option volume/OI, bid/ask quality, and usable multi-month expirations.
+- Add a market-signal snapshot layer before portfolio policy. The regime score should consume named market signal observations rather than embedding every feature directly in one scoring function.
 
-- Implement `marketlab bulltard ingest --date YYYY-MM-DD --view ranked-option-trades path/to/recap.html` using `httpx.Client(follow_redirects=True)`: bootstrap from the original signed email link, retrieve one useful view, parse structured candidate rows, and write local observations.
+- Start Market Signal Expansion with volatility structure and sentiment/positioning because they are most directly tied to marginal exposure decisions:
+  - VIX level, VIX change, realized-vs-implied volatility, and VIX term structure where data is practical.
+  - VVIX or a vol-of-vol proxy if a stable source is available.
+  - Fear/greed-style sentiment or equivalent risk-appetite observations, using manual import first if a reliable fetcher is not available.
 
-- Add tests for the actual first ingest path: recap link extraction, redirect/session continuity if required, parser behavior on a saved fixture, output row schema, and visible failure when the signed link is expired or the expected table is absent.
+- Strengthen breadth and credit/liquidity after the first volatility/sentiment snapshot exists. Prefer one robust signal per family over many correlated variants.
 
-- Define only the Bulltard signal fields required by the first ingested view. Expand the taxonomy after multiple real examples show repeated structure.
+- Rework `regime snapshot` so it can show family-level evidence, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
+
+- Replay each added market family against forward SPY/QQQ returns and drawdowns. Keep a feature only if it improves out-of-sample separation, calibration, contradiction handling, or interpretability.
+
+- Leave Bulltard work focused on candidate generation and measured single-name outcomes until the market-regime engine has enough independent evidence to support portfolio policy.
 
 - Choose the first canonical regime visualization: SPY price + regime shading + continuous score + component panels.
 

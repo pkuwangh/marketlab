@@ -4,13 +4,12 @@
 
 ## Product Direction
 
-MarketLab should become a deterministic market research system that answers three useful questions:
+MarketLab has two coordinated research engines:
 
-- What is the market regime and marginal risk budget?
-- Which large, liquid candidates deserve attention now?
-- Did prior signals work against forward returns, drawdowns, and relative returns?
+- **Market regime engine:** decide how much marginal SPY/QQQ beta and dry powder the portfolio should carry.
+- **Single-name opportunity engine:** decide which large, liquid candidates deserve tactical research attention.
 
-Bulltard is one evidence source for candidate generation. It is not the final decision engine, and duplicating the Bulltard email is not enough. Every milestone below must make the workflow more useful than reading the email directly.
+The market regime engine is now the primary implementation focus. Bulltard is one evidence source for the single-name engine; it is not the basis for the overall market regime. Every milestone below must improve market exposure decisions, single-name opportunity selection, or measured forward outcome feedback.
 
 ## Operating Rules
 
@@ -22,22 +21,35 @@ Bulltard is one evidence source for candidate generation. It is not the final de
 
 ## Current Baseline
 
-Implemented:
+Implemented shared foundation:
 
 - Python package skeleton with `uv`, Typer CLI, Loguru logging, tests, and a local `bin/marketlab` symlink.
 - Shared snapshot identity model using `{source, view, date}`.
+- Daily price observation fetch from Yahoo Finance through `yfinance` into local JSONL.
+- Local daily OHLCV CSV import into the same price observation format.
+
+Implemented single-name / Bulltard foundation:
+
 - Bulltard recap inspection that extracts signed Substack source URLs from saved HTML email.
 - Bulltard ranked option trades ingest from the live app route.
 - Trades Of Interest parsing from the recap email.
 - Ticker-detail fetch and parser for flow history pages.
 - Candidate review that prioritizes recap interest over raw ranked rows.
 - Daily Bulltard orchestration that captures ranked rows, recap interest, ticker details, candidate prices, validation snapshots, and outcome summaries.
-- Daily price observation fetch from Yahoo Finance through `yfinance` into local JSONL.
-- Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation snapshots using price, volume, trend, drawdown, and relative-strength features.
 - Bulltard outcome replay summaries over saved validation snapshots.
+
+Implemented market-regime foundation:
+
 - Market regime snapshots using SPY/QQQ trend, SPY volatility/VIX, RSP/IWM participation, and HYG/TLT risk appetite.
 - Market regime outcome replay summaries over saved regime snapshots.
+
+Not yet implemented:
+
+- Dedicated market-signal snapshots consumed by regime scoring.
+- VIX term structure, VVIX/vol-of-vol, fear/greed or sentiment/positioning observations.
+- Stronger breadth and liquidity/credit families beyond current ETF proxies.
+- Calibrated regime model and portfolio policy.
 
 Verified live on `2026-08-26`:
 
@@ -79,14 +91,16 @@ uv run pytest -q
 
 ## Milestones
 
-| Milestone | Status | Goal | Exit Criterion |
-| --- | --- | --- | --- |
-| 1. Bulltard Candidate Capture | Complete | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
-| 2. Candidate Validation & Outcome MVP | Complete | Make the workflow better than the email by adding independent market data and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
-| 3. Market Regime MVP | Complete | Size marginal exposure independently from single-name ideas. | Regime snapshots score market context, save point-in-time records, and replay buckets against forward SPY/QQQ returns and drawdowns. |
-| 4. Portfolio Policy MVP | Planned | Convert regime plus validated opportunities into a bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context. |
-| 5. Visualization & Reporting MVP | Planned | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
-| 6. Evidence Expansion & Agents | Later | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
+| Milestone | Status | Engine | Goal | Exit Criterion |
+| --- | --- | --- | --- | --- |
+| 1. Bulltard Candidate Capture | Complete | Single-name | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
+| 2. Candidate Validation & Outcome MVP | Complete | Single-name | Make the candidate workflow better than the email by adding independent price/liquidity context and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
+| 3. Market Regime Foundation | Complete | Market regime | Create a first deterministic market context from available OHLCV proxies. | Regime snapshots score SPY/QQQ trend, realized volatility/VIX, breadth proxy, credit proxy, and replay buckets against forward SPY/QQQ returns/drawdowns. |
+| 4. Market Signal Expansion | Next | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
+| 5. Regime Calibration & Backtest | Planned | Market regime | Decide whether the expanded regime families actually separate forward risk/reward. | Family scores, composites, transitions, and disagreement states are replayed out of sample with explicit keep/retire decisions. |
+| 6. Portfolio Policy MVP | Planned | Portfolio | Convert calibrated regime plus validated opportunities into bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context, with policy evaluated against a fixed benchmark. |
+| 7. Visualization & Reporting MVP | Planned | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
+| 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
 
 ## Milestone 1 - Bulltard Candidate Capture
 
@@ -149,8 +163,6 @@ Verified live:
 - `prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27` fetched 414 rows for each symbol.
 - Additional Yahoo fetches completed price coverage for the ranked `2026-08-26` candidate table.
 - `bulltard validate --date 2026-08-26` produced 12 validation rows with complete price coverage.
-- `regime snapshot --date 2026-08-28 --fetch-prices` fetched all seven regime proxies and produced `risk_on` with score `4`.
-- `regime outcomes --start 2026-08-28 --end 2026-08-28` replayed the saved regime snapshot; same-day forward horizons correctly showed zero available rows.
 
 Follow-up calibration work:
 
@@ -176,11 +188,11 @@ First useful M2 outputs:
 
 The command names can change later, but the deliverable cannot: candidate validation plus measured outcomes.
 
-## Milestone 3 - Market Regime MVP
+## Milestone 3 - Market Regime Foundation
 
 Current status: complete for the v0 research loop.
 
-Goal: answer whether the current market supports more exposure, less exposure, or selectivity only.
+Goal: establish a deterministic, point-in-time market-regime baseline before adding richer independent market signals.
 
 Implemented v0 scope:
 
@@ -203,6 +215,12 @@ Current implementation notes:
 - `bulltard daily --fetch-prices --regime --validate --outcomes` now runs the combined candidate plus regime loop.
 - Regime outcome tables report available forward rows separately and omit empty horizons from the default display.
 
+Verified live:
+
+- `regime snapshot --date 2026-08-28 --fetch-prices` fetched all seven regime proxies and produced `risk_on` with score `4`.
+- `regime outcomes --start 2026-08-28 --end 2026-08-28` replayed the saved regime snapshot; same-day forward horizons correctly showed zero available rows.
+- `bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes` ran candidate and regime workflow together.
+
 First useful M3 outputs:
 
 ```bash
@@ -211,12 +229,13 @@ First useful M3 outputs:
 ./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes
 ```
 
-Follow-up calibration work:
+Known limitations:
 
-- Run the v0 regime score across enough saved days to see whether buckets separate returns or simply say "no edge."
-- Tune thresholds only from replay evidence, not from today’s read.
-- Add breadth/volatility/credit proxies only when they improve measured separation.
-- Use Bulltard broad-market commentary later as an overlay, not as the first implementation.
+- This is a useful foundation, not a credible final market model.
+- Volatility is currently represented by VIX level plus SPY realized volatility, not VIX term structure or vol-of-vol.
+- Breadth and credit/liquidity are ETF proxies, not full market breadth or financing-condition datasets.
+- Sentiment/positioning is not implemented.
+- The current composite has not been calibrated across enough history to support portfolio policy.
 
 Non-goals for this milestone:
 
@@ -224,7 +243,76 @@ Non-goals for this milestone:
 - No trade automation.
 - No optimization loop over thresholds.
 
-## Milestone 4 - Portfolio Policy MVP
+## Milestone 4 - Market Signal Expansion
+
+Current status: next.
+
+Goal: make the market-regime engine richer than simple SPY/QQQ trend by adding independent market signal families that directly affect marginal exposure decisions.
+
+Target v0 scope:
+
+- Add a market-signal snapshot layer under `data/snapshots/market/signals/` or an equivalent local path.
+- Represent signal rows with date, family, name, value, status, source, availability date/time, and feature version.
+- Add volatility-structure observations:
+  - VIX level and change
+  - VIX term structure where data is practical
+  - realized-vs-implied volatility
+  - VVIX or a vol-of-vol proxy if source access is reliable
+- Add sentiment/positioning observations:
+  - fear/greed-style risk appetite, initially via manual import if needed
+  - put/call or positioning proxies later when source access is clear
+- Strengthen breadth beyond ETF proxies:
+  - percentage above moving averages
+  - new highs/lows
+  - advance/decline or equivalent breadth series if practical
+- Improve credit/liquidity evidence only after the above exists.
+- Update `regime snapshot` to consume these market-signal snapshots and display family-level evidence, missing-source status, and contradictions.
+
+Exit criterion:
+
+- A regime snapshot shows independent market signal families, not just index price features.
+- Missing signal families are explicit and reduce confidence rather than silently disappearing.
+- Each family can be replayed against forward SPY/QQQ returns and drawdowns.
+
+First implementation slice:
+
+- Create the signal-row model, writer/loader, and compact table formatter.
+- Wire current regime component evidence into this market-signal snapshot format without changing the composite score yet.
+- Add one new signal family after the snapshot contract exists, starting with volatility structure if a stable source is available, otherwise a manual import path.
+
+Non-goals for this milestone:
+
+- No portfolio policy yet.
+- No source shopping rabbit hole before the signal snapshot format exists.
+- No large data warehouse migration.
+- No Bulltard-driven market model.
+
+## Milestone 5 - Regime Calibration & Backtest
+
+Current status: planned.
+
+Goal: decide whether the expanded regime evidence actually improves market exposure decisions.
+
+Scope:
+
+- Replay each market-signal family against forward SPY and QQQ returns and drawdowns.
+- Measure family-level value before changing the composite:
+  - forward return spread by signal bucket
+  - max drawdown separation
+  - hit rate
+  - transition behavior
+  - sample counts and missingness
+- Evaluate disagreement states such as bullish trend with deteriorating volatility structure.
+- Freeze simple threshold versions before comparing them.
+- Retire signals that do not improve separation, calibration, contradiction handling, or interpretability.
+
+Exit criterion:
+
+- We know which regime families are pulling their weight.
+- The composite score has documented thresholds and a frozen version.
+- Portfolio policy can consume regime output without pretending the market model is more mature than it is.
+
+## Milestone 6 - Portfolio Policy MVP
 
 Goal: translate research outputs into a daily risk posture.
 
@@ -239,7 +327,13 @@ Scope:
   - recent decision changes
   - outcome feedback from prior signals
 
-## Milestone 5 - Visualization & Reporting MVP
+Non-goals for this milestone:
+
+- No automated trading.
+- No policy rules until M5 has at least a basic calibration result.
+- No single-name sizing that ignores aggregate market regime.
+
+## Milestone 7 - Visualization & Reporting MVP
 
 Goal: make the research loop easy to inspect without turning the project into a dashboard-first build.
 
@@ -250,7 +344,7 @@ Scope:
 - Keep notebooks exploratory; make important charts reproducible from commands.
 - Include forward evaluation layers only when clearly separated from point-in-time inputs.
 
-## Milestone 6 - Evidence Expansion & Agents
+## Milestone 8 - Evidence Expansion & Agents
 
 Goal: add new evidence only when it answers a measured question.
 
@@ -268,26 +362,15 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `4a8146e` - Handle partial Yahoo daily bars
+- `155c1b5` - Clean up outcome summary tables
+- `20c952f` - Mark market regime milestone complete
 - `68c38e8` - Add regime to Bulltard daily workflow
 - `dc873b7` - Replay market regime outcomes
 - `30a628c` - Add market regime snapshots
+- `1754ccb` - Use stock volume as liquidity gate
+- `5ed773c` - Mark candidate validation milestone complete
 - `51fd905` - Replay saved outcomes from daily workflow
 - `186fe71` - Run daily validation with price refresh
 - `4cedf90` - Refresh candidate prices automatically
-- `0d39f65` - Fetch daily prices with yfinance
-- `ccdf91a` - Document price CSV import path
-- `b6c23f6` - Import local daily price CSVs
-- `c449f60` - Document candidate validation workflow
-- `8af62a0` - Add Bulltard candidate validation workflow
-- `03b9924` - Mark Bulltard capture milestone complete
-- `5f8292d` - Refresh implementation milestones
-- `e015a76` - Run Bulltard daily candidate workflow
-- `b12f96c` - Handle missing ticker flow premiums
-- `69ceec8` - Prioritize recap interest in candidate review
-- `2660744` - Parse Bulltard trades of interest
-- `7bd3922` - Review Bulltard candidates from observations
-- `41db2e5` - Parse Bulltard ticker flow history
-- `8900d8c` - Ingest Bulltard ranked observations
-- `227ba8c` - Prepare Bulltard ingest plan
-- `0d4f373` - Inspect Bulltard recap links
-- `11030cb` - Scaffold marketlab CLI
+- `3466745` - Document yfinance price source
