@@ -20,7 +20,7 @@ Implemented:
 - Trades Of Interest parsing from the recap.
 - Ticker detail retrieval and flow-history parsing.
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
-- One-command daily Bulltard workflow for candidate capture, optional price refresh, regime context, validation, and outcome replay.
+- One-command daily Bulltard workflow for candidate capture, optional price refresh, validation, and outcome replay.
 - Daily OHLCV price fetch from Yahoo Finance through `yfinance` into local observations.
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
@@ -118,14 +118,13 @@ fetches ticker detail for the Trades Of Interest names, and prints the candidate
 Use `--top-ranked N` to also fetch detail for the top N ranked database names, or
 `--no-ticker-details` to skip detail fetches.
 
-Run the full daily research loop:
+Run the full daily Bulltard candidate loop:
 
 ```bash
 ./bin/marketlab bulltard daily \
   --date 2026-08-28 \
   data/inbox/bulltard/recap-2026-08-28.html \
   --fetch-prices \
-  --regime \
   --validate \
   --outcomes
 ```
@@ -142,6 +141,9 @@ Compute the market regime directly:
 ```bash
 ./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
 ```
+
+Market regime is intentionally separate from Bulltard. Bulltard may generate single-name
+candidates, but it is not the basis for the overall market-regime score.
 
 The v0 score uses:
 
@@ -202,7 +204,6 @@ Or run capture, price refresh, validation, and saved-snapshot outcome replay tog
   --date 2026-08-28 \
   data/inbox/bulltard/recap-2026-08-28.html \
   --fetch-prices \
-  --regime \
   --validate \
   --outcomes
 ```

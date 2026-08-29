@@ -70,7 +70,7 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html --top-ranked 3
 ./bin/marketlab bulltard candidates --date 2026-08-26
 ./bin/marketlab bulltard ticker META data/inbox/bulltard/recap-2026-08-26.html --date 2026-08-26
-./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes
+./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes
 ./bin/marketlab bulltard refresh-prices --date 2026-08-26 --start 2025-01-01
 ./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
@@ -206,27 +206,26 @@ Implemented v0 scope:
 - Store one market regime snapshot per date under `data/snapshots/regime/market/`.
 - Label the market as `risk_on`, `neutral`, or `risk_off` with a simple confidence level and component reasons.
 - Evaluate regime buckets against forward SPY/QQQ returns and drawdowns.
-- Integrate regime snapshot and regime outcome replay into `bulltard daily --regime`.
+- Keep the market-regime workflow on the independent `regime` command surface.
 
 Current implementation notes:
 
 - `regime snapshot --fetch-prices` refreshes the regime proxy price set and writes a snapshot.
 - `regime outcomes` replays saved regime snapshots against forward SPY/QQQ behavior.
-- `bulltard daily --fetch-prices --regime --validate --outcomes` now runs the combined candidate plus regime loop.
+- `bulltard daily` no longer accepts `--regime`; combined daily orchestration should be top-level later, not nested under Bulltard.
 - Regime outcome tables report available forward rows separately and omit empty horizons from the default display.
 
 Verified live:
 
 - `regime snapshot --date 2026-08-28 --fetch-prices` fetched all seven regime proxies and produced `risk_on` with score `4`.
 - `regime outcomes --start 2026-08-28 --end 2026-08-28` replayed the saved regime snapshot; same-day forward horizons correctly showed zero available rows.
-- `bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes` ran candidate and regime workflow together.
+- `bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes` runs the single-name candidate workflow without regime side effects.
 
 First useful M3 outputs:
 
 ```bash
 ./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
-./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --regime --validate --outcomes
 ```
 
 Known limitations:
