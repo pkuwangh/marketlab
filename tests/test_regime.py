@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 
+from marketlab.market_signals import load_market_signal_snapshot
 from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import (
     RegimeComponentScore,
@@ -17,6 +18,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     source_date = date(2026, 8, 15)
     price_root = tmp_path / "prices"
     snapshot_root = tmp_path / "snapshots"
+    signal_snapshot_root = tmp_path / "signals"
     start = source_date - timedelta(days=229)
     _write_price_history(
         price_root,
@@ -65,10 +67,13 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         source_date=source_date,
         price_root=price_root,
         snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
     )
 
     assert result.snapshot_path == snapshot_root / "2026-08-15.json"
     assert result.snapshot_path.is_file()
+    assert result.signal_snapshot_path == signal_snapshot_root / "2026-08-15.jsonl"
+    assert result.signal_snapshot_path.is_file()
     assert result.snapshot.regime == "risk_on"
     assert result.snapshot.score == 5
     assert result.snapshot.confidence == "high"
@@ -81,6 +86,19 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     ]
     assert "trend" in result.table
     assert "constructive" in result.table
+    assert [signal.family for signal in result.signals] == [
+        "trend",
+        "volatility",
+        "breadth",
+        "credit",
+    ]
+    assert "price_proxy" in result.signal_table
+
+    loaded_signals = load_market_signal_snapshot(
+        source_date=source_date,
+        snapshot_root=signal_snapshot_root,
+    )
+    assert loaded_signals == result.signals
 
     loaded = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
     assert loaded == result.snapshot

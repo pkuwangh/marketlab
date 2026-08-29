@@ -47,6 +47,7 @@ from marketlab.bulltard.validation import (
     validate_bulltard_candidates,
 )
 from marketlab.logging import configure_logging
+from marketlab.market_signals import DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT
 from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
     PriceDataError,
@@ -334,6 +335,12 @@ def regime_snapshot(
         file_okay=False,
         help="Root directory for market regime snapshots.",
     ),
+    signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory for market signal snapshots.",
+    ),
     write_snapshot: bool = typer.Option(
         True,
         "--write/--no-write",
@@ -370,6 +377,7 @@ def regime_snapshot(
             source_date=source_date,
             price_root=price_root,
             snapshot_root=snapshot_root,
+            signal_snapshot_root=signal_snapshot_root,
             write_snapshot=write_snapshot,
         )
     except RegimeError as exc:
@@ -1165,6 +1173,9 @@ def _echo_regime_price_refresh_result(result: RegimePriceRefreshResult) -> None:
 def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
     if result.snapshot_path is not None:
         typer.echo(f"regime_snapshot_path={result.snapshot_path}")
+    if result.signal_snapshot_path is not None:
+        typer.echo(f"market_signal_snapshot_path={result.signal_snapshot_path}")
+    typer.echo(f"market_signal_count={len(result.signals)}")
     snapshot = result.snapshot
     typer.echo(f"regime_date={snapshot.source_date.isoformat()}")
     typer.echo(
@@ -1174,6 +1185,9 @@ def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
     typer.echo(f"regime_score={snapshot.score}")
     typer.echo(f"regime_confidence={snapshot.confidence}")
     typer.echo(f"missing_regime_symbols={','.join(snapshot.missing_symbols)}")
+    if result.signal_table:
+        typer.echo("")
+        typer.echo(result.signal_table)
     typer.echo("")
     typer.echo(result.table)
 

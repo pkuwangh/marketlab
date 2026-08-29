@@ -11,6 +11,14 @@ from typing import Any
 
 from loguru import logger
 
+from marketlab.market_signals import (
+    DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    MARKET_SIGNAL_FEATURE_VERSION,
+    MarketSignal,
+    MarketSignalError,
+    format_market_signals,
+    write_market_signal_snapshot,
+)
 from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
     DailyPriceObservation,
@@ -131,6 +139,9 @@ class RegimeSnapshotResult:
     snapshot: RegimeSnapshot
     snapshot_path: Path | None
     table: str
+    signals: tuple[MarketSignal, ...] = ()
+    signal_snapshot_path: Path | None = None
+    signal_table: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +256,7 @@ def compute_regime_snapshot(
     source_date: date,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     write_snapshot: bool = True,
 ) -> RegimeSnapshotResult:
     """Compute and optionally persist one market regime snapshot."""
@@ -289,7 +301,17 @@ def compute_regime_snapshot(
     snapshot_path = (
         write_regime_snapshot(snapshot, snapshot_root=snapshot_root) if write_snapshot else None
     )
+    signals = _market_signals_from_snapshot(snapshot)
+    try:
+        signal_snapshot_path = (
+            write_market_signal_snapshot(signals, snapshot_root=signal_snapshot_root)
+            if write_snapshot
+            else None
+        )
+    except MarketSignalError as exc:
+        raise RegimeError(str(exc)) from exc
     table = format_regime_snapshot(snapshot)
+    signal_table = format_market_signals(signals)
     logger.bind(
         source_date=source_date.isoformat(),
         price_date=snapshot.price_date.isoformat() if snapshot.price_date else None,
@@ -297,12 +319,17 @@ def compute_regime_snapshot(
         score=snapshot.score,
         confidence=snapshot.confidence,
         snapshot_path=str(snapshot_path) if snapshot_path else None,
+        market_signal_count=len(signals),
+        market_signal_snapshot_path=str(signal_snapshot_path) if signal_snapshot_path else None,
     ).success("Computed market regime snapshot")
     return RegimeSnapshotResult(
         source_date=source_date,
         snapshot=snapshot,
         snapshot_path=snapshot_path,
         table=table,
+        signals=signals,
+        signal_snapshot_path=signal_snapshot_path,
+        signal_table=signal_table,
     )
 
 
@@ -355,6 +382,48 @@ def format_regime_snapshot(snapshot: RegimeSnapshot) -> str:
             ]
         )
     return _format_table(rows)
+
+
+def _market_signals_from_snapshot(snapshot: RegimeSnapshot) -> tuple[MarketSignal, ...]:
+    return tuple(
+        MarketSignal(
+            source_date=snapshot.source_date,
+            feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+            family=component.name,
+            name="price_proxy",
+            status=component.status,
+            score=component.score,
+            value=_component_value(snapshot, component.name),
+            unit="text",
+            source="yahoo_price_proxy",
+            observed_date=snapshot.price_date,
+            availability_date=snapshot.price_date,
+            reason=component.reason,
+        )
+        for component in snapshot.components
+    )
+
+
+def _component_value(snapshot: RegimeSnapshot, component_name: str) -> str:
+    if component_name == "trend":
+        return (
+            f"SPY 20d {_format_percent(snapshot.spy_return_20d)}, "
+            f"SPY 60d {_format_percent(snapshot.spy_return_60d)}, "
+            f"QQQ 20d {_format_percent(snapshot.qqq_return_20d)}"
+        )
+    if component_name == "volatility":
+        return (
+            f"VIX {_format_index(snapshot.vix_close)}, "
+            f"SPY rv20 {_format_percent(snapshot.spy_realized_vol_20d)}"
+        )
+    if component_name == "breadth":
+        return (
+            f"RSP/SPY 20d {_format_percent(snapshot.rsp_spy_relative_20d)}, "
+            f"IWM/SPY 20d {_format_percent(snapshot.iwm_spy_relative_20d)}"
+        )
+    if component_name == "credit":
+        return f"HYG/TLT 20d {_format_percent(snapshot.hyg_tlt_relative_20d)}"
+    return "-"
 
 
 def compute_regime_outcomes(
@@ -942,6 +1011,12 @@ def _format_percent(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value * 100:+.1f}%"
+
+
+def _format_index(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}"
 
 
 def _format_drawdown(value: float | None) -> str:

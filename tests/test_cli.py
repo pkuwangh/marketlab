@@ -30,6 +30,7 @@ from marketlab.bulltard.validation import (
     CandidateValidationSummary,
 )
 from marketlab.cli import app, bulltard_app, prices_app, regime_app
+from marketlab.market_signals import MarketSignal
 from marketlab.prices import PriceFetchResult
 from marketlab.regime import (
     RegimeComponentScore,
@@ -731,6 +732,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
 ) -> None:
     price_root = tmp_path / "prices"
     snapshot_root = tmp_path / "regime"
+    signal_snapshot_root = tmp_path / "signals"
     events: list[str] = []
 
     def fake_refresh_regime_prices(
@@ -763,24 +765,44 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         source_date: date,
         price_root: Path,
         snapshot_root: Path,
+        signal_snapshot_root: Path,
         write_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["prices"]
         assert source_date == date(2026, 8, 28)
         assert price_root == price_root_arg
         assert snapshot_root == snapshot_root_arg
+        assert signal_snapshot_root == signal_snapshot_root_arg
         assert write_snapshot is True
         events.append("snapshot")
         snapshot = _regime_snapshot(source_date=source_date)
+        signal = MarketSignal(
+            source_date=source_date,
+            feature_version="fixture",
+            family="trend",
+            name="price_proxy",
+            status="constructive",
+            score=2,
+            value="SPY fixture",
+            unit="text",
+            source="fixture",
+            observed_date=source_date,
+            availability_date=source_date,
+            reason="fixture signal",
+        )
         return RegimeSnapshotResult(
             source_date=source_date,
             snapshot=snapshot,
             snapshot_path=snapshot_root / "2026-08-28.json",
             table="component  score  status\ntrend     +2     constructive",
+            signals=(signal,),
+            signal_snapshot_path=signal_snapshot_root / "2026-08-28.jsonl",
+            signal_table="family  signal       score\ntrend   price_proxy  +2",
         )
 
     price_root_arg = price_root
     snapshot_root_arg = snapshot_root
+    signal_snapshot_root_arg = signal_snapshot_root
     monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
     monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
 
@@ -800,6 +822,8 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             str(price_root),
             "--snapshot-root",
             str(snapshot_root),
+            "--signal-root",
+            str(signal_snapshot_root),
         ],
     )
 
@@ -808,6 +832,11 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_price_symbols=SPY,QQQ" in result.output
     assert "regime_price_success_count=1" in result.output
     assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
+    assert (
+        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}" in result.output
+    )
+    assert "market_signal_count=1" in result.output
+    assert "trend   price_proxy  +2" in result.output
     assert "regime_date=2026-08-28" in result.output
     assert "regime=risk_on" in result.output
     assert "regime_score=5" in result.output
