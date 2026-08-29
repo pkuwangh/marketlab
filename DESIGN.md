@@ -1,12 +1,12 @@
 # Market Regime & Large-Cap Opportunity Research System
 
-**High-Level Design - Version 0.7**
-**Status:** Two-engine, market-regime-first implementation baseline
+**High-Level Design - Version 0.8**
+**Status:** Two-engine, market-regime-first implementation baseline with explicit stretch/re-risk operating objective
 **Primary audience:** coding/research agents and the human researcher
 
 > **Purpose:** Build a durable, testable research process that (1) sizes marginal market exposure while maintaining a permanent long-term core in SPY/QQQ and (2) identifies unusually attractive multi-month opportunities in large, fundamentally viable, options-liquid individual stocks.
 
-| **Core philosophy:** Stay invested. Use the signal to decide how much extra beta to carry, how much cash to deploy, and how aggressively to use options overlays-not whether to be in or out of the market. |
+| **Core philosophy:** Stay invested. The highest-value signal is not a daily BUY/SELL label. It is an exposure-control alert: when the market is stretched enough to raise cash or overwrite upside, and when panic/bloodbath conditions are washed out enough to redeploy cash or add defined convex exposure. |
 |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 | **Layer**      | **Role**                                                         | **Typical instruments**                                          |
@@ -20,6 +20,18 @@
 This document stays at the system-design level while including the implementation architecture needed for reproducibility: Python orchestration, bounded agents, immutable time snapshots, local-first storage, an incremental Codex-to-API runtime path, and a visualization layer designed for both exploratory research and auditable backtests. The research system has two coordinated engines: a SPY/QQQ market-regime engine and a large-cap single-name opportunity engine.
 
 The market-regime engine is the current implementation priority. Bulltard is useful candidate-generation evidence for the single-name engine, but it is not the source of truth for overall market regime. Market regime should be built primarily from independent market inputs such as index price structure, volatility structure, breadth, credit/liquidity, and sentiment/positioning.
+
+## Practical Operating Objective
+
+The portfolio maintains a permanent SPY/QQQ-oriented core. The regime system controls only the marginal tactical layer around that core. Its most useful output should identify two actionable zones:
+
+| **Zone** | **Question** | **Typical bounded response** |
+|---|---|---|
+| Stretched / de-risk | Has upside become crowded or overextended while downside risk is rising? | Keep the core, scale down tactical beta, rebuild cash, sell covered calls against part of existing exposure, and avoid adding fresh long calls unless the setup is exceptional. |
+| Bloodbath / re-risk | Has a broad selloff likely moved forward reward/risk into a favorable zone? | Keep the core, deploy cash in tranches, consider 60-90 DTE calls or call spreads, and consider cash-secured puts or defined-risk put spreads when assignment/risk budget is acceptable. |
+| Normal / mixed | Is the evidence too balanced to justify a strong posture change? | Stay near neutral policy beta, preserve flexibility, and let single-name opportunities compete for only a bounded sleeve. |
+
+These are research-policy states, not automatic trade orders. The system should make the posture decision inspectable; execution remains manual and must respect option liquidity, tax, assignment, and position-size constraints.
 
 ## Implementation Bias
 
@@ -44,6 +56,10 @@ A long-term investor who intends to remain structurally long SPY/QQQ faces two r
 - How much incremental beta should be carried above or below the neutral portfolio target?
 
 - How much of the cash reserve should remain undeployed versus be used to add exposure?
+
+- Is the market stretched enough to start scaling down tactical exposure, rebuilding cash, or selling covered calls against part of the core?
+
+- Is the market washed out enough after a broad selloff to start scaling up through cash deployment, 60-90 DTE calls/call spreads, or put underwriting?
 
 - Should existing long exposure be left uncapped, partially overwritten with covered calls, or supplemented with put-selling / defined-risk structures?
 
@@ -183,6 +199,14 @@ Historical snapshots should never be silently overwritten. If a vendor corrects 
 
 The model should be ensemble-like: several independent families vote on the regime. A feature is valuable when it contributes incremental information, not merely because it is popular.
 
+The regime label alone is insufficient. A strong index trend can be healthy or dangerously stretched; a weak market can be deteriorating or washed out. The market-regime engine should therefore produce three related but separate views:
+
+| **View** | **Purpose** | **Portfolio question** |
+|---|---|---|
+| Directional regime | Summarize whether the current tape is risk-on, neutral, or risk-off. | Should marginal beta be above, near, or below neutral? |
+| Stretch / de-risk pressure | Detect overextension, complacency, narrowing participation, or early credit/liquidity deterioration. | Should the portfolio raise cash, sell calls, or reduce new long-delta additions? |
+| Washout / re-risk pressure | Detect forced-selling conditions, panic, broad capitulation, and stabilization after a selloff. | Should the portfolio start redeploying cash, adding convex upside, or underwriting lower entries? |
+
 | **Family**              | **Candidate inputs**                                                               | **Question answered**                                                           |
 |-------------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | Trend / structure       | Price vs. moving averages, slope, distance from highs, term trend, momentum        | Is the market structurally advancing or deteriorating?                          |
@@ -199,17 +223,29 @@ Avoid a binary BUY/SELL output. A useful daily snapshot should look more like:
 | **Field**                   | **Example interpretation**                                                              |
 |-----------------------------|-----------------------------------------------------------------------------------------|
 | Regime score                | -2 = risk-off, -1 = cautious, 0 = neutral, +1 = constructive, +2 = risk-on              |
+| Stretch / de-risk score     | Whether conditions argue for raising cash, trimming tactical beta, or selling calls     |
+| Washout / re-risk score     | Whether conditions argue for redeploying cash or adding bounded upside exposure         |
 | Confidence                  | How aligned the feature families are and how familiar the current state is historically |
 | Forward return distribution | Historical distribution for SPY/QQQ over roughly 40-65 trading days                     |
 | Drawdown distribution       | Expected/max adverse excursion under comparable regimes                                 |
 | Contradictions              | Important families that disagree with the composite                                     |
 | Change flag                 | Whether the regime is stable, improving, or deteriorating                               |
+| Policy posture              | Suggested marginal beta/cash/overlay posture inside predefined risk limits              |
 
 The output should prefer calibrated uncertainty over false precision. "Moderately cautious, 62% confidence" is more useful than "QQQ will fall 7.3%."
 
 # 6. Translation From Signal to Portfolio Posture
 
 The highest-value design decision is the mapping layer between a statistical regime and an actual portfolio action. This mapping should be explicit, bounded, and backtested separately from the signal itself.
+
+The mapping layer should be designed around marginal actions rather than whole-portfolio liquidation. In practice, the system should help answer:
+
+- When to keep the core but begin scaling down tactical exposure.
+- When to rebuild or preserve cash.
+- When to monetize stretched upside by selling covered calls against part of existing exposure.
+- When to start scaling back up after a bloodbath.
+- When 60-90 DTE calls/call spreads offer better reward/risk than shares for tactical upside.
+- When cash-secured puts or defined-risk put spreads are acceptable ways to underwrite lower entries.
 
 | **Regime**      | **Portfolio intent**             | **Illustrative posture (not final rules)**                                                    |
 |-----------------|----------------------------------|-----------------------------------------------------------------------------------------------|
@@ -221,6 +257,8 @@ The highest-value design decision is the mapping layer between a statistical reg
 
 | **Design constraint:** The tactical layer must have hard exposure limits. A model failure should be able to hurt performance, but it should not be able to destroy the long-term portfolio thesis. |
 |----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+
+A stretched market is not the same as a bearish market. The system may say "trend still risk-on, but stretch pressure is high," which should map to protecting gains and slowing new risk additions rather than shorting the market. Likewise, a bloodbath/re-risk alert is not a claim that the exact bottom is known; it should map to staged deployment and bounded option risk.
 
 # 7. Bulltard Research Module
 
@@ -509,9 +547,9 @@ Build the simplest version that can teach us something, then add sophistication 
 | 0. Design / bootstrap | Agree on objectives, portfolio constraints, and a minimal local CLI | Design baseline accepted; deterministic CLI runs locally |
 | 1. Market-regime foundation | Build point-in-time SPY/QQQ trend, realized volatility, basic VIX, breadth proxy, and credit proxy snapshots | We can create and replay daily regime snapshots against forward SPY/QQQ returns and drawdowns |
 | 2. Market-regime signal expansion | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit observations | We can inspect family-level signals and compare their forward outcome separation |
-| 3. Regime calibration | Backtest family scores, disagreement states, transitions, and thresholds before mapping them to portfolio policy | The regime model either separates forward risk/reward out of sample or explicitly records "no edge" |
+| 3. Regime calibration | Backtest family scores, disagreement states, transitions, stretched/de-risk states, and bloodbath/re-risk states before mapping them to portfolio policy | The regime model either separates forward risk/reward out of sample or explicitly records "no edge" |
 | 4. Single-name candidate pipeline | Ingest Bulltard candidates and validate them with independent price, liquidity, fundamentals, catalysts, and outcomes | We can measure whether candidate subsets outperform comparable large-cap names and benchmarks |
-| 5. Portfolio policy | Map calibrated regime to bounded beta/cash risk budget and combine with validated single-name opportunities | Policy adds risk-adjusted value vs. fixed-policy benchmark |
+| 5. Portfolio policy | Map calibrated regime to bounded beta/cash/overlay posture and combine with validated single-name opportunities | Policy adds risk-adjusted value vs. fixed-policy benchmark |
 | 6. Visualization and reporting | Render regime components, disagreements, transitions, candidates, and outcomes from versioned inputs | Important charts and reports are reproducible from CLI commands |
 | 7. Iterate | Periodic review, feature retirement, parameter freezes, candidate/outcome monitoring | Stable research cadence without constant curve-fitting |
 
@@ -543,6 +581,8 @@ Build the simplest version that can teach us something, then add sophistication 
 - Should SPY and QQQ receive separate regime scores or one shared macro score plus index-specific modifiers?
 
 - Which option strategies are permitted in the tactical layer, and which are explicitly off-limits?
+
+- What exact action bands should stretched and bloodbath/re-risk states map to: cash reserve changes, covered-call overwrite percentage, 60-90 DTE call budget, and short-put/put-spread risk budget?
 
 - What historical period should be considered representative enough for the first backtest?
 
