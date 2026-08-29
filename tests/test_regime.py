@@ -13,6 +13,7 @@ from marketlab.regime import (
     RegimeSnapshot,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
+    compute_regime_backfill,
     compute_regime_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_snapshot,
@@ -198,6 +199,84 @@ def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path
     assert "^VVIX" in result.snapshot.missing_symbols
     assert "vol_of_vol" in result.signal_table
     assert "missing" in result.table
+
+
+def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
+    end_date = date(2026, 8, 15)
+    start = end_date - timedelta(days=229)
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
+    snapshot_root = tmp_path / "snapshots"
+    signal_snapshot_root = tmp_path / "signals"
+    for symbol, base, step in (
+        ("SPY", 100.0, 0.50),
+        ("QQQ", 120.0, 0.60),
+        ("RSP", 100.0, 0.45),
+        ("IWM", 90.0, 0.40),
+        ("HYG", 80.0, 0.10),
+        ("TLT", 100.0, -0.05),
+        ("^VIX", 16.0, 0.0),
+        ("^VVIX", 85.0, 0.0),
+    ):
+        _write_price_history(
+            price_root,
+            symbol=symbol,
+            start=start,
+            closes=[base + index * step for index in range(230)],
+        )
+    _write_market_series_value(
+        market_series_root,
+        series_id="BAMLH0A0HYM2",
+        observed_date=end_date - timedelta(days=1),
+        availability_date=end_date - timedelta(days=1),
+        value=2.7,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="NFCI",
+        observed_date=end_date - timedelta(days=5),
+        availability_date=end_date - timedelta(days=5),
+        value=-0.5,
+        unit="index",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS10",
+        observed_date=end_date - timedelta(days=1),
+        availability_date=end_date - timedelta(days=1),
+        value=4.6,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS2",
+        observed_date=end_date - timedelta(days=1),
+        availability_date=end_date - timedelta(days=1),
+        value=4.0,
+        unit="percent_level",
+    )
+
+    result = compute_regime_backfill(
+        start_date=end_date - timedelta(days=1),
+        end_date=end_date,
+        price_root=price_root,
+        market_series_root=market_series_root,
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
+    )
+
+    assert result.source_dates == (date(2026, 8, 14), date(2026, 8, 15))
+    assert len(result.snapshot_paths) == 2
+    assert len(result.signal_snapshot_paths) == 2
+    assert (snapshot_root / "2026-08-14.json").is_file()
+    assert (snapshot_root / "2026-08-15.json").is_file()
+    assert (signal_snapshot_root / "2026-08-14.jsonl").is_file()
+    assert (signal_snapshot_root / "2026-08-15.jsonl").is_file()
+    loaded = load_regime_snapshot(source_date=end_date, snapshot_root=snapshot_root)
+    assert loaded is not None
+    assert loaded.regime == "risk_on"
+    assert loaded.stretch_pressure_score is not None
 
 
 def test_derive_regime_action_state_flags_stretched_market() -> None:

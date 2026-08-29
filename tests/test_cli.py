@@ -42,6 +42,7 @@ from marketlab.regime import (
     RegimeActionOutcomeResult,
     RegimeActionOutcomeSummaryRow,
     RegimeActionState,
+    RegimeBackfillResult,
     RegimeComponentScore,
     RegimeForwardOutcome,
     RegimeOutcomeResult,
@@ -152,6 +153,17 @@ def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> No
     assert "Compute a market regime snapshot" in result.output
     assert "--date" in result.output
     assert "--fetch-prices" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regime_backfill_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "backfill"])
+
+    assert result.exit_code != 0
+    assert "Backfill daily market regime and signal snapshots" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
@@ -1036,6 +1048,146 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "pressure_confidence=medium" in result.output
     assert "trend   spy_return_20d  0.42" in result.output
     assert "trend     +2     constructive" in result.output
+
+
+def test_regime_backfill_fetches_sources_once_and_outputs_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
+    snapshot_root = tmp_path / "regime"
+    signal_snapshot_root = tmp_path / "signals"
+    events: list[str] = []
+
+    def fake_refresh_regime_prices(
+        *,
+        start_date: date,
+        end_date: date,
+        price_root: Path,
+    ) -> RegimePriceRefreshResult:
+        assert start_date == date(2025, 11, 15)
+        assert end_date == date(2026, 8, 29)
+        assert price_root == price_root_arg
+        events.append("prices")
+        return RegimePriceRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("SPY", "QQQ"),
+            price_results=(
+                PriceFetchResult(
+                    symbol="SPY",
+                    source_symbol="SPY",
+                    observation_path=price_root / "SPY.jsonl",
+                    row_count=200,
+                ),
+            ),
+            price_failures=(),
+        )
+
+    def fake_fetch_and_write_fred_series(
+        *,
+        series_ids: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+    ) -> tuple[MarketSeriesFetchResult, ...]:
+        assert events == ["prices"]
+        assert series_ids == ("BAMLH0A0HYM2", "NFCI", "DGS10", "DGS2")
+        assert start_date == date(2025, 11, 15)
+        assert end_date == date(2026, 8, 29)
+        assert output_root == market_series_root_arg
+        events.append("market-series")
+        return (
+            MarketSeriesFetchResult(
+                series_id="NFCI",
+                source_series_id="NFCI",
+                observation_path=output_root / "NFCI.jsonl",
+                row_count=40,
+                latest_observed_date=date(2026, 8, 26),
+                latest_availability_date=date(2026, 8, 31),
+            ),
+        )
+
+    def fake_compute_regime_backfill(
+        *,
+        start_date: date,
+        end_date: date,
+        price_root: Path,
+        market_series_root: Path,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        write_snapshot: bool,
+    ) -> RegimeBackfillResult:
+        assert events == ["prices", "market-series"]
+        assert start_date == date(2026, 8, 28)
+        assert end_date == date(2026, 8, 29)
+        assert price_root == price_root_arg
+        assert market_series_root == market_series_root_arg
+        assert snapshot_root == snapshot_root_arg
+        assert signal_snapshot_root == signal_snapshot_root_arg
+        assert write_snapshot is True
+        events.append("backfill")
+        return RegimeBackfillResult(
+            start_date=start_date,
+            end_date=end_date,
+            source_dates=(date(2026, 8, 28), date(2026, 8, 29)),
+            snapshot_paths=(
+                snapshot_root / "2026-08-28.json",
+                snapshot_root / "2026-08-29.json",
+            ),
+            signal_snapshot_paths=(
+                signal_snapshot_root / "2026-08-28.jsonl",
+                signal_snapshot_root / "2026-08-29.jsonl",
+            ),
+        )
+
+    price_root_arg = price_root
+    market_series_root_arg = market_series_root
+    snapshot_root_arg = snapshot_root
+    signal_snapshot_root_arg = signal_snapshot_root
+    monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_fred_series",
+        fake_fetch_and_write_fred_series,
+    )
+    monkeypatch.setattr("marketlab.cli.compute_regime_backfill", fake_compute_regime_backfill)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "backfill",
+            "--start",
+            "2026-08-28",
+            "--end",
+            "2026-08-29",
+            "--fetch-prices",
+            "--fetch-market-series",
+            "--lookback-days",
+            "286",
+            "--price-root",
+            str(price_root),
+            "--market-series-root",
+            str(market_series_root),
+            "--snapshot-root",
+            str(snapshot_root),
+            "--signal-root",
+            str(signal_snapshot_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert events == ["prices", "market-series", "backfill"]
+    assert "regime_price_symbols=SPY,QQQ" in result.output
+    assert "market_series_ids=NFCI" in result.output
+    assert "regime_backfill_date_count=2" in result.output
+    assert "regime_backfill_first_date=2026-08-28" in result.output
+    assert "regime_backfill_last_date=2026-08-29" in result.output
+    assert "regime_snapshot_count=2" in result.output
+    assert "market_signal_snapshot_count=2" in result.output
+    assert str(snapshot_root / "2026-08-29.json") in result.output
+    assert str(signal_snapshot_root / "2026-08-29.jsonl") in result.output
 
 
 def test_regime_outcomes_outputs_summary_table(

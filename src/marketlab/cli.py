@@ -66,6 +66,7 @@ from marketlab.regime import (
     DEFAULT_REGIME_SNAPSHOT_ROOT,
     MarketSignalOutcomeResult,
     RegimeActionOutcomeResult,
+    RegimeBackfillResult,
     RegimeError,
     RegimeOutcomeResult,
     RegimePressureOutcomeResult,
@@ -73,6 +74,7 @@ from marketlab.regime import (
     RegimeSnapshotResult,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
+    compute_regime_backfill,
     compute_regime_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_snapshot,
@@ -501,6 +503,112 @@ def regime_snapshot(
         raise typer.BadParameter(str(exc)) from exc
 
     _echo_regime_snapshot_result(result)
+
+
+@regime_app.command("backfill", no_args_is_help=True)
+def regime_backfill(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First market regime date to compute.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last market regime date to compute.",
+    ),
+    fetch_prices_flag: bool = typer.Option(
+        False,
+        "--fetch-prices",
+        help="Refresh Yahoo daily prices for regime proxies before computing snapshots.",
+    ),
+    fetch_market_series_flag: bool = typer.Option(
+        False,
+        "--fetch-market-series",
+        help="Refresh FRED market series before computing snapshots.",
+    ),
+    lookback_days: int = typer.Option(
+        DEFAULT_DAILY_PRICE_LOOKBACK_DAYS,
+        "--lookback-days",
+        min=0,
+        help="Warmup calendar days to fetch before --start when refreshing source data.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    market_series_root: Path = typer.Option(
+        DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+        "--market-series-root",
+        file_okay=False,
+        help="Root directory containing scalar market series observations.",
+    ),
+    snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--snapshot-root",
+        file_okay=False,
+        help="Root directory for market regime snapshots.",
+    ),
+    signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory for market signal snapshots.",
+    ),
+    write_snapshot: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write market regime and signal snapshots.",
+    ),
+) -> None:
+    """Backfill daily market regime and signal snapshots."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    fetch_start = start_date - timedelta(days=lookback_days)
+    if fetch_prices_flag:
+        try:
+            price_refresh_result = refresh_regime_prices(
+                start_date=fetch_start,
+                end_date=end_date,
+                price_root=price_root,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_regime_price_refresh_result(price_refresh_result)
+        typer.echo("")
+
+    if fetch_market_series_flag:
+        try:
+            market_series_results = fetch_and_write_fred_series(
+                series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
+                start_date=fetch_start,
+                end_date=end_date,
+                output_root=market_series_root,
+            )
+        except MarketSeriesError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_market_series_fetch_results(market_series_results)
+        typer.echo("")
+
+    try:
+        result = compute_regime_backfill(
+            start_date=start_date,
+            end_date=end_date,
+            price_root=price_root,
+            market_series_root=market_series_root,
+            snapshot_root=snapshot_root,
+            signal_snapshot_root=signal_snapshot_root,
+            write_snapshot=write_snapshot,
+        )
+    except RegimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_regime_backfill_result(result)
 
 
 @regime_app.command("outcomes", no_args_is_help=True)
@@ -1505,6 +1613,28 @@ def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
         typer.echo(result.pressure_table)
     typer.echo("")
     typer.echo(result.table)
+
+
+def _echo_regime_backfill_result(result: RegimeBackfillResult) -> None:
+    typer.echo(f"regime_backfill_start={result.start_date.isoformat()}")
+    typer.echo(f"regime_backfill_end={result.end_date.isoformat()}")
+    typer.echo(f"regime_backfill_date_count={len(result.source_dates)}")
+    typer.echo(
+        "regime_backfill_first_date="
+        f"{result.source_dates[0].isoformat() if result.source_dates else ''}"
+    )
+    typer.echo(
+        "regime_backfill_last_date="
+        f"{result.source_dates[-1].isoformat() if result.source_dates else ''}"
+    )
+    typer.echo(f"regime_snapshot_count={len(result.snapshot_paths)}")
+    typer.echo(f"market_signal_snapshot_count={len(result.signal_snapshot_paths)}")
+    if result.snapshot_paths:
+        typer.echo(f"first_regime_snapshot_path={result.snapshot_paths[0]}")
+        typer.echo(f"last_regime_snapshot_path={result.snapshot_paths[-1]}")
+    if result.signal_snapshot_paths:
+        typer.echo(f"first_market_signal_snapshot_path={result.signal_snapshot_paths[0]}")
+        typer.echo(f"last_market_signal_snapshot_path={result.signal_snapshot_paths[-1]}")
 
 
 def _echo_regime_outcome_result(result: RegimeOutcomeResult) -> None:

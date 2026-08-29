@@ -257,6 +257,17 @@ class RegimeSnapshotResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimeBackfillResult:
+    """Result of computing market regime snapshots over a date range."""
+
+    start_date: date
+    end_date: date
+    source_dates: tuple[date, ...]
+    snapshot_paths: tuple[Path, ...]
+    signal_snapshot_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RegimeForwardOutcome:
     """One forward market outcome from one regime snapshot."""
 
@@ -622,6 +633,98 @@ def compute_regime_snapshot(
         series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
         observations_root=market_series_root,
     )
+    return _compute_regime_snapshot_from_histories(
+        source_date=source_date,
+        histories=histories,
+        market_series_histories=market_series_histories,
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
+        write_snapshot=write_snapshot,
+    )
+
+
+def compute_regime_backfill(
+    *,
+    start_date: date,
+    end_date: date,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    market_series_root: Path = DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    write_snapshot: bool = True,
+) -> RegimeBackfillResult:
+    """Compute market regime snapshots for each SPY observation date in a range."""
+
+    if end_date < start_date:
+        raise RegimeError("Backfill end date must be on or after start date")
+
+    histories = _load_histories(symbols=DEFAULT_REGIME_PRICE_SYMBOLS, price_root=price_root)
+    source_dates = _regime_backfill_source_dates(
+        start_date=start_date,
+        end_date=end_date,
+        histories=histories,
+    )
+    if not source_dates:
+        raise RegimeError(f"No SPY price observations found from {start_date} to {end_date}")
+
+    market_series_histories = _load_market_series_histories(
+        series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
+        observations_root=market_series_root,
+    )
+    feature_history = _pressure_feature_history_from_observations(
+        source_date=end_date,
+        histories=histories,
+        market_series_histories=market_series_histories,
+    )
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        source_date_count=len(source_dates),
+        write_snapshot=write_snapshot,
+    ).info("Starting market regime backfill")
+
+    snapshot_paths: list[Path] = []
+    signal_snapshot_paths: list[Path] = []
+    for source_date in source_dates:
+        result = _compute_regime_snapshot_from_histories(
+            source_date=source_date,
+            histories=histories,
+            market_series_histories=market_series_histories,
+            snapshot_root=snapshot_root,
+            signal_snapshot_root=signal_snapshot_root,
+            write_snapshot=write_snapshot,
+            pressure_feature_history=feature_history,
+        )
+        if result.snapshot_path is not None:
+            snapshot_paths.append(result.snapshot_path)
+        if result.signal_snapshot_path is not None:
+            signal_snapshot_paths.append(result.signal_snapshot_path)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        source_date_count=len(source_dates),
+        snapshot_count=len(snapshot_paths),
+        signal_snapshot_count=len(signal_snapshot_paths),
+    ).success("Completed market regime backfill")
+    return RegimeBackfillResult(
+        start_date=start_date,
+        end_date=end_date,
+        source_dates=source_dates,
+        snapshot_paths=tuple(snapshot_paths),
+        signal_snapshot_paths=tuple(signal_snapshot_paths),
+    )
+
+
+def _compute_regime_snapshot_from_histories(
+    *,
+    source_date: date,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    market_series_histories: dict[str, tuple[MarketSeriesObservation, ...]],
+    snapshot_root: Path,
+    signal_snapshot_root: Path,
+    write_snapshot: bool,
+    pressure_feature_history: dict[str, tuple[_PressureFeatureSample, ...]] | None = None,
+) -> RegimeSnapshotResult:
     market_series = {
         series_id: _market_series_asof(history, source_date)
         for series_id, history in market_series_histories.items()
@@ -678,7 +781,8 @@ def compute_regime_snapshot(
     )
     pressure = derive_regime_pressure_snapshot(
         source_date=source_date,
-        feature_history=_pressure_feature_history_from_observations(
+        feature_history=pressure_feature_history
+        or _pressure_feature_history_from_observations(
             source_date=source_date,
             histories=histories,
             market_series_histories=market_series_histories,
@@ -1621,6 +1725,19 @@ def _pressure_sample_dates(
                 if row.observed_date <= source_date
             }
         )
+    )
+
+
+def _regime_backfill_source_dates(
+    *,
+    start_date: date,
+    end_date: date,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+) -> tuple[date, ...]:
+    return tuple(
+        row.observed_date
+        for row in histories.get("SPY", ())
+        if start_date <= row.observed_date <= end_date
     )
 
 
