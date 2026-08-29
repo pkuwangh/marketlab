@@ -159,6 +159,10 @@ def _format_value(value: float | str | None, unit: str) -> str:
     if isinstance(value, float):
         if unit == "percent":
             return f"{value * 100:+.1f}%"
+        if unit == "percent_level":
+            return f"{value:.2f}%"
+        if unit == "percentage_points":
+            return f"{value:+.2f}pp"
         if unit in {"index", "ratio"}:
             return f"{value:.2f}"
         return f"{value:.4g}"

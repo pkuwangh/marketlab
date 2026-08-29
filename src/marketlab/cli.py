@@ -47,6 +47,13 @@ from marketlab.bulltard.validation import (
     validate_bulltard_candidates,
 )
 from marketlab.logging import configure_logging
+from marketlab.market_series import (
+    DEFAULT_FRED_MARKET_SERIES_IDS,
+    DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+    MarketSeriesError,
+    MarketSeriesFetchResult,
+    fetch_and_write_fred_series,
+)
 from marketlab.market_signals import DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT
 from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
@@ -91,12 +98,17 @@ prices_app = typer.Typer(
     help="Daily OHLCV price utilities.",
     no_args_is_help=True,
 )
+market_series_app = typer.Typer(
+    help="Scalar market series utilities.",
+    no_args_is_help=True,
+)
 regime_app = typer.Typer(
     help="Market regime utilities.",
     no_args_is_help=True,
 )
 app.add_typer(bulltard_app, name="bulltard")
 app.add_typer(prices_app, name="prices")
+app.add_typer(market_series_app, name="market-series")
 app.add_typer(regime_app, name="regime")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
@@ -297,6 +309,55 @@ def prices_import_csv(
     ).success("Imported daily price observations")
 
 
+@market_series_app.command("fetch-fred", no_args_is_help=True)
+def market_series_fetch_fred(
+    series_ids_value: str = typer.Argument(
+        ",".join(DEFAULT_FRED_MARKET_SERIES_IDS),
+        metavar="SERIES[,SERIES...]",
+        help="Comma-separated FRED series IDs to fetch.",
+    ),
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First observation date to fetch.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last observation date to fetch.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for scalar market series observations.",
+    ),
+) -> None:
+    """Fetch scalar market series observations from FRED."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        results = fetch_and_write_fred_series(
+            series_ids=_parse_series_ids(series_ids_value),
+            start_date=start_date,
+            end_date=end_date,
+            output_root=output_root,
+        )
+    except MarketSeriesError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_market_series_fetch_results(results)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        series_count=len(results),
+        output_root=str(output_root),
+    ).success("Fetched FRED market series observations")
+
+
 @regime_app.command("snapshot", no_args_is_help=True)
 def regime_snapshot(
     source_date_value: str = typer.Option(
@@ -309,6 +370,11 @@ def regime_snapshot(
         False,
         "--fetch-prices",
         help="Also refresh Yahoo daily prices for regime proxies.",
+    ),
+    fetch_market_series_flag: bool = typer.Option(
+        False,
+        "--fetch-market-series",
+        help="Also refresh FRED market series for regime signals.",
     ),
     price_start_value: str | None = typer.Option(
         None,
@@ -325,11 +391,32 @@ def regime_snapshot(
         metavar="YYYY-MM-DD",
         help="Last price date for --fetch-prices. Defaults to today.",
     ),
+    market_series_start_value: str | None = typer.Option(
+        None,
+        "--market-series-start",
+        metavar="YYYY-MM-DD",
+        help=(
+            "First market series date for --fetch-market-series. "
+            f"Defaults to {DEFAULT_DAILY_PRICE_LOOKBACK_DAYS} days before --date."
+        ),
+    ),
+    market_series_end_value: str | None = typer.Option(
+        None,
+        "--market-series-end",
+        metavar="YYYY-MM-DD",
+        help="Last market series date for --fetch-market-series. Defaults to today.",
+    ),
     price_root: Path = typer.Option(
         DEFAULT_PRICE_OBSERVATIONS_ROOT,
         "--price-root",
         file_okay=False,
         help="Root directory containing daily price observations.",
+    ),
+    market_series_root: Path = typer.Option(
+        DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+        "--market-series-root",
+        file_okay=False,
+        help="Root directory containing scalar market series observations.",
     ),
     snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
@@ -374,10 +461,34 @@ def regime_snapshot(
         _echo_regime_price_refresh_result(price_refresh_result)
         typer.echo("")
 
+    if fetch_market_series_flag:
+        market_series_start = (
+            _parse_date_option(market_series_start_value, option_name="--market-series-start")
+            if market_series_start_value
+            else source_date - timedelta(days=DEFAULT_DAILY_PRICE_LOOKBACK_DAYS)
+        )
+        market_series_end = (
+            _parse_date_option(market_series_end_value, option_name="--market-series-end")
+            if market_series_end_value
+            else date.today()
+        )
+        try:
+            market_series_results = fetch_and_write_fred_series(
+                series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
+                start_date=market_series_start,
+                end_date=market_series_end,
+                output_root=market_series_root,
+            )
+        except MarketSeriesError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_market_series_fetch_results(market_series_results)
+        typer.echo("")
+
     try:
         result = compute_regime_snapshot(
             source_date=source_date,
             price_root=price_root,
+            market_series_root=market_series_root,
             snapshot_root=snapshot_root,
             signal_snapshot_root=signal_snapshot_root,
             write_snapshot=write_snapshot,
@@ -1165,6 +1276,13 @@ def _parse_symbols(value: str) -> tuple[str, ...]:
     return symbols
 
 
+def _parse_series_ids(value: str) -> tuple[str, ...]:
+    series_ids = tuple(series_id.strip() for series_id in value.split(",") if series_id.strip())
+    if not series_ids:
+        raise typer.BadParameter("At least one series ID is required")
+    return series_ids
+
+
 def _parse_horizons(value: str) -> tuple[int, ...]:
     raw_horizons = tuple(part.strip() for part in value.split(",") if part.strip())
     if not raw_horizons:
@@ -1220,6 +1338,18 @@ def _echo_regime_price_refresh_result(result: RegimePriceRefreshResult) -> None:
         )
     for failure in result.price_failures:
         typer.echo(f"regime_price_failure={failure.symbol} error={failure.error}")
+
+
+def _echo_market_series_fetch_results(results: tuple[MarketSeriesFetchResult, ...]) -> None:
+    typer.echo("market_series_ids=" + ",".join(result.series_id for result in results))
+    typer.echo(f"market_series_success_count={len(results)}")
+    for result in results:
+        typer.echo(
+            f"market_series_result={result.series_id} row_count={result.row_count} "
+            f"latest_observed_date={result.latest_observed_date.isoformat()} "
+            f"latest_availability_date={result.latest_availability_date.isoformat()} "
+            f"observation_path={result.observation_path}"
+        )
 
 
 def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:

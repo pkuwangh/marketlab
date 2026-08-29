@@ -29,7 +29,8 @@ from marketlab.bulltard.validation import (
     CandidateValidationSnapshot,
     CandidateValidationSummary,
 )
-from marketlab.cli import app, bulltard_app, prices_app, regime_app
+from marketlab.cli import app, bulltard_app, market_series_app, prices_app, regime_app
+from marketlab.market_series import MarketSeriesFetchResult
 from marketlab.market_signals import MarketSignal
 from marketlab.prices import PriceFetchResult
 from marketlab.regime import (
@@ -52,6 +53,7 @@ def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert app.info.no_args_is_help is True
     assert bulltard_app.info.no_args_is_help is True
     assert prices_app.info.no_args_is_help is True
+    assert market_series_app.info.no_args_is_help is True
     assert regime_app.info.no_args_is_help is True
 
 
@@ -83,6 +85,15 @@ def test_prices_no_args_shows_help_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
+def test_market_series_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["market-series"])
+
+    assert result.exit_code != 0
+    assert "Scalar market series utilities." in result.output
+    assert "fetch-fred" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_regime_no_args_shows_help_without_traceback() -> None:
     result = CliRunner().invoke(app, ["regime"])
 
@@ -111,6 +122,17 @@ def test_prices_fetch_yahoo_no_args_shows_help_without_missing_argument_error() 
     assert "SYMBOL[,SYMBOL...]" in result.output
     assert "--start" in result.output
     assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_market_series_fetch_fred_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["market-series", "fetch-fred"])
+
+    assert result.exit_code != 0
+    assert "Fetch scalar market series observations from FRED" in result.output
+    assert "SERIES[,SERIES...]" in result.output
+    assert "--start" in result.output
+    assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -740,11 +762,66 @@ def test_prices_import_csv_outputs_written_observation_path(
     assert str(output_root / "META.jsonl") in result.output
 
 
+def test_market_series_fetch_fred_outputs_written_observation_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "series"
+
+    def fake_fetch_and_write_fred_series(
+        *,
+        series_ids: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+    ) -> tuple[MarketSeriesFetchResult, ...]:
+        assert series_ids == ("BAMLH0A0HYM2", "NFCI")
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        return (
+            MarketSeriesFetchResult(
+                series_id="BAMLH0A0HYM2",
+                source_series_id="BAMLH0A0HYM2",
+                observation_path=output_root / "BAMLH0A0HYM2.jsonl",
+                row_count=100,
+                latest_observed_date=date(2026, 8, 27),
+                latest_availability_date=date(2026, 8, 28),
+            ),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_fred_series",
+        fake_fetch_and_write_fred_series,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "market-series",
+            "fetch-fred",
+            "BAMLH0A0HYM2,NFCI",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--output-root",
+            str(output_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "market_series_ids=BAMLH0A0HYM2" in result.output
+    assert "market_series_success_count=1" in result.output
+    assert "market_series_result=BAMLH0A0HYM2 row_count=100" in result.output
+    assert str(output_root / "BAMLH0A0HYM2.jsonl") in result.output
+
+
 def test_regime_snapshot_fetches_prices_and_outputs_table(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
     snapshot_root = tmp_path / "regime"
     signal_snapshot_root = tmp_path / "signals"
     events: list[str] = []
@@ -774,17 +851,43 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             price_failures=(),
         )
 
+    def fake_fetch_and_write_fred_series(
+        *,
+        series_ids: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+    ) -> tuple[MarketSeriesFetchResult, ...]:
+        assert events == ["prices"]
+        assert series_ids == ("BAMLH0A0HYM2", "NFCI", "DGS10", "DGS2")
+        assert start_date == date(2025, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert output_root == market_series_root_arg
+        events.append("market-series")
+        return (
+            MarketSeriesFetchResult(
+                series_id="BAMLH0A0HYM2",
+                source_series_id="BAMLH0A0HYM2",
+                observation_path=output_root / "BAMLH0A0HYM2.jsonl",
+                row_count=420,
+                latest_observed_date=date(2026, 8, 27),
+                latest_availability_date=date(2026, 8, 28),
+            ),
+        )
+
     def fake_compute_regime_snapshot(
         *,
         source_date: date,
         price_root: Path,
+        market_series_root: Path,
         snapshot_root: Path,
         signal_snapshot_root: Path,
         write_snapshot: bool,
     ) -> RegimeSnapshotResult:
-        assert events == ["prices"]
+        assert events == ["prices", "market-series"]
         assert source_date == date(2026, 8, 28)
         assert price_root == price_root_arg
+        assert market_series_root == market_series_root_arg
         assert snapshot_root == snapshot_root_arg
         assert signal_snapshot_root == signal_snapshot_root_arg
         assert write_snapshot is True
@@ -816,9 +919,14 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         )
 
     price_root_arg = price_root
+    market_series_root_arg = market_series_root
     snapshot_root_arg = snapshot_root
     signal_snapshot_root_arg = signal_snapshot_root
     monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_fred_series",
+        fake_fetch_and_write_fred_series,
+    )
     monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
 
     result = CliRunner().invoke(
@@ -829,12 +937,19 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             "--date",
             "2026-08-28",
             "--fetch-prices",
+            "--fetch-market-series",
             "--price-start",
             "2025-01-01",
             "--price-end",
             "2026-08-28",
+            "--market-series-start",
+            "2025-01-01",
+            "--market-series-end",
+            "2026-08-28",
             "--price-root",
             str(price_root),
+            "--market-series-root",
+            str(market_series_root),
             "--snapshot-root",
             str(snapshot_root),
             "--signal-root",
@@ -843,9 +958,11 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     )
 
     assert result.exit_code == 0
-    assert events == ["prices", "snapshot"]
+    assert events == ["prices", "market-series", "snapshot"]
     assert "regime_price_symbols=SPY,QQQ" in result.output
     assert "regime_price_success_count=1" in result.output
+    assert "market_series_ids=BAMLH0A0HYM2" in result.output
+    assert "market_series_success_count=1" in result.output
     assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
     assert (
         f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}" in result.output

@@ -11,6 +11,13 @@ from typing import Any
 
 from loguru import logger
 
+from marketlab.market_series import (
+    DEFAULT_FRED_MARKET_SERIES_IDS,
+    DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+    MarketSeriesError,
+    MarketSeriesObservation,
+    load_market_series_history,
+)
 from marketlab.market_signals import (
     DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     MARKET_SIGNAL_FEATURE_VERSION,
@@ -300,6 +307,7 @@ def compute_regime_snapshot(
     *,
     source_date: date,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    market_series_root: Path = DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
     snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
     signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     write_snapshot: bool = True,
@@ -307,6 +315,14 @@ def compute_regime_snapshot(
     """Compute and optionally persist one market regime snapshot."""
 
     histories = _load_histories(symbols=DEFAULT_REGIME_PRICE_SYMBOLS, price_root=price_root)
+    market_series_histories = _load_market_series_histories(
+        series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
+        observations_root=market_series_root,
+    )
+    market_series = {
+        series_id: _market_series_asof(history, source_date)
+        for series_id, history in market_series_histories.items()
+    }
     features = {
         symbol: _symbol_features(
             symbol=symbol,
@@ -317,7 +333,10 @@ def compute_regime_snapshot(
     }
     components = _score_components(features)
     score = sum(component.score for component in components)
-    missing_market_signal_count = 1 if features["^VVIX"].price_date is None else 0
+    missing_market_signal_count = _missing_market_signal_count(
+        features=features,
+        market_series=market_series,
+    )
     missing_symbols = tuple(
         symbol for symbol, symbol_features in features.items() if symbol_features.price_date is None
     )
@@ -352,7 +371,11 @@ def compute_regime_snapshot(
     snapshot_path = (
         write_regime_snapshot(snapshot, snapshot_root=snapshot_root) if write_snapshot else None
     )
-    signals = _market_signals_from_snapshot(snapshot, features=features)
+    signals = _market_signals_from_snapshot(
+        snapshot,
+        features=features,
+        market_series=market_series,
+    )
     try:
         signal_snapshot_path = (
             write_market_signal_snapshot(signals, snapshot_root=signal_snapshot_root)
@@ -442,6 +465,7 @@ def _market_signals_from_snapshot(
     snapshot: RegimeSnapshot,
     *,
     features: dict[str, _SymbolFeatures],
+    market_series: dict[str, MarketSeriesObservation | None],
 ) -> tuple[MarketSignal, ...]:
     signals = [
         MarketSignal(
@@ -461,6 +485,7 @@ def _market_signals_from_snapshot(
         for component in snapshot.components
     ]
     signals.append(_vvix_signal(snapshot=snapshot, features=features["^VVIX"]))
+    signals.extend(_fred_market_signals(source_date=snapshot.source_date, series=market_series))
     return tuple(signals)
 
 
@@ -506,6 +531,212 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
         availability_date=features.price_date,
         reason=reason,
     )
+
+
+def _fred_market_signals(
+    *,
+    source_date: date,
+    series: dict[str, MarketSeriesObservation | None],
+) -> tuple[MarketSignal, ...]:
+    return (
+        _high_yield_oas_signal(source_date=source_date, row=series["BAMLH0A0HYM2"]),
+        _nfci_signal(source_date=source_date, row=series["NFCI"]),
+        _yield_curve_signal(
+            source_date=source_date,
+            ten_year=series["DGS10"],
+            two_year=series["DGS2"],
+        ),
+    )
+
+
+def _high_yield_oas_signal(
+    *,
+    source_date: date,
+    row: MarketSeriesObservation | None,
+) -> MarketSignal:
+    if row is None:
+        return _missing_fred_signal(
+            source_date=source_date,
+            family="credit",
+            name="credit_spread",
+            unit="percent_level",
+            source="fred:BAMLH0A0HYM2",
+            reason="FRED high-yield OAS is unavailable as of source date",
+        )
+    if row.value >= 5.0:
+        status = "stressed"
+        score = -1
+        reason = "High-yield credit spreads are elevated"
+    elif row.value <= 3.5:
+        status = "supportive"
+        score = 1
+        reason = "High-yield credit spreads are contained"
+    else:
+        status = "mixed"
+        score = 0
+        reason = "High-yield credit spreads are neither tight nor stressed"
+    return _fred_signal(
+        source_date=source_date,
+        family="credit",
+        name="credit_spread",
+        status=status,
+        score=score,
+        row=row,
+        source="fred:BAMLH0A0HYM2",
+        reason=reason,
+    )
+
+
+def _nfci_signal(
+    *,
+    source_date: date,
+    row: MarketSeriesObservation | None,
+) -> MarketSignal:
+    if row is None:
+        return _missing_fred_signal(
+            source_date=source_date,
+            family="liquidity",
+            name="financial_conditions",
+            unit="index",
+            source="fred:NFCI",
+            reason="FRED NFCI is unavailable as of source date",
+        )
+    if row.value > 0.25:
+        status = "tight"
+        score = -1
+        reason = "NFCI financial conditions are tighter than average"
+    elif row.value < -0.25:
+        status = "loose"
+        score = 1
+        reason = "NFCI financial conditions are looser than average"
+    else:
+        status = "neutral"
+        score = 0
+        reason = "NFCI financial conditions are near average"
+    return _fred_signal(
+        source_date=source_date,
+        family="liquidity",
+        name="financial_conditions",
+        status=status,
+        score=score,
+        row=row,
+        source="fred:NFCI",
+        reason=reason,
+    )
+
+
+def _yield_curve_signal(
+    *,
+    source_date: date,
+    ten_year: MarketSeriesObservation | None,
+    two_year: MarketSeriesObservation | None,
+) -> MarketSignal:
+    if ten_year is None or two_year is None:
+        return _missing_fred_signal(
+            source_date=source_date,
+            family="rates",
+            name="yield_curve",
+            unit="percentage_points",
+            source="fred:DGS10-DGS2",
+            reason="FRED 10y or 2y Treasury yield is unavailable as of source date",
+        )
+
+    value = ten_year.value - two_year.value
+    if value <= -0.25:
+        status = "inverted"
+        score = -1
+        reason = "10y-2y Treasury curve is meaningfully inverted"
+    elif value >= 0.50:
+        status = "normal"
+        score = 1
+        reason = "10y-2y Treasury curve has a positive slope"
+    else:
+        status = "flat"
+        score = 0
+        reason = "10y-2y Treasury curve is flat"
+    return MarketSignal(
+        source_date=source_date,
+        feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+        family="rates",
+        name="yield_curve",
+        status=status,
+        score=score,
+        value=value,
+        unit="percentage_points",
+        source="fred:DGS10-DGS2",
+        observed_date=max(ten_year.observed_date, two_year.observed_date),
+        availability_date=max(ten_year.availability_date, two_year.availability_date),
+        reason=reason,
+    )
+
+
+def _fred_signal(
+    *,
+    source_date: date,
+    family: str,
+    name: str,
+    status: str,
+    score: int,
+    row: MarketSeriesObservation,
+    source: str,
+    reason: str,
+) -> MarketSignal:
+    return MarketSignal(
+        source_date=source_date,
+        feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+        family=family,
+        name=name,
+        status=status,
+        score=score,
+        value=row.value,
+        unit=row.unit,
+        source=source,
+        observed_date=row.observed_date,
+        availability_date=row.availability_date,
+        reason=reason,
+    )
+
+
+def _missing_fred_signal(
+    *,
+    source_date: date,
+    family: str,
+    name: str,
+    unit: str,
+    source: str,
+    reason: str,
+) -> MarketSignal:
+    return MarketSignal(
+        source_date=source_date,
+        feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+        family=family,
+        name=name,
+        status="missing",
+        score=0,
+        value=None,
+        unit=unit,
+        source=source,
+        observed_date=None,
+        availability_date=None,
+        reason=reason,
+    )
+
+
+def _missing_market_signal_count(
+    *,
+    features: dict[str, _SymbolFeatures],
+    market_series: dict[str, MarketSeriesObservation | None],
+) -> int:
+    missing_count = 0
+    if features["^VVIX"].price_date is None:
+        missing_count += 1
+    if market_series["BAMLH0A0HYM2"] is None:
+        missing_count += 1
+    if market_series["NFCI"] is None:
+        missing_count += 1
+    if market_series["DGS10"] is None or market_series["DGS2"] is None:
+        missing_count += 1
+    return missing_count
 
 
 def _market_signal_contradictions(signals: tuple[MarketSignal, ...]) -> tuple[str, ...]:
@@ -806,6 +1037,33 @@ def _load_histories(
         except PriceDataError as exc:
             raise RegimeError(str(exc)) from exc
     return histories
+
+
+def _load_market_series_histories(
+    *,
+    series_ids: tuple[str, ...],
+    observations_root: Path,
+) -> dict[str, tuple[MarketSeriesObservation, ...]]:
+    histories: dict[str, tuple[MarketSeriesObservation, ...]] = {}
+    for series_id in series_ids:
+        try:
+            histories[series_id] = load_market_series_history(
+                series_id=series_id,
+                observations_root=observations_root,
+            )
+        except MarketSeriesError as exc:
+            raise RegimeError(str(exc)) from exc
+    return histories
+
+
+def _market_series_asof(
+    history: tuple[MarketSeriesObservation, ...],
+    source_date: date,
+) -> MarketSeriesObservation | None:
+    for row in reversed(history):
+        if row.availability_date <= source_date:
+            return row
+    return None
 
 
 def _load_regime_snapshots_in_range(
@@ -1128,11 +1386,17 @@ def _confidence(
         confidence = "medium"
     else:
         confidence = "low"
-    if missing_market_signal_count > 0 and confidence == "high":
-        return "medium"
-    if missing_market_signal_count > 0 and confidence == "medium":
-        return "low"
+    if missing_market_signal_count >= 3:
+        return _downgrade_confidence(confidence, steps=2)
+    if missing_market_signal_count > 0:
+        return _downgrade_confidence(confidence, steps=1)
     return confidence
+
+
+def _downgrade_confidence(confidence: str, *, steps: int) -> str:
+    levels = ("low", "medium", "high")
+    index = levels.index(confidence)
+    return levels[max(0, index - steps)]
 
 
 def _relative_return(

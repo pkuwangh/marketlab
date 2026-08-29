@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 
+from marketlab.market_series import MarketSeriesObservation, write_market_series_observations
 from marketlab.market_signals import (
     MarketSignal,
     load_market_signal_snapshot,
@@ -22,6 +23,7 @@ from marketlab.regime import (
 def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> None:
     source_date = date(2026, 8, 15)
     price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
     snapshot_root = tmp_path / "snapshots"
     signal_snapshot_root = tmp_path / "signals"
     start = source_date - timedelta(days=229)
@@ -73,10 +75,43 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         start=start,
         closes=[85.0 for _index in range(230)],
     )
+    _write_market_series_value(
+        market_series_root,
+        series_id="BAMLH0A0HYM2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=2.7,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="NFCI",
+        observed_date=source_date - timedelta(days=5),
+        availability_date=source_date,
+        value=-0.5,
+        unit="index",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS10",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=4.6,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=4.0,
+        unit="percent_level",
+    )
 
     result = compute_regime_snapshot(
         source_date=source_date,
         price_root=price_root,
+        market_series_root=market_series_root,
         snapshot_root=snapshot_root,
         signal_snapshot_root=signal_snapshot_root,
     )
@@ -104,9 +139,15 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         ("breadth", "price_proxy"),
         ("credit", "price_proxy"),
         ("volatility", "vol_of_vol"),
+        ("credit", "credit_spread"),
+        ("liquidity", "financial_conditions"),
+        ("rates", "yield_curve"),
     ]
     assert "price_proxy" in result.signal_table
     assert "vol_of_vol" in result.signal_table
+    assert "credit_spread" in result.signal_table
+    assert "financial_conditions" in result.signal_table
+    assert "yield_curve" in result.signal_table
 
     loaded_signals = load_market_signal_snapshot(
         source_date=source_date,
@@ -376,3 +417,28 @@ def _write_price_history(
         for index, close in enumerate(closes)
     )
     write_price_observations(rows, output_root=price_root)
+
+
+def _write_market_series_value(
+    market_series_root: Path,
+    *,
+    series_id: str,
+    observed_date: date,
+    availability_date: date,
+    value: float,
+    unit: str,
+) -> None:
+    write_market_series_observations(
+        (
+            MarketSeriesObservation(
+                source="fixture",
+                source_series_id=series_id,
+                series_id=series_id,
+                observed_date=observed_date,
+                availability_date=availability_date,
+                value=value,
+                unit=unit,
+            ),
+        ),
+        output_root=market_series_root,
+    )

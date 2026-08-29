@@ -47,15 +47,18 @@ Implemented market-regime foundation:
 Implemented market-signal expansion:
 
 - Dedicated market-signal snapshots under `data/snapshots/market/signals/`.
+- Scalar market-series observations under `data/observations/market/series/`.
+- FRED fetch support for high-yield credit spreads, NFCI financial conditions, and 10Y/2Y Treasury yields.
 - `regime snapshot` now prints family-level signal rows beside the component table.
 - `^VVIX` is tracked as a volatility / vol-of-vol signal when available.
+- FRED-backed `credit_spread`, `financial_conditions`, and `yield_curve` rows are tracked when available.
 - Missing independent signal sources are explicit and reduce headline confidence.
 - `regime signal-outcomes` replays saved market-signal rows against forward SPY/QQQ returns and drawdowns.
 
 Not yet implemented:
 
 - VIX term structure, fear/greed or sentiment/positioning observations.
-- Stronger breadth and liquidity/credit families beyond current ETF proxies.
+- Stronger breadth, sentiment/positioning, VIX term structure, and richer credit/liquidity calibration.
 - Calibrated regime model and portfolio policy.
 
 Verified live on `2026-08-26`:
@@ -80,6 +83,8 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes
 ./bin/marketlab bulltard refresh-prices --date 2026-08-26 --start 2025-01-01
 ./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
+./bin/marketlab market-series fetch-fred --start 2026-08-20 --end 2026-08-28
+./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices --fetch-market-series --market-series-start 2026-08-20 --market-series-end 2026-08-28
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
 ./bin/marketlab regime signal-outcomes --start 2026-07-31 --end 2026-07-31 --horizons 20
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
@@ -300,6 +305,9 @@ Completed scope:
 - `regime snapshot` writes signal JSONL snapshots and displays family/name/status/score/value/source evidence.
 - Current deterministic regime components are mirrored into signal rows for replayability.
 - Added `^VVIX` as the first independent volatility / vol-of-vol signal where Yahoo data is present.
+- Added `market-series fetch-fred` for FRED scalar observations.
+- Added FRED-backed credit spread, financial-conditions, and yield-curve signal rows.
+- `regime snapshot --fetch-market-series` refreshes the default FRED source set in the same command.
 - Missing `^VVIX` is shown as `volatility / vol_of_vol / missing` and lowers headline confidence one notch.
 - `regime snapshot` reports positive/negative market-signal contradictions when both sides are present.
 - Added `regime signal-outcomes` to summarize forward SPY/QQQ returns and drawdowns by signal family/name/status.
@@ -307,6 +315,8 @@ Completed scope:
 Completion evidence:
 
 - A no-write `2026-08-28` snapshot produced five market-signal rows and showed missing `^VVIX` explicitly.
+- A live FRED smoke on `2026-08-29` fetched `BAMLH0A0HYM2`, `NFCI`, `DGS10`, and `DGS2` for `2026-08-20` through `2026-08-28`.
+- A no-write `2026-08-28` snapshot using those FRED observations produced eight market-signal rows, including credit, financial conditions, and yield curve.
 - A temporary `2026-07-31` signal snapshot replayed through `regime signal-outcomes --horizons 20` with family and signal-status buckets.
 - Unit and CLI tests cover market-signal snapshots, VVIX signal rows, missing-source confidence handling, and signal-outcome replay.
 
@@ -315,6 +325,7 @@ Deferred expansion:
 - VIX term structure is deferred until the Yahoo `^VIX3M` / `^VIX6M` behavior is reliable enough for daily use.
 - Fear/greed-style sentiment should start as a manual import or stable source-specific importer.
 - Stronger breadth should be added only when we have a practical source for percentage-above-average or new-high/new-low observations.
+- Credit/liquidity now has a first FRED source; further work should calibrate thresholds and add richer series only if replay evidence improves.
 
 ## Milestone 5 - Regime Calibration & Backtest
 

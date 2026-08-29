@@ -55,6 +55,42 @@ def test_format_market_signals_outputs_compact_table() -> None:
     assert "2026-08-28" in table
 
 
+def test_format_market_signals_formats_percent_levels_and_points() -> None:
+    percent_level = MarketSignal(
+        source_date=date(2026, 8, 28),
+        feature_version="fixture",
+        family="credit",
+        name="credit_spread",
+        status="supportive",
+        score=1,
+        value=2.63,
+        unit="percent_level",
+        source="fixture",
+        observed_date=date(2026, 8, 27),
+        availability_date=date(2026, 8, 28),
+        reason="fixture signal",
+    )
+    percentage_points = MarketSignal(
+        source_date=date(2026, 8, 28),
+        feature_version="fixture",
+        family="rates",
+        name="yield_curve",
+        status="flat",
+        score=0,
+        value=0.42,
+        unit="percentage_points",
+        source="fixture",
+        observed_date=date(2026, 8, 27),
+        availability_date=date(2026, 8, 28),
+        reason="fixture signal",
+    )
+
+    table = format_market_signals((percent_level, percentage_points))
+
+    assert "2.63%" in table
+    assert "+0.42pp" in table
+
+
 def _signal(*, source_date: date) -> MarketSignal:
     return MarketSignal(
         source_date=source_date,
