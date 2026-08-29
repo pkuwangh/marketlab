@@ -37,6 +37,11 @@ from marketlab.regime import (
     MarketSignalForwardOutcome,
     MarketSignalOutcomeResult,
     MarketSignalOutcomeSummaryRow,
+    RegimeActionForwardOutcome,
+    RegimeActionFrequencyRow,
+    RegimeActionOutcomeResult,
+    RegimeActionOutcomeSummaryRow,
+    RegimeActionState,
     RegimeComponentScore,
     RegimeForwardOutcome,
     RegimeOutcomeResult,
@@ -163,6 +168,17 @@ def test_regime_signal_outcomes_no_args_shows_help_without_missing_option_error(
 
     assert result.exit_code != 0
     assert "Replay forward SPY/QQQ outcomes" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regime_action_outcomes_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "action-outcomes"])
+
+    assert result.exit_code != 0
+    assert "Replay forward SPY/QQQ outcomes for rare regime action states" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
     assert "Missing option" not in result.output
@@ -916,6 +932,16 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             signal_snapshot_path=signal_snapshot_root / "2026-08-28.jsonl",
             signal_table="family  signal       score\ntrend   price_proxy  +2",
             contradictions=("positive=trend/price_proxy:constructive negative=fixture",),
+            action=RegimeActionState(
+                source_date=source_date,
+                action_version="fixture_action",
+                state="no_change",
+                stretch_score=1,
+                washout_score=0,
+                confidence="high",
+                reason="No rare-action threshold crossed; maintain current posture",
+                evidence=("strong SPY rally",),
+            ),
         )
 
     price_root_arg = price_root
@@ -976,6 +1002,10 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_date=2026-08-28" in result.output
     assert "regime=risk_on" in result.output
     assert "regime_score=5" in result.output
+    assert "action_state=no_change" in result.output
+    assert "stretch_score=1" in result.output
+    assert "washout_score=0" in result.output
+    assert "action_confidence=high" in result.output
     assert "trend     +2     constructive" in result.output
 
 
@@ -1057,6 +1087,118 @@ def test_regime_outcomes_outputs_summary_table(
     assert "regime_outcome_count=1" in result.output
     assert "available_regime_outcome_count=1" in result.output
     assert "regime:risk_on  20d" in result.output
+
+
+def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_action_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> RegimeActionOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert signal_snapshot_root == signal_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20, 65)
+        return RegimeActionOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            actions=(
+                RegimeActionState(
+                    source_date=date(2026, 8, 1),
+                    action_version="fixture",
+                    state="scale_down_protect",
+                    stretch_score=4,
+                    washout_score=0,
+                    confidence="high",
+                    reason="fixture",
+                    evidence=("fixture",),
+                ),
+            ),
+            outcomes=(
+                RegimeActionForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    action_state="scale_down_protect",
+                    stretch_score=4,
+                    washout_score=0,
+                    action_confidence="high",
+                    horizon_days=20,
+                    spy_return=-0.02,
+                    qqq_return=-0.04,
+                    spy_max_drawdown=-0.06,
+                    qqq_max_drawdown=-0.08,
+                ),
+            ),
+            frequency_rows=(
+                RegimeActionFrequencyRow(
+                    action_state="scale_down_protect",
+                    action_count=1,
+                    share=1.0,
+                ),
+            ),
+            summary_rows=(
+                RegimeActionOutcomeSummaryRow(
+                    bucket="action:scale_down_protect",
+                    horizon_days=20,
+                    action_count=1,
+                    available_count=1,
+                    avg_spy_return=-0.02,
+                    avg_qqq_return=-0.04,
+                    avg_spy_max_drawdown=-0.06,
+                    avg_qqq_max_drawdown=-0.08,
+                ),
+            ),
+            frequency_table="action_state        count\nscale_down_protect  1",
+            table="bucket                     horizon\naction:scale_down_protect  20d",
+        )
+
+    snapshot_root_arg = snapshot_root
+    signal_root_arg = signal_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_action_outcomes",
+        fake_compute_regime_action_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "action-outcomes",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--signal-root",
+            str(signal_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20,65",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_action_count=1" in result.output
+    assert "regime_action_outcome_count=1" in result.output
+    assert "available_regime_action_outcome_count=1" in result.output
+    assert "scale_down_protect  1" in result.output
+    assert "action:scale_down_protect  20d" in result.output
 
 
 def test_regime_signal_outcomes_outputs_summary_table(

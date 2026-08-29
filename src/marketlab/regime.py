@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -42,6 +42,8 @@ DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX"
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v0"
+REGIME_ACTION_VERSION = "regime_action_v0"
+REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
 
 
 class RegimeError(ValueError):
@@ -111,6 +113,12 @@ class RegimeSnapshot:
     hyg_tlt_relative_20d: float | None
     vix_close: float | None
     vvix_close: float | None
+    action_version: str = REGIME_ACTION_VERSION
+    action_state: str = "no_change"
+    stretch_score: int = 0
+    washout_score: int = 0
+    action_confidence: str = "low"
+    action_reason: str = "Action state not computed"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -138,6 +146,38 @@ class RegimeSnapshot:
             "hyg_tlt_relative_20d": self.hyg_tlt_relative_20d,
             "vix_close": self.vix_close,
             "vvix_close": self.vvix_close,
+            "action_version": self.action_version,
+            "action_state": self.action_state,
+            "stretch_score": self.stretch_score,
+            "washout_score": self.washout_score,
+            "action_confidence": self.action_confidence,
+            "action_reason": self.action_reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeActionState:
+    """Rare-action portfolio posture derived from one regime snapshot."""
+
+    source_date: date
+    action_version: str
+    state: str
+    stretch_score: int
+    washout_score: int
+    confidence: str
+    reason: str
+    evidence: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_date": self.source_date.isoformat(),
+            "action_version": self.action_version,
+            "state": self.state,
+            "stretch_score": self.stretch_score,
+            "washout_score": self.washout_score,
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
         }
 
 
@@ -153,6 +193,7 @@ class RegimeSnapshotResult:
     signal_snapshot_path: Path | None = None
     signal_table: str = ""
     contradictions: tuple[str, ...] = ()
+    action: RegimeActionState | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +275,60 @@ class MarketSignalOutcomeResult:
     end_date: date
     outcomes: tuple[MarketSignalForwardOutcome, ...]
     summary_rows: tuple[MarketSignalOutcomeSummaryRow, ...]
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeActionForwardOutcome:
+    """One forward market outcome from one rare-action state."""
+
+    source_date: date
+    price_date: date | None
+    action_state: str
+    stretch_score: int
+    washout_score: int
+    action_confidence: str
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeActionOutcomeSummaryRow:
+    """Aggregate forward market outcome row for one rare-action bucket."""
+
+    bucket: str
+    horizon_days: int
+    action_count: int
+    available_count: int
+    avg_spy_return: float | None
+    avg_qqq_return: float | None
+    avg_spy_max_drawdown: float | None
+    avg_qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeActionFrequencyRow:
+    """Frequency count for one rare-action state."""
+
+    action_state: str
+    action_count: int
+    share: float
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeActionOutcomeResult:
+    """Result of replaying rare-action states against forward outcomes."""
+
+    start_date: date
+    end_date: date
+    actions: tuple[RegimeActionState, ...]
+    outcomes: tuple[RegimeActionForwardOutcome, ...]
+    frequency_rows: tuple[RegimeActionFrequencyRow, ...]
+    summary_rows: tuple[RegimeActionOutcomeSummaryRow, ...]
+    frequency_table: str
     table: str
 
 
@@ -368,13 +463,15 @@ def compute_regime_snapshot(
         vix_close=features["^VIX"].close,
         vvix_close=features["^VVIX"].close,
     )
-    snapshot_path = (
-        write_regime_snapshot(snapshot, snapshot_root=snapshot_root) if write_snapshot else None
-    )
     signals = _market_signals_from_snapshot(
         snapshot,
         features=features,
         market_series=market_series,
+    )
+    action = derive_regime_action_state(snapshot=snapshot, signals=signals)
+    snapshot = _snapshot_with_action(snapshot=snapshot, action=action)
+    snapshot_path = (
+        write_regime_snapshot(snapshot, snapshot_root=snapshot_root) if write_snapshot else None
     )
     try:
         signal_snapshot_path = (
@@ -393,6 +490,10 @@ def compute_regime_snapshot(
         regime=snapshot.regime,
         score=snapshot.score,
         confidence=snapshot.confidence,
+        action_state=action.state,
+        stretch_score=action.stretch_score,
+        washout_score=action.washout_score,
+        action_confidence=action.confidence,
         snapshot_path=str(snapshot_path) if snapshot_path else None,
         market_signal_count=len(signals),
         market_signal_contradiction_count=len(contradictions),
@@ -407,6 +508,7 @@ def compute_regime_snapshot(
         signal_snapshot_path=signal_snapshot_path,
         signal_table=signal_table,
         contradictions=contradictions,
+        action=action,
     )
 
 
@@ -773,6 +875,251 @@ def _component_value(snapshot: RegimeSnapshot, component_name: str) -> str:
     return "-"
 
 
+def derive_regime_action_state(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...] = (),
+) -> RegimeActionState:
+    """Derive the rare-action state from one point-in-time regime snapshot."""
+
+    stretch_evidence = _stretch_evidence(snapshot=snapshot, signals=signals)
+    washout_evidence = _washout_evidence(snapshot=snapshot, signals=signals)
+    stretch_score = len(stretch_evidence)
+    washout_score = len(washout_evidence)
+    severe_funding_stress = _severe_funding_stress(signals)
+
+    if stretch_score >= 3 and washout_score >= 3:
+        state = "no_change"
+        evidence = stretch_evidence + washout_evidence
+        reason = "Conflicting stretch and washout evidence; maintain current posture"
+    elif washout_score >= 3 and not severe_funding_stress:
+        state = "scale_up_redeploy"
+        evidence = washout_evidence
+        reason = "Washout/re-risk threshold crossed"
+    elif stretch_score >= 3:
+        state = "scale_down_protect"
+        evidence = stretch_evidence
+        reason = "Stretched/de-risk threshold crossed"
+    else:
+        state = "no_change"
+        evidence = stretch_evidence + washout_evidence
+        reason = "No rare-action threshold crossed; maintain current posture"
+
+    if severe_funding_stress and washout_score >= 3:
+        state = "no_change"
+        evidence = washout_evidence
+        reason = "Washout present, but credit and liquidity stress block aggressive re-risk"
+
+    return RegimeActionState(
+        source_date=snapshot.source_date,
+        action_version=REGIME_ACTION_VERSION,
+        state=state,
+        stretch_score=stretch_score,
+        washout_score=washout_score,
+        confidence=_action_confidence(
+            state=state,
+            stretch_score=stretch_score,
+            washout_score=washout_score,
+            signals=signals,
+        ),
+        reason=_action_reason(reason=reason, evidence=evidence),
+        evidence=evidence,
+    )
+
+
+def _snapshot_with_action(
+    *,
+    snapshot: RegimeSnapshot,
+    action: RegimeActionState,
+) -> RegimeSnapshot:
+    return replace(
+        snapshot,
+        action_version=action.action_version,
+        action_state=action.state,
+        stretch_score=action.stretch_score,
+        washout_score=action.washout_score,
+        action_confidence=action.confidence,
+        action_reason=action.reason,
+    )
+
+
+def _stretch_evidence(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> tuple[str, ...]:
+    evidence: list[str] = []
+    if _ge(snapshot.spy_return_20d, 0.05) and _ge(snapshot.spy_return_60d, 0.08):
+        evidence.append("strong SPY rally")
+    if _ge(snapshot.qqq_return_20d, 0.07) and _ge(snapshot.qqq_ma50_distance, 0.05):
+        evidence.append("QQQ momentum is extended")
+    if _ge(snapshot.spy_ma50_distance, 0.05) or _ge(snapshot.qqq_ma50_distance, 0.07):
+        evidence.append("index is extended above 50d trend")
+    if _is_complacent_volatility(snapshot=snapshot, signals=signals):
+        evidence.append("volatility pricing is complacent")
+    if snapshot.regime == "risk_on" and _component_status(snapshot, "breadth") in {
+        "mixed",
+        "narrow",
+    }:
+        evidence.append("risk-on tape has weak participation")
+    if snapshot.regime == "risk_on" and _has_negative_credit_or_liquidity(signals):
+        evidence.append("risk-on tape has credit/liquidity deterioration")
+    return tuple(evidence)
+
+
+def _washout_evidence(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> tuple[str, ...]:
+    evidence: list[str] = []
+    if (
+        _lt(snapshot.spy_return_20d, -0.08)
+        or _lt(snapshot.qqq_return_20d, -0.10)
+        or _lt(snapshot.spy_return_60d, -0.12)
+    ):
+        evidence.append("major index selloff")
+    if _lt(snapshot.spy_ma50_distance, -0.05) or _lt(snapshot.qqq_ma50_distance, -0.08):
+        evidence.append("index is below intermediate trend")
+    if _is_panic_volatility(snapshot=snapshot, signals=signals):
+        evidence.append("volatility stress is elevated")
+    if _component_status(snapshot, "trend") == "weak":
+        evidence.append("trend damage is already visible")
+    if _component_status(snapshot, "breadth") == "narrow":
+        evidence.append("participation washout is broad")
+    if evidence and _funding_backdrop_not_broken(signals):
+        evidence.append("credit/liquidity backdrop is not broken")
+    return tuple(evidence)
+
+
+def _is_complacent_volatility(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> bool:
+    vvix = _signal_value(signals, family="volatility", name="vol_of_vol")
+    return (
+        snapshot.vix_close is not None
+        and snapshot.vix_close <= 14.0
+        and (vvix is None or vvix <= 90.0)
+    )
+
+
+def _is_panic_volatility(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> bool:
+    vvix = _signal_value(signals, family="volatility", name="vol_of_vol")
+    return (snapshot.vix_close is not None and snapshot.vix_close >= 25.0) or (
+        vvix is not None and vvix >= 120.0
+    )
+
+
+def _has_negative_credit_or_liquidity(signals: tuple[MarketSignal, ...]) -> bool:
+    return any(
+        signal.score < 0
+        for signal in signals
+        if signal.family in {"credit", "liquidity"} and signal.status != "missing"
+    )
+
+
+def _severe_funding_stress(signals: tuple[MarketSignal, ...]) -> bool:
+    return _has_signal_status(
+        signals,
+        family="credit",
+        name="credit_spread",
+        status="stressed",
+    ) and _has_signal_status(
+        signals,
+        family="liquidity",
+        name="financial_conditions",
+        status="tight",
+    )
+
+
+def _funding_backdrop_not_broken(signals: tuple[MarketSignal, ...]) -> bool:
+    credit_status = _signal_status(signals, family="credit", name="credit_spread")
+    liquidity_status = _signal_status(signals, family="liquidity", name="financial_conditions")
+    return credit_status in {"supportive", "mixed"} and liquidity_status in {"loose", "neutral"}
+
+
+def _action_confidence(
+    *,
+    state: str,
+    stretch_score: int,
+    washout_score: int,
+    signals: tuple[MarketSignal, ...],
+) -> str:
+    if state == "no_change":
+        confidence = "high" if max(stretch_score, washout_score) <= 1 else "medium"
+    else:
+        confidence = "high" if max(stretch_score, washout_score) >= 4 else "medium"
+
+    if not signals:
+        return _downgrade_confidence(confidence, steps=1)
+    if any(signal.status == "missing" for signal in signals):
+        return _downgrade_confidence(confidence, steps=1)
+    return confidence
+
+
+def _action_reason(*, reason: str, evidence: tuple[str, ...]) -> str:
+    if not evidence:
+        return reason
+    return f"{reason}: {', '.join(evidence)}"
+
+
+def _component_status(snapshot: RegimeSnapshot, component_name: str) -> str | None:
+    for component in snapshot.components:
+        if component.name == component_name:
+            return component.status
+    return None
+
+
+def _signal_status(
+    signals: tuple[MarketSignal, ...],
+    *,
+    family: str,
+    name: str,
+) -> str | None:
+    signal = _signal_by_name(signals, family=family, name=name)
+    return signal.status if signal is not None else None
+
+
+def _has_signal_status(
+    signals: tuple[MarketSignal, ...],
+    *,
+    family: str,
+    name: str,
+    status: str,
+) -> bool:
+    return _signal_status(signals, family=family, name=name) == status
+
+
+def _signal_value(
+    signals: tuple[MarketSignal, ...],
+    *,
+    family: str,
+    name: str,
+) -> float | None:
+    signal = _signal_by_name(signals, family=family, name=name)
+    if signal is None or not isinstance(signal.value, float):
+        return None
+    return signal.value
+
+
+def _signal_by_name(
+    signals: tuple[MarketSignal, ...],
+    *,
+    family: str,
+    name: str,
+) -> MarketSignal | None:
+    for signal in signals:
+        if signal.family == family and signal.name == name:
+            return signal
+    return None
+
+
 def compute_regime_outcomes(
     *,
     start_date: date,
@@ -869,6 +1216,75 @@ def compute_market_signal_outcomes(
     )
 
 
+def compute_regime_action_outcomes(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+) -> RegimeActionOutcomeResult:
+    """Replay rare-action states against forward SPY/QQQ outcomes."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    snapshots = _load_regime_snapshots_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+    )
+    if not snapshots:
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    snapshot_actions = tuple(
+        (
+            snapshot,
+            derive_regime_action_state(
+                snapshot=snapshot,
+                signals=_load_action_signals(
+                    source_date=snapshot.source_date,
+                    signal_snapshot_root=signal_snapshot_root,
+                ),
+            ),
+        )
+        for snapshot in snapshots
+    )
+    actions = tuple(action for _snapshot, action in snapshot_actions)
+    outcomes = tuple(
+        outcome
+        for snapshot, action in snapshot_actions
+        for outcome in _regime_action_outcomes(
+            snapshot=snapshot,
+            action=action,
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    frequency_rows = summarize_regime_action_frequency(actions)
+    summary_rows = summarize_regime_action_outcomes(outcomes)
+    frequency_table = format_regime_action_frequency(frequency_rows)
+    table = format_regime_action_outcome_summary(summary_rows)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        action_count=len(actions),
+        outcome_count=len(outcomes),
+    ).success("Computed market regime action outcomes")
+    return RegimeActionOutcomeResult(
+        start_date=start_date,
+        end_date=end_date,
+        actions=actions,
+        outcomes=outcomes,
+        frequency_rows=frequency_rows,
+        summary_rows=summary_rows,
+        frequency_table=frequency_table,
+        table=table,
+    )
+
+
 def summarize_regime_outcomes(
     outcomes: tuple[RegimeForwardOutcome, ...],
 ) -> tuple[RegimeOutcomeSummaryRow, ...]:
@@ -953,6 +1369,65 @@ def summarize_market_signal_outcomes(
     return tuple(rows)
 
 
+def summarize_regime_action_frequency(
+    actions: tuple[RegimeActionState, ...],
+) -> tuple[RegimeActionFrequencyRow, ...]:
+    """Summarize how often each rare-action state occurs."""
+
+    total = len(actions)
+    counts = {state: 0 for state in REGIME_ACTION_STATES}
+    for action in actions:
+        counts[action.state] = counts.get(action.state, 0) + 1
+    return tuple(
+        RegimeActionFrequencyRow(
+            action_state=state,
+            action_count=counts[state],
+            share=counts[state] / total if total else 0.0,
+        )
+        for state in REGIME_ACTION_STATES
+    )
+
+
+def summarize_regime_action_outcomes(
+    outcomes: tuple[RegimeActionForwardOutcome, ...],
+) -> tuple[RegimeActionOutcomeSummaryRow, ...]:
+    """Summarize forward market outcomes by rare-action state."""
+
+    buckets: dict[str, list[RegimeActionForwardOutcome]] = {"all": list(outcomes)}
+    for outcome in outcomes:
+        buckets.setdefault(f"action:{outcome.action_state}", []).append(outcome)
+
+    rows: list[RegimeActionOutcomeSummaryRow] = []
+    for bucket in sorted(buckets):
+        bucket_outcomes = tuple(buckets[bucket])
+        for horizon in sorted({outcome.horizon_days for outcome in bucket_outcomes}):
+            horizon_outcomes = tuple(
+                outcome for outcome in bucket_outcomes if outcome.horizon_days == horizon
+            )
+            available = tuple(
+                outcome
+                for outcome in horizon_outcomes
+                if outcome.spy_return is not None and outcome.qqq_return is not None
+            )
+            rows.append(
+                RegimeActionOutcomeSummaryRow(
+                    bucket=bucket,
+                    horizon_days=horizon,
+                    action_count=len(horizon_outcomes),
+                    available_count=len(available),
+                    avg_spy_return=_average(outcome.spy_return for outcome in available),
+                    avg_qqq_return=_average(outcome.qqq_return for outcome in available),
+                    avg_spy_max_drawdown=_average(
+                        outcome.spy_max_drawdown for outcome in available
+                    ),
+                    avg_qqq_max_drawdown=_average(
+                        outcome.qqq_max_drawdown for outcome in available
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
 def format_regime_outcome_summary(rows: tuple[RegimeOutcomeSummaryRow, ...]) -> str:
     """Format market regime outcome summaries as a compact table."""
 
@@ -1015,6 +1490,61 @@ def format_market_signal_outcome_summary(
                 row.bucket,
                 f"{row.horizon_days}d",
                 str(row.signal_count),
+                str(row.available_count),
+                _format_percent(row.avg_spy_return),
+                _format_percent(row.avg_qqq_return),
+                _format_drawdown(row.avg_spy_max_drawdown),
+                _format_drawdown(row.avg_qqq_max_drawdown),
+            ]
+        )
+    return _format_table(table)
+
+
+def format_regime_action_frequency(rows: tuple[RegimeActionFrequencyRow, ...]) -> str:
+    """Format rare-action frequency as a compact table."""
+
+    if not rows:
+        return "No regime action rows found."
+
+    table = [["action_state", "count", "share"]]
+    for row in rows:
+        table.append(
+            [
+                row.action_state,
+                str(row.action_count),
+                _format_share(row.share),
+            ]
+        )
+    return _format_table(table)
+
+
+def format_regime_action_outcome_summary(
+    rows: tuple[RegimeActionOutcomeSummaryRow, ...],
+) -> str:
+    """Format rare-action forward outcome summaries as a compact table."""
+
+    available_rows = tuple(row for row in rows if row.available_count > 0)
+    if not available_rows:
+        return "No available regime action outcome rows found."
+
+    table = [
+        [
+            "bucket",
+            "horizon",
+            "actions",
+            "available",
+            "avg_spy",
+            "avg_qqq",
+            "spy_dd",
+            "qqq_dd",
+        ]
+    ]
+    for row in available_rows:
+        table.append(
+            [
+                row.bucket,
+                f"{row.horizon_days}d",
+                str(row.action_count),
                 str(row.available_count),
                 _format_percent(row.avg_spy_return),
                 _format_percent(row.avg_qqq_return),
@@ -1107,6 +1637,20 @@ def _load_market_signals_in_range(
     return tuple(signals)
 
 
+def _load_action_signals(
+    *,
+    source_date: date,
+    signal_snapshot_root: Path,
+) -> tuple[MarketSignal, ...]:
+    try:
+        return load_market_signal_snapshot(
+            source_date=source_date,
+            snapshot_root=signal_snapshot_root,
+        )
+    except MarketSignalError as exc:
+        raise RegimeError(str(exc)) from exc
+
+
 def _regime_snapshot_outcomes(
     *,
     snapshot: RegimeSnapshot,
@@ -1124,6 +1668,35 @@ def _regime_snapshot_outcomes(
             regime=snapshot.regime,
             score=snapshot.score,
             confidence=snapshot.confidence,
+            horizon_days=horizon,
+            spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+            qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+            spy_max_drawdown=_forward_max_drawdown(spy_history, index=spy_index, horizon=horizon),
+            qqq_max_drawdown=_forward_max_drawdown(qqq_history, index=qqq_index, horizon=horizon),
+        )
+        for horizon in horizons
+    )
+
+
+def _regime_action_outcomes(
+    *,
+    snapshot: RegimeSnapshot,
+    action: RegimeActionState,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[RegimeActionForwardOutcome, ...]:
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _exact_date_index(spy_history, snapshot.price_date)
+    qqq_index = _exact_date_index(qqq_history, snapshot.price_date)
+    return tuple(
+        RegimeActionForwardOutcome(
+            source_date=snapshot.source_date,
+            price_date=snapshot.price_date,
+            action_state=action.state,
+            stretch_score=action.stretch_score,
+            washout_score=action.washout_score,
+            action_confidence=action.confidence,
             horizon_days=horizon,
             spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
             qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
@@ -1550,6 +2123,12 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         hyg_tlt_relative_20d=_optional_float(row["hyg_tlt_relative_20d"]),
         vix_close=_optional_float(row["vix_close"]),
         vvix_close=_optional_float(row.get("vvix_close")),
+        action_version=str(row.get("action_version", REGIME_ACTION_VERSION)),
+        action_state=str(row.get("action_state", "no_change")),
+        stretch_score=int(row.get("stretch_score", 0)),
+        washout_score=int(row.get("washout_score", 0)),
+        action_confidence=str(row.get("action_confidence", "low")),
+        action_reason=str(row.get("action_reason", "Action state not computed")),
     )
 
 
@@ -1593,6 +2172,10 @@ def _format_drawdown(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{min(0.0, value) * 100:.1f}%"
+
+
+def _format_share(value: float) -> str:
+    return f"{value * 100:.1f}%"
 
 
 def _format_table(rows: list[list[str]]) -> str:

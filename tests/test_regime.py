@@ -12,8 +12,10 @@ from marketlab.regime import (
     RegimeComponentScore,
     RegimeSnapshot,
     compute_market_signal_outcomes,
+    compute_regime_action_outcomes,
     compute_regime_outcomes,
     compute_regime_snapshot,
+    derive_regime_action_state,
     load_regime_snapshot,
     refresh_regime_prices,
     write_regime_snapshot,
@@ -123,6 +125,11 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.regime == "risk_on"
     assert result.snapshot.score == 5
     assert result.snapshot.confidence == "high"
+    assert result.action is not None
+    assert result.action.state == "no_change"
+    assert result.snapshot.action_state == "no_change"
+    assert result.snapshot.stretch_score == 1
+    assert result.snapshot.washout_score == 0
     assert result.snapshot.missing_symbols == ()
     assert result.contradictions == ()
     assert [component.name for component in result.snapshot.components] == [
@@ -157,6 +164,8 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
 
     loaded = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
     assert loaded == result.snapshot
+    assert loaded is not None
+    assert loaded.action_state == "no_change"
 
 
 def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path) -> None:
@@ -182,6 +191,160 @@ def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path
     assert "^VVIX" in result.snapshot.missing_symbols
     assert "vol_of_vol" in result.signal_table
     assert "missing" in result.table
+
+
+def test_derive_regime_action_state_flags_stretched_market() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_on",
+        score=5,
+        spy_return_20d=0.08,
+        spy_return_60d=0.15,
+        spy_ma50_distance=0.07,
+        qqq_return_20d=0.10,
+        qqq_ma50_distance=0.08,
+        vix_close=12.5,
+        vvix_close=82.0,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="calm",
+                score=1,
+                value=82.0,
+            ),
+        ),
+    )
+
+    assert action.state == "scale_down_protect"
+    assert action.stretch_score >= 3
+    assert action.washout_score == 0
+    assert "Stretched/de-risk threshold crossed" in action.reason
+
+
+def test_derive_regime_action_state_flags_washout_market() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_off",
+        score=-5,
+        components=(
+            RegimeComponentScore(
+                name="trend",
+                score=-2,
+                status="weak",
+                reason="fixture",
+            ),
+            RegimeComponentScore(
+                name="breadth",
+                score=-1,
+                status="narrow",
+                reason="fixture",
+            ),
+        ),
+        spy_return_20d=-0.10,
+        spy_return_60d=-0.16,
+        spy_ma50_distance=-0.08,
+        qqq_return_20d=-0.13,
+        qqq_ma50_distance=-0.10,
+        vix_close=34.0,
+        vvix_close=130.0,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="stressed",
+                score=-1,
+                value=130.0,
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="credit",
+                name="credit_spread",
+                status="mixed",
+                score=0,
+                value=4.2,
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="liquidity",
+                name="financial_conditions",
+                status="neutral",
+                score=0,
+                value=0.0,
+            ),
+        ),
+    )
+
+    assert action.state == "scale_up_redeploy"
+    assert action.washout_score >= 3
+    assert action.stretch_score == 0
+    assert "Washout/re-risk threshold crossed" in action.reason
+
+
+def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_off",
+        score=-5,
+        components=(
+            RegimeComponentScore(
+                name="trend",
+                score=-2,
+                status="weak",
+                reason="fixture",
+            ),
+        ),
+        spy_return_20d=-0.10,
+        spy_ma50_distance=-0.08,
+        qqq_return_20d=-0.13,
+        qqq_ma50_distance=-0.10,
+        vix_close=34.0,
+        vvix_close=130.0,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="stressed",
+                score=-1,
+                value=130.0,
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="credit",
+                name="credit_spread",
+                status="stressed",
+                score=-1,
+                value=6.5,
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="liquidity",
+                name="financial_conditions",
+                status="tight",
+                score=-1,
+                value=0.4,
+            ),
+        ),
+    )
+
+    assert action.state == "no_change"
+    assert action.washout_score >= 3
+    assert "block aggressive re-risk" in action.reason
 
 
 def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
@@ -360,7 +523,116 @@ def test_compute_market_signal_outcomes_summarizes_signal_buckets(tmp_path: Path
     assert "signal:volatility/vol_of_vol/calm" in result.table
 
 
-def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:
+def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_regime_snapshot(
+        _snapshot(source_date=start_date, regime="risk_on", score=4),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=5,
+            spy_return_20d=0.08,
+            spy_return_60d=0.15,
+            spy_ma50_distance=0.07,
+            qqq_return_20d=0.10,
+            qqq_ma50_distance=0.08,
+            vix_close=12.0,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=2),
+            regime="risk_off",
+            score=-5,
+            components=(
+                RegimeComponentScore(
+                    name="trend",
+                    score=-2,
+                    status="weak",
+                    reason="fixture",
+                ),
+                RegimeComponentScore(
+                    name="breadth",
+                    score=-1,
+                    status="narrow",
+                    reason="fixture",
+                ),
+            ),
+            spy_return_20d=-0.10,
+            spy_ma50_distance=-0.08,
+            qqq_return_20d=-0.13,
+            qqq_ma50_distance=-0.10,
+            vix_close=34.0,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0 + index for index in range(40)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=start_date,
+        closes=[100.0 + index * 2 for index in range(40)],
+    )
+
+    result = compute_regime_action_outcomes(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=2),
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=tmp_path / "signals",
+        price_root=price_root,
+        horizons=(20,),
+    )
+
+    assert [action.state for action in result.actions] == [
+        "no_change",
+        "scale_down_protect",
+        "scale_up_redeploy",
+    ]
+    frequency = {row.action_state: row for row in result.frequency_rows}
+    assert frequency["no_change"].action_count == 1
+    assert frequency["scale_down_protect"].action_count == 1
+    assert frequency["scale_up_redeploy"].action_count == 1
+    action_row = next(
+        row for row in result.summary_rows if row.bucket == "action:scale_up_redeploy"
+    )
+    assert action_row.action_count == 1
+    assert action_row.available_count == 1
+    assert round(action_row.avg_spy_return or 0.0, 4) == round(20.0 / 102.0, 4)
+    assert "scale_down_protect" in result.frequency_table
+    assert "action:scale_up_redeploy" in result.table
+
+
+def _snapshot(
+    *,
+    source_date: date,
+    regime: str,
+    score: int,
+    components: tuple[RegimeComponentScore, ...] | None = None,
+    spy_return_20d: float | None = 0.05,
+    spy_return_60d: float | None = 0.10,
+    spy_ma50_distance: float | None = 0.03,
+    spy_ma200_distance: float | None = 0.08,
+    spy_realized_vol_20d: float | None = 0.12,
+    qqq_return_20d: float | None = 0.06,
+    qqq_ma50_distance: float | None = 0.04,
+    qqq_ma200_distance: float | None = 0.09,
+    rsp_spy_relative_20d: float | None = 0.01,
+    iwm_spy_relative_20d: float | None = 0.01,
+    hyg_tlt_relative_20d: float | None = 0.02,
+    vix_close: float | None = 16.0,
+    vvix_close: float | None = 85.0,
+) -> RegimeSnapshot:
     return RegimeSnapshot(
         source_date=source_date,
         feature_version="fixture_features",
@@ -369,7 +641,8 @@ def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:
         regime=regime,
         score=score,
         confidence="high",
-        components=(
+        components=components
+        or (
             RegimeComponentScore(
                 name="trend",
                 score=2,
@@ -378,19 +651,19 @@ def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:
             ),
         ),
         missing_symbols=(),
-        spy_return_20d=0.05,
-        spy_return_60d=0.10,
-        spy_ma50_distance=0.03,
-        spy_ma200_distance=0.08,
-        spy_realized_vol_20d=0.12,
-        qqq_return_20d=0.06,
-        qqq_ma50_distance=0.04,
-        qqq_ma200_distance=0.09,
-        rsp_spy_relative_20d=0.01,
-        iwm_spy_relative_20d=0.01,
-        hyg_tlt_relative_20d=0.02,
-        vix_close=16.0,
-        vvix_close=85.0,
+        spy_return_20d=spy_return_20d,
+        spy_return_60d=spy_return_60d,
+        spy_ma50_distance=spy_ma50_distance,
+        spy_ma200_distance=spy_ma200_distance,
+        spy_realized_vol_20d=spy_realized_vol_20d,
+        qqq_return_20d=qqq_return_20d,
+        qqq_ma50_distance=qqq_ma50_distance,
+        qqq_ma200_distance=qqq_ma200_distance,
+        rsp_spy_relative_20d=rsp_spy_relative_20d,
+        iwm_spy_relative_20d=iwm_spy_relative_20d,
+        hyg_tlt_relative_20d=hyg_tlt_relative_20d,
+        vix_close=vix_close,
+        vvix_close=vvix_close,
     )
 
 
@@ -441,4 +714,29 @@ def _write_market_series_value(
             ),
         ),
         output_root=market_series_root,
+    )
+
+
+def _market_signal(
+    *,
+    source_date: date,
+    family: str,
+    name: str,
+    status: str,
+    score: int,
+    value: float | str | None,
+) -> MarketSignal:
+    return MarketSignal(
+        source_date=source_date,
+        feature_version="fixture",
+        family=family,
+        name=name,
+        status=status,
+        score=score,
+        value=value,
+        unit="index" if isinstance(value, float) else "text",
+        source="fixture",
+        observed_date=source_date,
+        availability_date=source_date,
+        reason="fixture",
     )

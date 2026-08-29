@@ -58,11 +58,18 @@ Implemented market-signal expansion:
 - Missing independent signal sources are explicit and reduce headline confidence.
 - `regime signal-outcomes` replays saved market-signal rows against forward SPY/QQQ returns and drawdowns.
 
+Implemented regime calibration/action-state foundation:
+
+- `regime snapshot` now derives `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
+- Daily snapshots include stretch score, washout score, action confidence, and action reason.
+- `regime action-outcomes` replays rare action states against forward SPY/QQQ returns and drawdowns.
+- Action-state frequency is reported so the model can be judged on whether it stays quiet most days.
+
 Not yet implemented:
 
 - VIX term structure, fear/greed or sentiment/positioning observations.
 - Stronger breadth, sentiment/positioning, VIX term structure, and richer credit/liquidity calibration.
-- Calibrated regime model and portfolio policy.
+- Long-history threshold calibration and portfolio policy.
 
 Verified live on `2026-08-26`:
 
@@ -90,6 +97,7 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices --fetch-market-series --market-series-start 2026-08-20 --market-series-end 2026-08-28
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
 ./bin/marketlab regime signal-outcomes --start 2026-07-31 --end 2026-07-31 --horizons 20
+./bin/marketlab regime action-outcomes --start 2026-08-01 --end 2026-08-28 --horizons 20,40,65
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
 ./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
 ./bin/marketlab bulltard validate --date 2026-08-26
@@ -113,8 +121,8 @@ uv run pytest -q
 | 2. Candidate Validation & Outcome MVP | Complete | Single-name | Make the candidate workflow better than the email by adding independent price/liquidity context and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
 | 3. Market Regime Foundation | Complete | Market regime | Create a first deterministic market context from available OHLCV proxies. | Regime snapshots score SPY/QQQ trend, realized volatility/VIX, breadth proxy, credit proxy, and replay buckets against forward SPY/QQQ returns/drawdowns. |
 | 4. Market Signal Expansion | Complete | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
-| 5. Regime Calibration & Backtest | Next | Market regime | Decide whether the expanded regime families identify rare stretched/de-risk and bloodbath/re-risk zones with useful forward risk/reward separation. | Family scores, composites, transitions, disagreement states, stretch states, washout states, and default `no_change` states are replayed out of sample with explicit keep/retire decisions. |
-| 6. Portfolio Policy MVP | Planned | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context, engine-interaction logic, and fixed-benchmark evaluation. |
+| 5. Regime Calibration & Backtest | Complete v0 tooling | Market regime | Decide whether the expanded regime families identify rare stretched/de-risk and bloodbath/re-risk zones with useful forward risk/reward separation. | Action states and replay tables exist; long-history calibration still needed before policy. |
+| 6. Portfolio Policy MVP | Next | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context, engine-interaction logic, and fixed-benchmark evaluation. |
 | 7. Visualization & Reporting MVP | Planned | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
 | 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
 
@@ -332,7 +340,7 @@ Deferred expansion:
 
 ## Milestone 5 - Regime Calibration & Backtest
 
-Current status: next.
+Current status: complete for v0 tooling; not yet trusted as portfolio policy.
 
 Goal: decide whether the expanded regime evidence actually improves rare market exposure decisions: scaling down near top-like stretch and scaling up after bottom-like washout.
 
@@ -361,6 +369,39 @@ Exit criterion:
 - We know how often the engine would say `no_change`, `scale_down_protect`, and `scale_up_redeploy`.
 - The composite score has documented thresholds and a frozen version.
 - Portfolio policy can consume regime output without pretending the market model is more mature than it is.
+
+Implemented v0 scope:
+
+- Added a deterministic rare-action classifier with three states:
+  - `no_change`
+  - `scale_down_protect`
+  - `scale_up_redeploy`
+- Added transparent stretch and washout scores to `regime snapshot`.
+- Made `no_change` the default unless multiple pieces of evidence cross a rare-action threshold.
+- Added a funding-stress guard so a severe credit/liquidity break blocks aggressive re-risk even when the market is washed out.
+- Added `regime action-outcomes` to report:
+  - action-state frequency
+  - forward SPY/QQQ returns by action state
+  - forward SPY/QQQ drawdowns by action state
+
+Current v0 classifier:
+
+- `scale_down_protect` requires at least three stretch signals such as strong SPY rally, extended QQQ momentum, extension above 50d trend, complacent volatility, weak participation in a risk-on tape, or credit/liquidity deterioration in a risk-on tape.
+- `scale_up_redeploy` requires at least three washout signals such as major index selloff, price below intermediate trend, elevated volatility stress, visible trend damage, broad participation washout, or washout with credit/liquidity not broken.
+- `no_change` is emitted when neither rare-action threshold is crossed or when stretch and washout evidence conflict.
+
+First useful M5 outputs:
+
+```bash
+./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices --fetch-market-series --market-series-start 2026-08-20 --market-series-end 2026-08-28
+./bin/marketlab regime action-outcomes --start 2026-08-01 --end 2026-08-28 --horizons 20,40,65
+```
+
+Known limitations:
+
+- The current action thresholds are candidate rules, not calibrated portfolio policy.
+- Existing local snapshots cover only a small recent sample unless a longer historical run is generated.
+- This milestone measures market action states only; it does not yet choose exact cash percentages, covered-call overwrite levels, or 60-90 DTE option budgets.
 
 ## Milestone 6 - Portfolio Policy MVP
 
