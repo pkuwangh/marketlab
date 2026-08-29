@@ -6,8 +6,8 @@
 
 MarketLab has two coordinated research engines:
 
-- **Market regime engine:** detect stretched/de-risk and bloodbath/re-risk zones so the portfolio can adjust marginal SPY/QQQ beta, dry powder, and options overlays while maintaining the core.
-- **Single-name opportunity engine:** decide which large, liquid candidates deserve tactical research attention.
+- **Market regime engine:** detect rare stretched/de-risk and bloodbath/re-risk zones so the portfolio can adjust marginal SPY/QQQ beta, dry powder, and options overlays while maintaining the core.
+- **Single-name opportunity engine:** decide which large, liquid candidates deserve multi-month tactical research attention.
 
 The market regime engine is now the primary implementation focus. Bulltard is one evidence source for the single-name engine; it is not the basis for the overall market regime. Every milestone below must improve market exposure decisions, especially stretch/bottoming posture changes, single-name opportunity selection, or measured forward outcome feedback.
 
@@ -18,6 +18,8 @@ The market regime engine is now the primary implementation focus. Bulltard is on
 - Keep commands deterministic and inspectable. No hidden agent reasoning in the core data path.
 - Avoid archiving/crawling infrastructure unless it preserves information we actually use.
 - Treat generic risk-on/risk-off as an intermediate label; the valuable output is whether to scale down/protect or scale up/redeploy within bounded policy limits.
+- Bias the portfolio output toward `no_change`; alerts should be rare and focused on top-like stretch or bottom-like washout conditions.
+- Keep the engines separate but connected: regime controls risk budget and posture; Bulltard/opportunity signals help choose where tactical risk goes and can be evaluated by active regime state.
 - Commit implementation slices, but judge progress by milestone exit criteria.
 
 ## Current Baseline
@@ -111,8 +113,8 @@ uv run pytest -q
 | 2. Candidate Validation & Outcome MVP | Complete | Single-name | Make the candidate workflow better than the email by adding independent price/liquidity context and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
 | 3. Market Regime Foundation | Complete | Market regime | Create a first deterministic market context from available OHLCV proxies. | Regime snapshots score SPY/QQQ trend, realized volatility/VIX, breadth proxy, credit proxy, and replay buckets against forward SPY/QQQ returns/drawdowns. |
 | 4. Market Signal Expansion | Complete | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
-| 5. Regime Calibration & Backtest | Next | Market regime | Decide whether the expanded regime families identify stretched/de-risk and bloodbath/re-risk zones with useful forward risk/reward separation. | Family scores, composites, transitions, disagreement states, stretch states, and washout states are replayed out of sample with explicit keep/retire decisions. |
-| 6. Portfolio Policy MVP | Planned | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context and fixed-benchmark evaluation. |
+| 5. Regime Calibration & Backtest | Next | Market regime | Decide whether the expanded regime families identify rare stretched/de-risk and bloodbath/re-risk zones with useful forward risk/reward separation. | Family scores, composites, transitions, disagreement states, stretch states, washout states, and default `no_change` states are replayed out of sample with explicit keep/retire decisions. |
+| 6. Portfolio Policy MVP | Planned | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context, engine-interaction logic, and fixed-benchmark evaluation. |
 | 7. Visualization & Reporting MVP | Planned | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
 | 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
 
@@ -332,12 +334,13 @@ Deferred expansion:
 
 Current status: next.
 
-Goal: decide whether the expanded regime evidence actually improves market exposure decisions.
+Goal: decide whether the expanded regime evidence actually improves rare market exposure decisions: scaling down near top-like stretch and scaling up after bottom-like washout.
 
 Scope:
 
 - Replay each market-signal family against forward SPY and QQQ returns and drawdowns.
 - Define explicit stretched/de-risk and bloodbath/re-risk state candidates from the existing signal rows.
+- Define the baseline `no_change` state so most days do not imply a portfolio move.
 - Measure family-level value before changing the composite:
   - forward return spread by signal bucket
   - max drawdown separation
@@ -347,6 +350,7 @@ Scope:
 - Evaluate disagreement states such as bullish trend with deteriorating volatility structure.
 - Evaluate whether stretched states precede poor forward reward/risk or larger adverse excursions.
 - Evaluate whether washout states improve 40-65 trading-day forward reward/risk after broad selloffs.
+- Evaluate whether action states are rare enough to be operationally useful instead of becoming daily noise.
 - Freeze simple threshold versions before comparing them.
 - Retire signals that do not improve separation, calibration, contradiction handling, or interpretability.
 
@@ -354,6 +358,7 @@ Exit criterion:
 
 - We know which regime families are pulling their weight.
 - We know whether stretch/de-risk and bloodbath/re-risk alerts deserve explicit policy weight.
+- We know how often the engine would say `no_change`, `scale_down_protect`, and `scale_up_redeploy`.
 - The composite score has documented thresholds and a frozen version.
 - Portfolio policy can consume regime output without pretending the market model is more mature than it is.
 
@@ -364,6 +369,7 @@ Goal: translate research outputs into a daily risk posture.
 Scope:
 
 - Define exposure bands from regime and opportunity quality.
+- Make `no_change` the default posture unless calibrated evidence crosses a meaningful action threshold.
 - Define bounded actions for stretched/de-risk conditions:
   - keep core invested
   - raise or preserve cash
@@ -374,9 +380,12 @@ Scope:
   - consider 60-90 DTE calls or call spreads
   - consider cash-secured puts or defined-risk put spreads only inside a fixed risk budget
 - Distinguish watch candidates from active candidates.
+- Let market regime modify single-name candidate sizing and instrument aggressiveness without changing the candidate's own quality score.
+- Evaluate Bulltard/opportunity outcomes by the market-regime state active at discovery and validation.
 - Produce a concise daily report that includes:
   - market regime
   - stretch/de-risk and washout/re-risk state
+  - daily action state
   - marginal risk posture
   - validated Bulltard candidates
   - recent decision changes
@@ -387,6 +396,7 @@ Non-goals for this milestone:
 - No automated trading.
 - No policy rules until M5 has at least a basic calibration result.
 - No single-name sizing that ignores aggregate market regime.
+- No Bulltard-driven override of the independent market-regime engine.
 
 ## Milestone 7 - Visualization & Reporting MVP
 

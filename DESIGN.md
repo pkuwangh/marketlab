@@ -1,12 +1,12 @@
 # Market Regime & Large-Cap Opportunity Research System
 
-**High-Level Design - Version 0.8**
-**Status:** Two-engine, market-regime-first implementation baseline with explicit stretch/re-risk operating objective
+**High-Level Design - Version 0.9**
+**Status:** Two-engine, market-regime-first implementation baseline with explicit rare-action operating objective
 **Primary audience:** coding/research agents and the human researcher
 
 > **Purpose:** Build a durable, testable research process that (1) sizes marginal market exposure while maintaining a permanent long-term core in SPY/QQQ and (2) identifies unusually attractive multi-month opportunities in large, fundamentally viable, options-liquid individual stocks.
 
-| **Core philosophy:** Stay invested. The highest-value signal is not a daily BUY/SELL label. It is an exposure-control alert: when the market is stretched enough to raise cash or overwrite upside, and when panic/bloodbath conditions are washed out enough to redeploy cash or add defined convex exposure. |
+| **Core philosophy:** Stay invested and do nothing most days. The highest-value signal is not a daily BUY/SELL label. It is a rare exposure-control alert: when the market is stretched enough to raise cash or overwrite upside, and when panic/bloodbath conditions are washed out enough to redeploy cash or add defined convex exposure. |
 |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 | **Layer**      | **Role**                                                         | **Typical instruments**                                          |
@@ -23,7 +23,7 @@ The market-regime engine is the current implementation priority. Bulltard is use
 
 ## Practical Operating Objective
 
-The portfolio maintains a permanent SPY/QQQ-oriented core. The regime system controls only the marginal tactical layer around that core. Its most useful output should identify two actionable zones:
+The portfolio maintains a permanent SPY/QQQ-oriented core. The regime system controls only the marginal tactical layer around that core. Most daily outputs should recommend no portfolio move. Its most useful output should identify two actionable zones:
 
 | **Zone** | **Question** | **Typical bounded response** |
 |---|---|---|
@@ -32,6 +32,18 @@ The portfolio maintains a permanent SPY/QQQ-oriented core. The regime system con
 | Normal / mixed | Is the evidence too balanced to justify a strong posture change? | Stay near neutral policy beta, preserve flexibility, and let single-name opportunities compete for only a bounded sleeve. |
 
 These are research-policy states, not automatic trade orders. The system should make the posture decision inspectable; execution remains manual and must respect option liquidity, tax, assignment, and position-size constraints.
+
+## Decision Cadence
+
+The system should be biased toward inactivity. The baseline daily answer is "maintain current posture" unless evidence is strong enough to move the tactical sleeve.
+
+| **Cadence state** | **Meaning** | **Expected action** |
+|---|---|---|
+| No change | Evidence does not justify changing tactical exposure. | Keep core and tactical posture roughly unchanged; keep observing. |
+| Scale down / protect | Market looks near a local top or stretched enough that forward reward/risk is unattractive. | Preserve the core, reduce tactical beta, raise cash, and/or sell covered calls against part of existing exposure. |
+| Scale up / redeploy | Market has suffered a major correction/bloodbath and evidence suggests forced selling is exhausting. | Preserve the core, deploy cash in tranches, and consider 60-90 DTE calls/call spreads or bounded put underwriting. |
+
+The design standard is not "emit an opinion every day." It is "stay quiet most days, but be useful at the tails."
 
 ## Implementation Bias
 
@@ -46,7 +58,7 @@ Do not build infrastructure just because the eventual system might need it. Star
 
 # 1. Problem Statement
 
-A long-term investor who intends to remain structurally long SPY/QQQ faces two recurring tactical questions: **when should marginal exposure be increased, held neutral, or reduced; and where should that marginal risk be deployed?** The first question is handled by a repeatable evidence-based market-regime signal. The second is handled by a large-cap opportunity engine focused on catching multi-month re-ratings, cyclical accelerations, and catalyst/momentum inflections in liquid names rather than speculative small-cap lottery tickets.
+A long-term investor who intends to remain structurally long SPY/QQQ faces two recurring tactical questions: **when is the market close enough to a tactical top or bottom to justify changing marginal exposure, and where should that marginal risk be deployed when action is justified?** The first question is handled by a repeatable evidence-based market-regime signal. The second is handled by a large-cap opportunity engine focused on catching multi-month re-ratings, cyclical accelerations, and catalyst/momentum inflections in liquid names rather than speculative small-cap lottery tickets.
 
 | **What success looks like:** The system does not need to forecast an exact market or stock price. It should (1) separate future SPY/QQQ 2-3 month return/drawdown distributions well enough to improve exposure sizing and (2) identify a subset of large-cap candidates whose multi-month forward return/asymmetry is materially better than comparable names and benchmarks after realistic implementation costs. |
 |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -123,10 +135,22 @@ The two engines answer different questions and should not be blended prematurely
 
 | Engine | Primary question | Primary evidence | Current priority |
 |---|---|---|---|
-| Market regime | How much marginal SPY/QQQ beta and dry powder should be carried? | Trend, VIX/VVIX/volatility term structure, breadth, credit/liquidity, sentiment/positioning | Primary near-term engine |
-| Single-name opportunity | Which large liquid stocks deserve tactical research attention? | Bulltard signals, price/relative strength, fundamentals, catalysts, options liquidity | Secondary until regime evidence is credible |
+| Market regime | Is the market stretched enough to scale down/protect, washed out enough to scale up/redeploy, or quiet enough to do nothing? | Trend, VIX/VVIX/volatility term structure, breadth, credit/liquidity, sentiment/positioning | Primary near-term engine |
+| Single-name opportunity | Which large, liquid stocks have multi-month asymmetric opportunities worth using the tactical risk budget on? | Bulltard signals, price/relative strength, fundamentals, catalysts, options liquidity | Secondary until regime evidence is credible |
 
 Portfolio policy should wait until the market-regime engine has a more credible evidence base than simple index trend. The single-name engine can continue collecting candidates in parallel, but it should not drive aggregate market exposure.
+
+## Engine Interaction
+
+The two engines should help each other without collapsing into one score.
+
+| **Interaction** | **Rule** |
+|---|---|
+| Regime controls sizing | A strong single-name setup can be smaller, delayed, or expressed more conservatively when the market is stretched or deteriorating. |
+| Regime controls aggressiveness | In a validated bloodbath/re-risk state, the same high-quality setup may justify faster cash deployment, 60-90 DTE calls/call spreads, or put underwriting. |
+| Single-name tape informs context | A cluster of high-quality large-cap opportunities after a broad selloff can support a re-risk watch state; a lack of clean setups during a stretched tape can reinforce patience. |
+| Subscription evidence remains bounded | Bulltard can generate candidates and may provide an external market overlay, but it must not override independent regime evidence without measured outcome support. |
+| Outcomes are joint | Candidate outcomes should be evaluated by both opportunity features and the market-regime state active at discovery/validation. |
 
 | Component            | Primary responsibility                                                                                                      | Design rule                                                     |
 |----------------------|-----------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------|
@@ -207,6 +231,8 @@ The regime label alone is insufficient. A strong index trend can be healthy or d
 | Stretch / de-risk pressure | Detect overextension, complacency, narrowing participation, or early credit/liquidity deterioration. | Should the portfolio raise cash, sell calls, or reduce new long-delta additions? |
 | Washout / re-risk pressure | Detect forced-selling conditions, panic, broad capitulation, and stabilization after a selloff. | Should the portfolio start redeploying cash, adding convex upside, or underwriting lower entries? |
 
+The stretch and washout views should be calibrated as rare tail alerts. A normal `risk_on` reading is not automatically a top warning, and a normal `risk_off` reading is not automatically a bottom signal.
+
 | **Family**              | **Candidate inputs**                                                               | **Question answered**                                                           |
 |-------------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | Trend / structure       | Price vs. moving averages, slope, distance from highs, term trend, momentum        | Is the market structurally advancing or deteriorating?                          |
@@ -231,6 +257,7 @@ Avoid a binary BUY/SELL output. A useful daily snapshot should look more like:
 | Contradictions              | Important families that disagree with the composite                                     |
 | Change flag                 | Whether the regime is stable, improving, or deteriorating                               |
 | Policy posture              | Suggested marginal beta/cash/overlay posture inside predefined risk limits              |
+| Action state                | `no_change`, `scale_down_protect`, or `scale_up_redeploy`                               |
 
 The output should prefer calibrated uncertainty over false precision. "Moderately cautious, 62% confidence" is more useful than "QQQ will fall 7.3%."
 
@@ -259,6 +286,8 @@ The mapping layer should be designed around marginal actions rather than whole-p
 |----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 A stretched market is not the same as a bearish market. The system may say "trend still risk-on, but stretch pressure is high," which should map to protecting gains and slowing new risk additions rather than shorting the market. Likewise, a bloodbath/re-risk alert is not a claim that the exact bottom is known; it should map to staged deployment and bounded option risk.
+
+Most days, portfolio posture should remain unchanged. Policy should include hysteresis, minimum-change thresholds, and cooldowns so the engine does not create activity merely because data updates daily.
 
 # 7. Bulltard Research Module
 
@@ -371,7 +400,7 @@ Its responsibility is only to: read the requested recap, extract the signed link
 
 # 8. Large-Cap Single-Name Opportunity Engine
 
-The single-name engine is designed to catch substantial multi-month moves in established, liquid companies: fundamental/catalyst re-ratings, cyclical accelerations, and sustained momentum/positioning inflections. It is **not** a general stock picker and is not optimized for finding tiny speculative names. The target is to participate in a meaningful middle portion of a 3-9 month move rather than identify the exact bottom or top.
+The single-name engine is designed to catch substantial multi-month moves in established, liquid companies: fundamental/catalyst re-ratings, cyclical accelerations, and sustained momentum/positioning inflections. It is **not** a general stock picker, not a daily trading engine, and not optimized for finding tiny speculative names. The target is to participate in a meaningful middle portion of a 3-9 month move rather than identify the exact bottom or top.
 
 ## Engine separation
 
