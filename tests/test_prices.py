@@ -116,6 +116,53 @@ def test_parse_yahoo_daily_frame_reads_adjusted_close() -> None:
     assert rows[1].return_close == 106.5
 
 
+def test_parse_yahoo_daily_frame_skips_incomplete_trailing_row() -> None:
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 104.0],
+            "High": [105.0, 108.0],
+            "Low": [99.0, 103.0],
+            "Close": [104.0, float("nan")],
+            "Adj Close": [103.5, float("nan")],
+            "Volume": [1_000_000, 1_200_000],
+        },
+        index=pd.to_datetime(["2026-08-24", "2026-08-25"]),
+    )
+    frame.index.name = "Date"
+
+    rows = parse_yahoo_daily_frame(
+        frame,
+        symbol="meta",
+        start_date=date(2026, 8, 24),
+        end_date=date(2026, 8, 25),
+    )
+
+    assert [row.observed_date for row in rows] == [date(2026, 8, 24)]
+
+
+def test_parse_yahoo_daily_frame_rejects_incomplete_middle_row() -> None:
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 104.0, 107.0],
+            "High": [105.0, 108.0, 110.0],
+            "Low": [99.0, 103.0, 106.0],
+            "Close": [104.0, float("nan"), 109.0],
+            "Adj Close": [103.5, float("nan"), 108.5],
+            "Volume": [1_000_000, 1_200_000, 1_100_000],
+        },
+        index=pd.to_datetime(["2026-08-24", "2026-08-25", "2026-08-26"]),
+    )
+    frame.index.name = "Date"
+
+    with pytest.raises(PriceDataError, match="Invalid Yahoo price row 2"):
+        parse_yahoo_daily_frame(
+            frame,
+            symbol="meta",
+            start_date=date(2026, 8, 24),
+            end_date=date(2026, 8, 26),
+        )
+
+
 def test_fetch_and_write_yahoo_daily_prices_uses_downloader(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 

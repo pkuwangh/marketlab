@@ -18,6 +18,13 @@ from loguru import logger
 DEFAULT_PRICE_OBSERVATIONS_ROOT = Path("data/observations/prices/daily")
 HTTP_TIMEOUT_SECONDS = 30.0
 STOOQ_DAILY_URL = "https://stooq.com/q/d/l/"
+YAHOO_REQUIRED_PRICE_COLUMNS = (
+    ("Open", "open"),
+    ("High", "high"),
+    ("Low", "low"),
+    ("Close", "close"),
+    ("Volume", "volume"),
+)
 
 
 class PriceDataError(ValueError):
@@ -251,6 +258,7 @@ def fetch_yahoo_daily_prices(
     logger.bind(
         symbol=normalized_symbol,
         row_count=len(rows),
+        latest_price_date=rows[-1].observed_date.isoformat(),
     ).success("Fetched Yahoo daily price observations")
     return rows
 
@@ -346,11 +354,35 @@ def parse_yahoo_daily_frame(
     except AttributeError as exc:
         raise PriceDataError("Yahoo price result must be a pandas-like DataFrame") from exc
 
-    rows: list[DailyPriceObservation] = []
+    filtered_records: list[tuple[int, dict[Any, Any], date]] = []
     for row_number, row in enumerate(records, start=1):
         observed_date = _coerce_observed_date(_frame_value(row, "Date", "Datetime", "index"))
         if observed_date is None or not start_date <= observed_date <= end_date:
             continue
+        filtered_records.append((row_number, row, observed_date))
+
+    last_complete_index = max(
+        (
+            index
+            for index, (_row_number, row, _observed_date) in enumerate(filtered_records)
+            if not _missing_required_yahoo_price_fields(row)
+        ),
+        default=-1,
+    )
+
+    rows: list[DailyPriceObservation] = []
+    for index, (row_number, row, observed_date) in enumerate(filtered_records):
+        missing_fields = _missing_required_yahoo_price_fields(row)
+        if missing_fields:
+            if index > last_complete_index:
+                logger.bind(
+                    symbol=normalized_symbol,
+                    row_number=row_number,
+                    observed_date=observed_date.isoformat(),
+                    missing_fields=missing_fields,
+                ).debug("Skipping incomplete trailing Yahoo daily price row")
+                continue
+            raise PriceDataError(f"Invalid Yahoo price row {row_number}")
         try:
             rows.append(
                 DailyPriceObservation(
@@ -526,6 +558,14 @@ def _frame_value(row: dict[Any, Any], *names: str) -> Any:
         if name in row and not _is_missing(row[name]):
             return row[name]
     raise KeyError(names[0])
+
+
+def _missing_required_yahoo_price_fields(row: dict[Any, Any]) -> tuple[str, ...]:
+    missing_fields: list[str] = []
+    for names in YAHOO_REQUIRED_PRICE_COLUMNS:
+        if not any(name in row and not _is_missing(row[name]) for name in names):
+            missing_fields.append(names[0])
+    return tuple(missing_fields)
 
 
 def _frame_float(row: dict[Any, Any], *names: str) -> float:
