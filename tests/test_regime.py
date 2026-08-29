@@ -1,11 +1,16 @@
 from datetime import date, timedelta
 from pathlib import Path
 
-from marketlab.market_signals import load_market_signal_snapshot
+from marketlab.market_signals import (
+    MarketSignal,
+    load_market_signal_snapshot,
+    write_market_signal_snapshot,
+)
 from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import (
     RegimeComponentScore,
     RegimeSnapshot,
+    compute_market_signal_outcomes,
     compute_regime_outcomes,
     compute_regime_snapshot,
     load_regime_snapshot,
@@ -84,6 +89,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.score == 5
     assert result.snapshot.confidence == "high"
     assert result.snapshot.missing_symbols == ()
+    assert result.contradictions == ()
     assert [component.name for component in result.snapshot.components] == [
         "trend",
         "volatility",
@@ -254,6 +260,63 @@ def test_compute_regime_outcomes_hides_unavailable_summary_rows(tmp_path: Path) 
     assert "20d" in result.table
     assert "40d" not in result.table
     assert "+0.0%" not in result.table
+
+
+def test_compute_market_signal_outcomes_summarizes_signal_buckets(tmp_path: Path) -> None:
+    source_date = date(2026, 1, 1)
+    signal_root = tmp_path / "signals"
+    price_root = tmp_path / "prices"
+    write_market_signal_snapshot(
+        (
+            MarketSignal(
+                source_date=source_date,
+                feature_version="fixture",
+                family="volatility",
+                name="vol_of_vol",
+                status="calm",
+                score=1,
+                value=85.0,
+                unit="index",
+                source="fixture",
+                observed_date=source_date,
+                availability_date=source_date,
+                reason="fixture",
+            ),
+        ),
+        snapshot_root=signal_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=source_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=source_date,
+        closes=[100.0 + index * 2 for index in range(30)],
+    )
+
+    result = compute_market_signal_outcomes(
+        start_date=source_date,
+        end_date=source_date,
+        signal_snapshot_root=signal_root,
+        price_root=price_root,
+        horizons=(20,),
+    )
+
+    assert len(result.outcomes) == 1
+    assert result.outcomes[0].family == "volatility"
+    assert result.outcomes[0].name == "vol_of_vol"
+    assert round(result.outcomes[0].spy_return or 0.0, 4) == 0.2
+    signal_row = next(
+        row for row in result.summary_rows if row.bucket == "signal:volatility/vol_of_vol/calm"
+    )
+    assert signal_row.signal_count == 1
+    assert signal_row.available_count == 1
+    assert "family:volatility" in result.table
+    assert "signal:volatility/vol_of_vol/calm" in result.table
 
 
 def _snapshot(*, source_date: date, regime: str, score: int) -> RegimeSnapshot:

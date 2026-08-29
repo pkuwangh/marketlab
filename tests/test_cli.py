@@ -33,6 +33,9 @@ from marketlab.cli import app, bulltard_app, prices_app, regime_app
 from marketlab.market_signals import MarketSignal
 from marketlab.prices import PriceFetchResult
 from marketlab.regime import (
+    MarketSignalForwardOutcome,
+    MarketSignalOutcomeResult,
+    MarketSignalOutcomeSummaryRow,
     RegimeComponentScore,
     RegimeForwardOutcome,
     RegimeOutcomeResult,
@@ -124,6 +127,17 @@ def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> No
 
 def test_regime_outcomes_no_args_shows_help_without_missing_option_error() -> None:
     result = CliRunner().invoke(app, ["regime", "outcomes"])
+
+    assert result.exit_code != 0
+    assert "Replay forward SPY/QQQ outcomes" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regime_signal_outcomes_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "signal-outcomes"])
 
     assert result.exit_code != 0
     assert "Replay forward SPY/QQQ outcomes" in result.output
@@ -798,6 +812,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             signals=(signal,),
             signal_snapshot_path=signal_snapshot_root / "2026-08-28.jsonl",
             signal_table="family  signal       score\ntrend   price_proxy  +2",
+            contradictions=("positive=trend/price_proxy:constructive negative=fixture",),
         )
 
     price_root_arg = price_root
@@ -836,6 +851,10 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}" in result.output
     )
     assert "market_signal_count=1" in result.output
+    assert (
+        "market_signal_contradictions=positive=trend/price_proxy:constructive negative=fixture"
+        in result.output
+    )
     assert "trend   price_proxy  +2" in result.output
     assert "regime_date=2026-08-28" in result.output
     assert "regime=risk_on" in result.output
@@ -921,6 +940,92 @@ def test_regime_outcomes_outputs_summary_table(
     assert "regime_outcome_count=1" in result.output
     assert "available_regime_outcome_count=1" in result.output
     assert "regime:risk_on  20d" in result.output
+
+
+def test_regime_signal_outcomes_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signal_root = tmp_path / "signals"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_market_signal_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        signal_snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> MarketSignalOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert signal_snapshot_root == signal_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20, 65)
+        return MarketSignalOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                MarketSignalForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    family="volatility",
+                    name="vol_of_vol",
+                    status="calm",
+                    score=1,
+                    horizon_days=20,
+                    spy_return=0.05,
+                    qqq_return=0.08,
+                    spy_max_drawdown=-0.02,
+                    qqq_max_drawdown=-0.03,
+                ),
+            ),
+            summary_rows=(
+                MarketSignalOutcomeSummaryRow(
+                    bucket="signal:volatility/vol_of_vol/calm",
+                    horizon_days=20,
+                    signal_count=1,
+                    available_count=1,
+                    avg_spy_return=0.05,
+                    avg_qqq_return=0.08,
+                    avg_spy_max_drawdown=-0.02,
+                    avg_qqq_max_drawdown=-0.03,
+                ),
+            ),
+            table=(
+                "bucket                              horizon\n"
+                "signal:volatility/vol_of_vol/calm  20d"
+            ),
+        )
+
+    signal_root_arg = signal_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_market_signal_outcomes",
+        fake_compute_market_signal_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "signal-outcomes",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--signal-root",
+            str(signal_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20,65",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "market_signal_outcome_count=1" in result.output
+    assert "available_market_signal_outcome_count=1" in result.output
+    assert "signal:volatility/vol_of_vol/calm  20d" in result.output
 
 
 def test_bulltard_validate_outputs_snapshot_and_table(

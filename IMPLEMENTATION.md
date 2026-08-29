@@ -44,10 +44,17 @@ Implemented market-regime foundation:
 - Market regime snapshots using SPY/QQQ trend, SPY volatility/VIX, RSP/IWM participation, and HYG/TLT risk appetite.
 - Market regime outcome replay summaries over saved regime snapshots.
 
+Implemented market-signal expansion:
+
+- Dedicated market-signal snapshots under `data/snapshots/market/signals/`.
+- `regime snapshot` now prints family-level signal rows beside the component table.
+- `^VVIX` is tracked as a volatility / vol-of-vol signal when available.
+- Missing independent signal sources are explicit and reduce headline confidence.
+- `regime signal-outcomes` replays saved market-signal rows against forward SPY/QQQ returns and drawdowns.
+
 Not yet implemented:
 
-- Dedicated market-signal snapshots consumed by regime scoring.
-- VIX term structure, VVIX/vol-of-vol, fear/greed or sentiment/positioning observations.
+- VIX term structure, fear/greed or sentiment/positioning observations.
 - Stronger breadth and liquidity/credit families beyond current ETF proxies.
 - Calibrated regime model and portfolio policy.
 
@@ -74,6 +81,7 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab bulltard refresh-prices --date 2026-08-26 --start 2025-01-01
 ./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
+./bin/marketlab regime signal-outcomes --start 2026-07-31 --end 2026-07-31 --horizons 20
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
 ./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
 ./bin/marketlab bulltard validate --date 2026-08-26
@@ -96,8 +104,8 @@ uv run pytest -q
 | 1. Bulltard Candidate Capture | Complete | Single-name | Capture the daily Bulltard candidate set before signed links expire. | One command produces ranked trades, recap interest, ticker-flow observations, and a candidate table without manual JSONL inspection. Achieved for `2026-08-26`. |
 | 2. Candidate Validation & Outcome MVP | Complete | Single-name | Make the candidate workflow better than the email by adding independent price/liquidity context and measuring forward results. | One daily command can capture candidates, refresh prices, write validation snapshots, and replay forward outcome summaries. |
 | 3. Market Regime Foundation | Complete | Market regime | Create a first deterministic market context from available OHLCV proxies. | Regime snapshots score SPY/QQQ trend, realized volatility/VIX, breadth proxy, credit proxy, and replay buckets against forward SPY/QQQ returns/drawdowns. |
-| 4. Market Signal Expansion | Next | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
-| 5. Regime Calibration & Backtest | Planned | Market regime | Decide whether the expanded regime families actually separate forward risk/reward. | Family scores, composites, transitions, and disagreement states are replayed out of sample with explicit keep/retire decisions. |
+| 4. Market Signal Expansion | Complete | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
+| 5. Regime Calibration & Backtest | Next | Market regime | Decide whether the expanded regime families actually separate forward risk/reward. | Family scores, composites, transitions, and disagreement states are replayed out of sample with explicit keep/retire decisions. |
 | 6. Portfolio Policy MVP | Planned | Portfolio | Convert calibrated regime plus validated opportunities into bounded risk posture. | Daily output states marginal beta/cash posture and candidate watch/active context, with policy evaluated against a fixed benchmark. |
 | 7. Visualization & Reporting MVP | Planned | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
 | 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
@@ -244,7 +252,7 @@ Non-goals for this milestone:
 
 ## Milestone 4 - Market Signal Expansion
 
-Current status: next.
+Current status: complete v0.
 
 Goal: make the market-regime engine richer than simple SPY/QQQ trend by adding independent market signal families that directly affect marginal exposure decisions.
 
@@ -286,9 +294,31 @@ Non-goals for this milestone:
 - No large data warehouse migration.
 - No Bulltard-driven market model.
 
+Completed scope:
+
+- Created the market-signal row model, writer/loader, and compact table formatter.
+- `regime snapshot` writes signal JSONL snapshots and displays family/name/status/score/value/source evidence.
+- Current deterministic regime components are mirrored into signal rows for replayability.
+- Added `^VVIX` as the first independent volatility / vol-of-vol signal where Yahoo data is present.
+- Missing `^VVIX` is shown as `volatility / vol_of_vol / missing` and lowers headline confidence one notch.
+- `regime snapshot` reports positive/negative market-signal contradictions when both sides are present.
+- Added `regime signal-outcomes` to summarize forward SPY/QQQ returns and drawdowns by signal family/name/status.
+
+Completion evidence:
+
+- A no-write `2026-08-28` snapshot produced five market-signal rows and showed missing `^VVIX` explicitly.
+- A temporary `2026-07-31` signal snapshot replayed through `regime signal-outcomes --horizons 20` with family and signal-status buckets.
+- Unit and CLI tests cover market-signal snapshots, VVIX signal rows, missing-source confidence handling, and signal-outcome replay.
+
+Deferred expansion:
+
+- VIX term structure is deferred until the Yahoo `^VIX3M` / `^VIX6M` behavior is reliable enough for daily use.
+- Fear/greed-style sentiment should start as a manual import or stable source-specific importer.
+- Stronger breadth should be added only when we have a practical source for percentage-above-average or new-high/new-low observations.
+
 ## Milestone 5 - Regime Calibration & Backtest
 
-Current status: planned.
+Current status: next.
 
 Goal: decide whether the expanded regime evidence actually improves market exposure decisions.
 
@@ -361,6 +391,8 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `a066a55` - Add VVIX market signal
+- `70b88ec` - Add market signal snapshots
 - `4a8146e` - Handle partial Yahoo daily bars
 - `155c1b5` - Clean up outcome summary tables
 - `20c952f` - Mark market regime milestone complete

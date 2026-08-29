@@ -17,6 +17,7 @@ from marketlab.market_signals import (
     MarketSignal,
     MarketSignalError,
     format_market_signals,
+    load_market_signal_snapshot,
     write_market_signal_snapshot,
 )
 from marketlab.prices import (
@@ -144,6 +145,7 @@ class RegimeSnapshotResult:
     signals: tuple[MarketSignal, ...] = ()
     signal_snapshot_path: Path | None = None
     signal_table: str = ""
+    contradictions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +186,47 @@ class RegimeOutcomeResult:
     end_date: date
     outcomes: tuple[RegimeForwardOutcome, ...]
     summary_rows: tuple[RegimeOutcomeSummaryRow, ...]
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
+class MarketSignalForwardOutcome:
+    """One forward market outcome from one market signal row."""
+
+    source_date: date
+    family: str
+    name: str
+    status: str
+    score: int
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class MarketSignalOutcomeSummaryRow:
+    """Aggregate forward market outcome row for one market signal bucket."""
+
+    bucket: str
+    horizon_days: int
+    signal_count: int
+    available_count: int
+    avg_spy_return: float | None
+    avg_qqq_return: float | None
+    avg_spy_max_drawdown: float | None
+    avg_qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class MarketSignalOutcomeResult:
+    """Result of one market signal outcome replay."""
+
+    start_date: date
+    end_date: date
+    outcomes: tuple[MarketSignalForwardOutcome, ...]
+    summary_rows: tuple[MarketSignalOutcomeSummaryRow, ...]
     table: str
 
 
@@ -318,6 +361,7 @@ def compute_regime_snapshot(
         )
     except MarketSignalError as exc:
         raise RegimeError(str(exc)) from exc
+    contradictions = _market_signal_contradictions(signals)
     table = format_regime_snapshot(snapshot)
     signal_table = format_market_signals(signals)
     logger.bind(
@@ -328,6 +372,7 @@ def compute_regime_snapshot(
         confidence=snapshot.confidence,
         snapshot_path=str(snapshot_path) if snapshot_path else None,
         market_signal_count=len(signals),
+        market_signal_contradiction_count=len(contradictions),
         market_signal_snapshot_path=str(signal_snapshot_path) if signal_snapshot_path else None,
     ).success("Computed market regime snapshot")
     return RegimeSnapshotResult(
@@ -338,6 +383,7 @@ def compute_regime_snapshot(
         signals=signals,
         signal_snapshot_path=signal_snapshot_path,
         signal_table=signal_table,
+        contradictions=contradictions,
     )
 
 
@@ -462,6 +508,18 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
     )
 
 
+def _market_signal_contradictions(signals: tuple[MarketSignal, ...]) -> tuple[str, ...]:
+    positive = tuple(_signal_label(signal) for signal in signals if signal.score > 0)
+    negative = tuple(_signal_label(signal) for signal in signals if signal.score < 0)
+    if not positive or not negative:
+        return ()
+    return (f"positive={','.join(positive)} negative={','.join(negative)}",)
+
+
+def _signal_label(signal: MarketSignal) -> str:
+    return f"{signal.family}/{signal.name}:{signal.status}"
+
+
 def _component_value(snapshot: RegimeSnapshot, component_name: str) -> str:
     if component_name == "trend":
         return (
@@ -532,6 +590,54 @@ def compute_regime_outcomes(
     )
 
 
+def compute_market_signal_outcomes(
+    *,
+    start_date: date,
+    end_date: date,
+    signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+) -> MarketSignalOutcomeResult:
+    """Replay forward SPY/QQQ outcomes for saved market signal rows."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    signals = _load_market_signals_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        signal_snapshot_root=signal_snapshot_root,
+    )
+    if not signals:
+        raise RegimeError(f"No market signal snapshots found from {start_date} to {end_date}")
+
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    outcomes = tuple(
+        outcome
+        for signal in signals
+        for outcome in _market_signal_outcomes(
+            signal=signal,
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    summary_rows = summarize_market_signal_outcomes(outcomes)
+    table = format_market_signal_outcome_summary(summary_rows)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        signal_count=len(signals),
+        outcome_count=len(outcomes),
+    ).success("Computed market signal outcomes")
+    return MarketSignalOutcomeResult(
+        start_date=start_date,
+        end_date=end_date,
+        outcomes=outcomes,
+        summary_rows=summary_rows,
+        table=table,
+    )
+
+
 def summarize_regime_outcomes(
     outcomes: tuple[RegimeForwardOutcome, ...],
 ) -> tuple[RegimeOutcomeSummaryRow, ...]:
@@ -558,6 +664,50 @@ def summarize_regime_outcomes(
                     bucket=bucket,
                     horizon_days=horizon,
                     snapshot_count=len(horizon_outcomes),
+                    available_count=len(available),
+                    avg_spy_return=_average(outcome.spy_return for outcome in available),
+                    avg_qqq_return=_average(outcome.qqq_return for outcome in available),
+                    avg_spy_max_drawdown=_average(
+                        outcome.spy_max_drawdown for outcome in available
+                    ),
+                    avg_qqq_max_drawdown=_average(
+                        outcome.qqq_max_drawdown for outcome in available
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def summarize_market_signal_outcomes(
+    outcomes: tuple[MarketSignalForwardOutcome, ...],
+) -> tuple[MarketSignalOutcomeSummaryRow, ...]:
+    """Summarize forward market outcomes by market signal bucket."""
+
+    buckets: dict[str, list[MarketSignalForwardOutcome]] = {"all": list(outcomes)}
+    for outcome in outcomes:
+        buckets.setdefault(f"family:{outcome.family}", []).append(outcome)
+        buckets.setdefault(
+            f"signal:{outcome.family}/{outcome.name}/{outcome.status}",
+            [],
+        ).append(outcome)
+
+    rows: list[MarketSignalOutcomeSummaryRow] = []
+    for bucket in sorted(buckets):
+        bucket_outcomes = tuple(buckets[bucket])
+        for horizon in sorted({outcome.horizon_days for outcome in bucket_outcomes}):
+            horizon_outcomes = tuple(
+                outcome for outcome in bucket_outcomes if outcome.horizon_days == horizon
+            )
+            available = tuple(
+                outcome
+                for outcome in horizon_outcomes
+                if outcome.spy_return is not None and outcome.qqq_return is not None
+            )
+            rows.append(
+                MarketSignalOutcomeSummaryRow(
+                    bucket=bucket,
+                    horizon_days=horizon,
+                    signal_count=len(horizon_outcomes),
                     available_count=len(available),
                     avg_spy_return=_average(outcome.spy_return for outcome in available),
                     avg_qqq_return=_average(outcome.qqq_return for outcome in available),
@@ -607,6 +757,43 @@ def format_regime_outcome_summary(rows: tuple[RegimeOutcomeSummaryRow, ...]) -> 
     return _format_table(table)
 
 
+def format_market_signal_outcome_summary(
+    rows: tuple[MarketSignalOutcomeSummaryRow, ...],
+) -> str:
+    """Format market signal outcome summaries as a compact table."""
+
+    available_rows = tuple(row for row in rows if row.available_count > 0)
+    if not available_rows:
+        return "No available market signal outcome rows found."
+
+    table = [
+        [
+            "bucket",
+            "horizon",
+            "signals",
+            "available",
+            "avg_spy",
+            "avg_qqq",
+            "spy_dd",
+            "qqq_dd",
+        ]
+    ]
+    for row in available_rows:
+        table.append(
+            [
+                row.bucket,
+                f"{row.horizon_days}d",
+                str(row.signal_count),
+                str(row.available_count),
+                _format_percent(row.avg_spy_return),
+                _format_percent(row.avg_qqq_return),
+                _format_drawdown(row.avg_spy_max_drawdown),
+                _format_drawdown(row.avg_qqq_max_drawdown),
+            ]
+        )
+    return _format_table(table)
+
+
 def _load_histories(
     *,
     symbols: tuple[str, ...],
@@ -640,6 +827,28 @@ def _load_regime_snapshots_in_range(
     return tuple(snapshots)
 
 
+def _load_market_signals_in_range(
+    *,
+    start_date: date,
+    end_date: date,
+    signal_snapshot_root: Path,
+) -> tuple[MarketSignal, ...]:
+    signals: list[MarketSignal] = []
+    for path in sorted(signal_snapshot_root.glob("*.jsonl")):
+        try:
+            source_date = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if start_date <= source_date <= end_date:
+            signals.extend(
+                load_market_signal_snapshot(
+                    source_date=source_date,
+                    snapshot_root=signal_snapshot_root,
+                )
+            )
+    return tuple(signals)
+
+
 def _regime_snapshot_outcomes(
     *,
     snapshot: RegimeSnapshot,
@@ -657,6 +866,33 @@ def _regime_snapshot_outcomes(
             regime=snapshot.regime,
             score=snapshot.score,
             confidence=snapshot.confidence,
+            horizon_days=horizon,
+            spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+            qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+            spy_max_drawdown=_forward_max_drawdown(spy_history, index=spy_index, horizon=horizon),
+            qqq_max_drawdown=_forward_max_drawdown(qqq_history, index=qqq_index, horizon=horizon),
+        )
+        for horizon in horizons
+    )
+
+
+def _market_signal_outcomes(
+    *,
+    signal: MarketSignal,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[MarketSignalForwardOutcome, ...]:
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _asof_index(spy_history, signal.source_date)
+    qqq_index = _asof_index(qqq_history, signal.source_date)
+    return tuple(
+        MarketSignalForwardOutcome(
+            source_date=signal.source_date,
+            family=signal.family,
+            name=signal.name,
+            status=signal.status,
+            score=signal.score,
             horizon_days=horizon,
             spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
             qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
