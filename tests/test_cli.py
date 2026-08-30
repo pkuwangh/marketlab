@@ -29,7 +29,7 @@ from marketlab.bulltard.validation import (
     CandidateValidationSnapshot,
     CandidateValidationSummary,
 )
-from marketlab.cli import app, bulltard_app, market_series_app, prices_app, regime_app
+from marketlab.cli import app, bulltard_app, market_series_app, prices_app, regime_app, store_app
 from marketlab.market_series import MarketSeriesFetchResult
 from marketlab.market_signals import MarketSignal
 from marketlab.prices import PriceFetchResult
@@ -65,6 +65,7 @@ def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert prices_app.info.no_args_is_help is True
     assert market_series_app.info.no_args_is_help is True
     assert regime_app.info.no_args_is_help is True
+    assert store_app.info.no_args_is_help is True
 
 
 def test_typer_no_args_shows_help_without_traceback() -> None:
@@ -110,6 +111,15 @@ def test_regime_no_args_shows_help_without_traceback() -> None:
     assert result.exit_code != 0
     assert "Market regime utilities." in result.output
     assert "snapshot" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_store_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["store"])
+
+    assert result.exit_code != 0
+    assert "Local research store utilities." in result.output
+    assert "refresh" in result.output
     assert "Traceback" not in result.output
 
 
@@ -209,6 +219,25 @@ def test_regime_pressure_outcomes_no_args_shows_help_without_missing_option_erro
     assert "--start" in result.output
     assert "--end" in result.output
     assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_store_refresh_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["store", "refresh"])
+
+    assert result.exit_code != 0
+    assert "Refresh the local DuckDB research store" in result.output
+    assert "--db" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_store_query_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["store", "query"])
+
+    assert result.exit_code != 0
+    assert "Run a read-only SQL query" in result.output
+    assert "SQL" in result.output
+    assert "Missing argument" not in result.output
     assert "Traceback" not in result.output
 
 

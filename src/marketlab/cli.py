@@ -80,6 +80,16 @@ from marketlab.regime import (
     compute_regime_snapshot,
     refresh_regime_prices,
 )
+from marketlab.store import (
+    DEFAULT_RESEARCH_DB_PATH,
+    ResearchStoreError,
+    StoreRefreshResult,
+    format_query_result,
+    format_store_refresh_result,
+    query_research_store,
+    refresh_research_store,
+    summarize_research_store,
+)
 
 
 class LogLevel(StrEnum):
@@ -112,10 +122,15 @@ regime_app = typer.Typer(
     help="Market regime utilities.",
     no_args_is_help=True,
 )
+store_app = typer.Typer(
+    help="Local research store utilities.",
+    no_args_is_help=True,
+)
 app.add_typer(bulltard_app, name="bulltard")
 app.add_typer(prices_app, name="prices")
 app.add_typer(market_series_app, name="market-series")
 app.add_typer(regime_app, name="regime")
+app.add_typer(store_app, name="store")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
 DEFAULT_OUTCOME_HORIZONS_VALUE = "1,5,20,40,65,126"
@@ -823,6 +838,119 @@ def regime_pressure_outcomes(
         raise typer.BadParameter(str(exc)) from exc
 
     _echo_regime_pressure_outcome_result(result)
+
+
+@store_app.command("refresh", no_args_is_help=True)
+def store_refresh(
+    db_path: Path = typer.Option(
+        DEFAULT_RESEARCH_DB_PATH,
+        "--db",
+        dir_okay=False,
+        help="DuckDB file to rebuild from local observations and snapshots.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    market_series_root: Path = typer.Option(
+        DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+        "--market-series-root",
+        file_okay=False,
+        help="Root directory containing scalar market series observations.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    market_signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
+    candidate_snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--candidate-root",
+        file_okay=False,
+        help="Root directory containing Bulltard candidate snapshots.",
+    ),
+    parquet_root: Path | None = typer.Option(
+        None,
+        "--parquet-root",
+        file_okay=False,
+        help="Optional directory for Parquet exports of each rebuilt table.",
+    ),
+) -> None:
+    """Refresh the local DuckDB research store from saved files."""
+
+    try:
+        result = refresh_research_store(
+            db_path=db_path,
+            price_root=price_root,
+            market_series_root=market_series_root,
+            regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
+            candidate_snapshot_root=candidate_snapshot_root,
+            parquet_root=parquet_root,
+        )
+    except ResearchStoreError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_store_refresh_result(result)
+
+
+@store_app.command("tables", no_args_is_help=True)
+def store_tables(
+    db_path: Path = typer.Option(
+        DEFAULT_RESEARCH_DB_PATH,
+        "--db",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="DuckDB file to inspect.",
+    ),
+) -> None:
+    """Show row counts for local research store tables."""
+
+    try:
+        result = summarize_research_store(db_path=db_path)
+    except ResearchStoreError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(format_query_result(result))
+
+
+@store_app.command("query", no_args_is_help=True)
+def store_query(
+    sql: str = typer.Argument(
+        ...,
+        help="SQL query to run against the local DuckDB research store.",
+    ),
+    db_path: Path = typer.Option(
+        DEFAULT_RESEARCH_DB_PATH,
+        "--db",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="DuckDB file to query.",
+    ),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        min=1,
+        help="Maximum rows to print.",
+    ),
+) -> None:
+    """Run a read-only SQL query against the local research store."""
+
+    try:
+        result = query_research_store(query=sql, db_path=db_path)
+    except ResearchStoreError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(format_query_result(result, limit=limit))
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
@@ -1664,6 +1792,13 @@ def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) ->
     )
     typer.echo("")
     typer.echo(result.table)
+
+
+def _echo_store_refresh_result(result: StoreRefreshResult) -> None:
+    typer.echo(f"research_db_path={result.db_path}")
+    typer.echo(f"research_store_schema={result.schema_version}")
+    typer.echo("")
+    typer.echo(format_store_refresh_result(result))
 
 
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:
