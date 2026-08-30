@@ -13,6 +13,7 @@ from loguru import logger
 from marketlab.bulltard.validation import DEFAULT_CANDIDATE_SNAPSHOT_ROOT
 from marketlab.market_series import DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT
 from marketlab.market_signals import DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT
+from marketlab.policy import DEFAULT_POLICY_SNAPSHOT_ROOT
 from marketlab.prices import DEFAULT_PRICE_OBSERVATIONS_ROOT
 from marketlab.regime import DEFAULT_REGIME_SNAPSHOT_ROOT
 
@@ -58,6 +59,7 @@ def refresh_research_store(
     regime_snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
     market_signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+    policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
     parquet_root: Path | None = None,
 ) -> StoreRefreshResult:
     """Rebuild queryable DuckDB tables from local snapshot and observation files."""
@@ -74,6 +76,7 @@ def refresh_research_store(
         regime_snapshot_root=str(regime_snapshot_root),
         market_signal_snapshot_root=str(market_signal_snapshot_root),
         candidate_snapshot_root=str(candidate_snapshot_root),
+        policy_snapshot_root=str(policy_snapshot_root),
         parquet_root=str(parquet_root) if parquet_root else None,
     ).info("Refreshing local research store")
 
@@ -110,6 +113,16 @@ def refresh_research_store(
             _refresh_candidate_snapshots(
                 connection,
                 root=candidate_snapshot_root,
+                parquet_root=parquet_root,
+            ),
+            _refresh_policy_snapshots(
+                connection,
+                root=policy_snapshot_root,
+                parquet_root=parquet_root,
+            ),
+            _refresh_policy_candidates(
+                connection,
+                root=policy_snapshot_root,
                 parquet_root=parquet_root,
             ),
         )
@@ -571,6 +584,122 @@ def _refresh_candidate_snapshots(
         table_name="candidate_snapshots",
         schema=schema,
         rows=rows,
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_policy_snapshots(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("source_date", "DATE"),
+        ("policy_version", "VARCHAR"),
+        ("regime", "VARCHAR"),
+        ("regime_score", "INTEGER"),
+        ("regime_confidence", "VARCHAR"),
+        ("regime_price_date", "DATE"),
+        ("regime_action_state", "VARCHAR"),
+        ("regime_action_confidence", "VARCHAR"),
+        ("policy_state", "VARCHAR"),
+        ("policy_confidence", "VARCHAR"),
+        ("marginal_beta_target", "DOUBLE"),
+        ("marginal_beta_range", "VARCHAR"),
+        ("cash_posture", "VARCHAR"),
+        ("long_delta_stance", "VARCHAR"),
+        ("overlay_stance", "VARCHAR"),
+        ("put_underwriting_stance", "VARCHAR"),
+        ("single_name_risk_budget", "VARCHAR"),
+        ("candidate_count", "INTEGER"),
+        ("confirm_candidate_count", "INTEGER"),
+        ("watch_candidate_count", "INTEGER"),
+        ("avoid_candidate_count", "INTEGER"),
+        ("stretch_pressure_score", "DOUBLE"),
+        ("washout_pressure_score", "DOUBLE"),
+        ("benchmark_proxy", "VARCHAR"),
+    )
+    rows = tuple(
+        (
+            _optional_date(row.get("source_date")),
+            _optional_str(row.get("policy_version")),
+            _optional_str(row.get("regime")),
+            _optional_int(row.get("regime_score")),
+            _optional_str(row.get("regime_confidence")),
+            _optional_date(row.get("regime_price_date")),
+            _optional_str(row.get("regime_action_state")),
+            _optional_str(row.get("regime_action_confidence")),
+            _optional_str(row.get("policy_state")),
+            _optional_str(row.get("policy_confidence")),
+            _optional_float(row.get("marginal_beta_target")),
+            _optional_str(row.get("marginal_beta_range")),
+            _optional_str(row.get("cash_posture")),
+            _optional_str(row.get("long_delta_stance")),
+            _optional_str(row.get("overlay_stance")),
+            _optional_str(row.get("put_underwriting_stance")),
+            _optional_str(row.get("single_name_risk_budget")),
+            _optional_int(row.get("candidate_count")),
+            _optional_int(row.get("confirm_candidate_count")),
+            _optional_int(row.get("watch_candidate_count")),
+            _optional_int(row.get("avoid_candidate_count")),
+            _optional_float(row.get("stretch_pressure_score")),
+            _optional_float(row.get("washout_pressure_score")),
+            _optional_str(row.get("benchmark_proxy")),
+        )
+        for row in _read_json_files(root)
+    )
+    return _replace_table(
+        connection,
+        table_name="policy_snapshots",
+        schema=schema,
+        rows=rows,
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_policy_candidates(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("source_date", "DATE"),
+        ("symbol", "VARCHAR"),
+        ("validation_status", "VARCHAR"),
+        ("bulltard_source", "VARCHAR"),
+        ("interest_rank", "INTEGER"),
+        ("detail_rows", "INTEGER"),
+        ("close", "DOUBLE"),
+        ("return_20d", "DOUBLE"),
+        ("relative_strength_20d_spy", "DOUBLE"),
+        ("posture", "VARCHAR"),
+        ("reason", "VARCHAR"),
+    )
+    rows = []
+    for row in _read_json_files(root):
+        for candidate in row.get("candidate_highlights", ()):
+            rows.append(
+                (
+                    _optional_date(candidate.get("source_date")),
+                    _optional_str(candidate.get("symbol")),
+                    _optional_str(candidate.get("validation_status")),
+                    _optional_str(candidate.get("bulltard_source")),
+                    _optional_int(candidate.get("interest_rank")),
+                    _optional_int(candidate.get("detail_rows")),
+                    _optional_float(candidate.get("close")),
+                    _optional_float(candidate.get("return_20d")),
+                    _optional_float(candidate.get("relative_strength_20d_spy")),
+                    _optional_str(candidate.get("posture")),
+                    _optional_str(candidate.get("reason")),
+                )
+            )
+    return _replace_table(
+        connection,
+        table_name="policy_candidates",
+        schema=schema,
+        rows=tuple(rows),
         parquet_root=parquet_root,
     )
 

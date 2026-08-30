@@ -29,7 +29,16 @@ from marketlab.bulltard.validation import (
     CandidateValidationSnapshot,
     CandidateValidationSummary,
 )
-from marketlab.cli import app, bulltard_app, market_series_app, prices_app, regime_app, store_app
+from marketlab.cli import (
+    app,
+    bulltard_app,
+    market_series_app,
+    policy_app,
+    prices_app,
+    regime_app,
+    report_app,
+    store_app,
+)
 from marketlab.market_series import MarketSeriesFetchResult
 from marketlab.market_signals import MarketSignal
 from marketlab.prices import PriceFetchResult
@@ -66,6 +75,8 @@ def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert market_series_app.info.no_args_is_help is True
     assert regime_app.info.no_args_is_help is True
     assert store_app.info.no_args_is_help is True
+    assert policy_app.info.no_args_is_help is True
+    assert report_app.info.no_args_is_help is True
 
 
 def test_typer_no_args_shows_help_without_traceback() -> None:
@@ -120,6 +131,25 @@ def test_store_no_args_shows_help_without_traceback() -> None:
     assert result.exit_code != 0
     assert "Local research store utilities." in result.output
     assert "refresh" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_policy_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["policy"])
+
+    assert result.exit_code != 0
+    assert "Portfolio policy utilities." in result.output
+    assert "snapshot" in result.output
+    assert "outcomes" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_report_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["report"])
+
+    assert result.exit_code != 0
+    assert "Human-readable research reports." in result.output
+    assert "daily" in result.output
     assert "Traceback" not in result.output
 
 
@@ -238,6 +268,48 @@ def test_store_query_no_args_shows_help_without_missing_argument_error() -> None
     assert "Run a read-only SQL query" in result.output
     assert "SQL" in result.output
     assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_policy_snapshot_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["policy", "snapshot"])
+
+    assert result.exit_code != 0
+    assert "Compute a portfolio policy snapshot" in result.output
+    assert "--date" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_policy_backfill_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["policy", "backfill"])
+
+    assert result.exit_code != 0
+    assert "Backfill portfolio policy snapshots" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_policy_outcomes_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["policy", "outcomes"])
+
+    assert result.exit_code != 0
+    assert "Replay portfolio policy snapshots" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_report_daily_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["report", "daily"])
+
+    assert result.exit_code != 0
+    assert "Render the daily market regime and portfolio policy report" in result.output
+    assert "--date" in result.output
+    assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 

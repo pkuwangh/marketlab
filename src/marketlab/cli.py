@@ -55,6 +55,18 @@ from marketlab.market_series import (
     fetch_and_write_fred_series,
 )
 from marketlab.market_signals import DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT
+from marketlab.policy import (
+    DEFAULT_POLICY_SNAPSHOT_ROOT,
+    DailyPolicyReportResult,
+    PortfolioPolicyBackfillResult,
+    PortfolioPolicyError,
+    PortfolioPolicyOutcomeResult,
+    PortfolioPolicySnapshotResult,
+    compute_daily_policy_report,
+    compute_portfolio_policy_backfill,
+    compute_portfolio_policy_outcomes,
+    compute_portfolio_policy_snapshot,
+)
 from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
     PriceDataError,
@@ -126,11 +138,21 @@ store_app = typer.Typer(
     help="Local research store utilities.",
     no_args_is_help=True,
 )
+policy_app = typer.Typer(
+    help="Portfolio policy utilities.",
+    no_args_is_help=True,
+)
+report_app = typer.Typer(
+    help="Human-readable research reports.",
+    no_args_is_help=True,
+)
 app.add_typer(bulltard_app, name="bulltard")
 app.add_typer(prices_app, name="prices")
 app.add_typer(market_series_app, name="market-series")
 app.add_typer(regime_app, name="regime")
 app.add_typer(store_app, name="store")
+app.add_typer(policy_app, name="policy")
+app.add_typer(report_app, name="report")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
 DEFAULT_OUTCOME_HORIZONS_VALUE = "1,5,20,40,65,126"
@@ -878,6 +900,12 @@ def store_refresh(
         file_okay=False,
         help="Root directory containing Bulltard candidate snapshots.",
     ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory containing portfolio policy snapshots.",
+    ),
     parquet_root: Path | None = typer.Option(
         None,
         "--parquet-root",
@@ -895,6 +923,7 @@ def store_refresh(
             regime_snapshot_root=regime_snapshot_root,
             market_signal_snapshot_root=market_signal_snapshot_root,
             candidate_snapshot_root=candidate_snapshot_root,
+            policy_snapshot_root=policy_snapshot_root,
             parquet_root=parquet_root,
         )
     except ResearchStoreError as exc:
@@ -951,6 +980,218 @@ def store_query(
     except ResearchStoreError as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(format_query_result(result, limit=limit))
+
+
+@policy_app.command("snapshot", no_args_is_help=True)
+def policy_snapshot(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Portfolio policy date to compute.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    candidate_snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--candidate-root",
+        file_okay=False,
+        help="Root directory containing Bulltard candidate snapshots.",
+    ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory for portfolio policy snapshots.",
+    ),
+    write_snapshot: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write the portfolio policy snapshot.",
+    ),
+) -> None:
+    """Compute a portfolio policy snapshot."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = compute_portfolio_policy_snapshot(
+            source_date=source_date,
+            regime_snapshot_root=regime_snapshot_root,
+            candidate_snapshot_root=candidate_snapshot_root,
+            policy_snapshot_root=policy_snapshot_root,
+            write_snapshot=write_snapshot,
+        )
+    except PortfolioPolicyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_policy_snapshot_result(result)
+
+
+@policy_app.command("backfill", no_args_is_help=True)
+def policy_backfill(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First policy snapshot date to compute.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last policy snapshot date to compute.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    candidate_snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--candidate-root",
+        file_okay=False,
+        help="Root directory containing Bulltard candidate snapshots.",
+    ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory for portfolio policy snapshots.",
+    ),
+    write_snapshot: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write portfolio policy snapshots.",
+    ),
+) -> None:
+    """Backfill portfolio policy snapshots from saved regime snapshots."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        result = compute_portfolio_policy_backfill(
+            start_date=start_date,
+            end_date=end_date,
+            regime_snapshot_root=regime_snapshot_root,
+            candidate_snapshot_root=candidate_snapshot_root,
+            policy_snapshot_root=policy_snapshot_root,
+            write_snapshot=write_snapshot,
+        )
+    except PortfolioPolicyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_policy_backfill_result(result)
+
+
+@policy_app.command("outcomes", no_args_is_help=True)
+def policy_outcomes(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First policy snapshot date to replay.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last policy snapshot date to replay.",
+    ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory containing portfolio policy snapshots.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    horizons_value: str = typer.Option(
+        DEFAULT_OUTCOME_HORIZONS_VALUE,
+        "--horizons",
+        help="Comma-separated forward trading-day horizons.",
+    ),
+) -> None:
+    """Replay portfolio policy snapshots against a fixed benchmark."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        result = compute_portfolio_policy_outcomes(
+            start_date=start_date,
+            end_date=end_date,
+            policy_snapshot_root=policy_snapshot_root,
+            price_root=price_root,
+            horizons=_parse_horizons(horizons_value),
+        )
+    except PortfolioPolicyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_policy_outcome_result(result)
+
+
+@report_app.command("daily", no_args_is_help=True)
+def report_daily(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Daily report date.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    market_signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
+    candidate_snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--candidate-root",
+        file_okay=False,
+        help="Root directory containing Bulltard candidate snapshots.",
+    ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory for portfolio policy snapshots.",
+    ),
+    write_snapshot: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write the portfolio policy snapshot used by the report.",
+    ),
+) -> None:
+    """Render the daily market regime and portfolio policy report."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = compute_daily_policy_report(
+            source_date=source_date,
+            regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
+            candidate_snapshot_root=candidate_snapshot_root,
+            policy_snapshot_root=policy_snapshot_root,
+            write_snapshot=write_snapshot,
+        )
+    except PortfolioPolicyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_daily_policy_report_result(result)
 
 
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
@@ -1801,6 +2042,60 @@ def _echo_store_refresh_result(result: StoreRefreshResult) -> None:
     typer.echo(format_store_refresh_result(result))
 
 
+def _echo_policy_snapshot_result(result: PortfolioPolicySnapshotResult) -> None:
+    if result.snapshot_path is not None:
+        typer.echo(f"policy_snapshot_path={result.snapshot_path}")
+    snapshot = result.snapshot
+    typer.echo(f"policy_date={snapshot.source_date.isoformat()}")
+    typer.echo(f"policy_state={snapshot.policy_state}")
+    typer.echo(f"policy_confidence={snapshot.policy_confidence}")
+    typer.echo(f"marginal_beta_target={snapshot.marginal_beta_target:.2f}")
+    typer.echo(f"regime={snapshot.regime}")
+    typer.echo(f"regime_action_state={snapshot.regime_action_state}")
+    typer.echo(f"candidate_count={snapshot.candidate_count}")
+    typer.echo(f"confirm_candidate_count={snapshot.confirm_candidate_count}")
+    typer.echo("")
+    typer.echo(result.table)
+
+
+def _echo_policy_backfill_result(result: PortfolioPolicyBackfillResult) -> None:
+    typer.echo(f"policy_backfill_start={result.start_date.isoformat()}")
+    typer.echo(f"policy_backfill_end={result.end_date.isoformat()}")
+    typer.echo(f"policy_backfill_date_count={len(result.source_dates)}")
+    typer.echo(
+        "policy_backfill_first_date="
+        f"{result.source_dates[0].isoformat() if result.source_dates else ''}"
+    )
+    typer.echo(
+        "policy_backfill_last_date="
+        f"{result.source_dates[-1].isoformat() if result.source_dates else ''}"
+    )
+    typer.echo(f"policy_snapshot_count={len(result.snapshot_paths)}")
+    if result.snapshot_paths:
+        typer.echo(f"first_policy_snapshot_path={result.snapshot_paths[0]}")
+        typer.echo(f"last_policy_snapshot_path={result.snapshot_paths[-1]}")
+
+
+def _echo_policy_outcome_result(result: PortfolioPolicyOutcomeResult) -> None:
+    typer.echo(f"portfolio_policy_count={len(result.policies)}")
+    typer.echo(f"portfolio_policy_outcome_count={len(result.outcomes)}")
+    typer.echo(
+        "available_portfolio_policy_outcome_count="
+        f"{_available_policy_outcome_count(result)}"
+    )
+    typer.echo("")
+    typer.echo(result.frequency_table)
+    typer.echo("")
+    typer.echo(result.table)
+
+
+def _echo_daily_policy_report_result(result: DailyPolicyReportResult) -> None:
+    if result.policy_snapshot_path is not None:
+        typer.echo(f"policy_snapshot_path={result.policy_snapshot_path}")
+        typer.echo("")
+    typer.echo(result.report)
+
+
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:
     typer.echo(f"market_signal_outcome_count={len(result.outcomes)}")
     typer.echo(
@@ -1844,6 +2139,10 @@ def _available_market_signal_outcome_count(result: MarketSignalOutcomeResult) ->
         for outcome in result.outcomes
         if outcome.spy_return is not None and outcome.qqq_return is not None
     )
+
+
+def _available_policy_outcome_count(result: PortfolioPolicyOutcomeResult) -> int:
+    return sum(1 for outcome in result.outcomes if outcome.benchmark_return is not None)
 
 
 def _format_validation_summary(
