@@ -46,6 +46,11 @@ from marketlab.bulltard.validation import (
     CandidateValidationSummary,
     validate_bulltard_candidates,
 )
+from marketlab.charts import (
+    ChartError,
+    RegimeChartResult,
+    render_regime_chart,
+)
 from marketlab.logging import configure_logging
 from marketlab.market_series import (
     DEFAULT_FRED_MARKET_SERIES_IDS,
@@ -146,6 +151,10 @@ report_app = typer.Typer(
     help="Human-readable research reports.",
     no_args_is_help=True,
 )
+chart_app = typer.Typer(
+    help="Reproducible chart utilities.",
+    no_args_is_help=True,
+)
 app.add_typer(bulltard_app, name="bulltard")
 app.add_typer(prices_app, name="prices")
 app.add_typer(market_series_app, name="market-series")
@@ -153,6 +162,7 @@ app.add_typer(regime_app, name="regime")
 app.add_typer(store_app, name="store")
 app.add_typer(policy_app, name="policy")
 app.add_typer(report_app, name="report")
+app.add_typer(chart_app, name="chart")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
 DEFAULT_OUTCOME_HORIZONS_VALUE = "1,5,20,40,65,126"
@@ -1194,6 +1204,76 @@ def report_daily(
     _echo_daily_policy_report_result(result)
 
 
+@chart_app.command("regime", no_args_is_help=True)
+def chart_regime(
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First chart date.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last chart date.",
+    ),
+    symbol: str = typer.Option(
+        "SPY",
+        "--symbol",
+        help="Primary index or ETF price series.",
+    ),
+    comparison_symbol: str | None = typer.Option(
+        "QQQ",
+        "--compare",
+        help="Optional comparison index or ETF price series.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots.",
+    ),
+    market_signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output",
+        dir_okay=False,
+        help="HTML chart path. Defaults to reports/regime-START-END.html.",
+    ),
+) -> None:
+    """Render a reproducible market regime chart."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        result = render_regime_chart(
+            start_date=start_date,
+            end_date=end_date,
+            symbol=symbol,
+            comparison_symbol=comparison_symbol,
+            price_root=price_root,
+            regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
+            output_path=output_path,
+        )
+    except ChartError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_regime_chart_result(result)
+
+
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
 def inspect_recap(
     recap_path: Path = typer.Argument(
@@ -2093,6 +2173,17 @@ def _echo_daily_policy_report_result(result: DailyPolicyReportResult) -> None:
         typer.echo(f"policy_snapshot_path={result.policy_snapshot_path}")
         typer.echo("")
     typer.echo(result.report)
+
+
+def _echo_regime_chart_result(result: RegimeChartResult) -> None:
+    typer.echo(f"chart_path={result.output_path}")
+    typer.echo(f"chart_version={result.chart_version}")
+    typer.echo(f"chart_start={result.start_date.isoformat()}")
+    typer.echo(f"chart_end={result.end_date.isoformat()}")
+    typer.echo(f"chart_price_symbols={','.join(result.price_symbols)}")
+    typer.echo(f"chart_price_point_count={result.price_point_count}")
+    typer.echo(f"regime_snapshot_count={result.regime_snapshot_count}")
+    typer.echo(f"market_signal_count={result.market_signal_count}")
 
 
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:

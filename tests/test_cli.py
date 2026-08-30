@@ -29,9 +29,11 @@ from marketlab.bulltard.validation import (
     CandidateValidationSnapshot,
     CandidateValidationSummary,
 )
+from marketlab.charts import RegimeChartResult
 from marketlab.cli import (
     app,
     bulltard_app,
+    chart_app,
     market_series_app,
     policy_app,
     prices_app,
@@ -78,6 +80,7 @@ def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert store_app.info.no_args_is_help is True
     assert policy_app.info.no_args_is_help is True
     assert report_app.info.no_args_is_help is True
+    assert chart_app.info.no_args_is_help is True
 
 
 def test_typer_no_args_shows_help_without_traceback() -> None:
@@ -151,6 +154,15 @@ def test_report_no_args_shows_help_without_traceback() -> None:
     assert result.exit_code != 0
     assert "Human-readable research reports." in result.output
     assert "daily" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_chart_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["chart"])
+
+    assert result.exit_code != 0
+    assert "Reproducible chart utilities." in result.output
+    assert "regime" in result.output
     assert "Traceback" not in result.output
 
 
@@ -322,6 +334,90 @@ def test_report_daily_no_args_shows_help_without_missing_option_error() -> None:
     assert "--date" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
+
+
+def test_chart_regime_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["chart", "regime"])
+
+    assert result.exit_code != 0
+    assert "Render a reproducible market regime chart" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_chart_regime_outputs_chart_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_root = tmp_path / "prices"
+    regime_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    output_path = tmp_path / "reports" / "regime.html"
+
+    def fake_render_regime_chart(
+        *,
+        start_date: date,
+        end_date: date,
+        symbol: str,
+        comparison_symbol: str | None,
+        price_root: Path,
+        regime_snapshot_root: Path,
+        market_signal_snapshot_root: Path,
+        output_path: Path | None,
+    ) -> RegimeChartResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert symbol == "SPY"
+        assert comparison_symbol == "QQQ"
+        assert price_root == price_root_arg
+        assert regime_snapshot_root == regime_root_arg
+        assert market_signal_snapshot_root == signal_root_arg
+        assert output_path == output_path_arg
+        return RegimeChartResult(
+            start_date=start_date,
+            end_date=end_date,
+            output_path=output_path_arg,
+            price_symbols=("SPY", "QQQ"),
+            price_point_count=420,
+            regime_snapshot_count=20,
+            market_signal_count=160,
+        )
+
+    price_root_arg = price_root
+    regime_root_arg = regime_root
+    signal_root_arg = signal_root
+    output_path_arg = output_path
+    monkeypatch.setattr("marketlab.cli.render_regime_chart", fake_render_regime_chart)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "chart",
+            "regime",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--price-root",
+            str(price_root),
+            "--regime-root",
+            str(regime_root),
+            "--signal-root",
+            str(signal_root),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"chart_path={output_path}" in result.output
+    assert "chart_version=regime_chart_v0" in result.output
+    assert "chart_price_symbols=SPY,QQQ" in result.output
+    assert "chart_price_point_count=420" in result.output
+    assert "regime_snapshot_count=20" in result.output
+    assert "market_signal_count=160" in result.output
 
 
 def test_prices_import_csv_no_args_shows_help_without_missing_argument_error() -> None:

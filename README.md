@@ -32,6 +32,7 @@ Implemented:
 - Portfolio policy snapshots that map regime action states into bounded marginal beta, cash, overlay, and single-name risk posture.
 - Daily policy reports that combine regime state, market signals, policy posture, and Bulltard candidate context.
 - Local DuckDB research store refresh from JSON/JSONL source observations, with optional Parquet exports.
+- Self-contained HTML/SVG regime chart generation from saved price, regime, and market-signal snapshots.
 
 ## Development
 
@@ -204,6 +205,18 @@ The v0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only m
 - `maintain`: target roughly neutral tactical beta and make no forced change.
 - `protect`: reduce marginal beta, preserve or raise cash, and consider covered calls.
 - `redeploy`: add exposure in tranches after washout conditions, including possible 60-90 DTE calls/call spreads or bounded put underwriting.
+
+## Visualization
+
+Generate a reproducible regime chart from saved snapshots:
+
+```bash
+./bin/marketlab chart regime --start 2026-08-28 --end 2026-08-28
+```
+
+By default this writes `reports/regime-START-END.html`. The first chart shows indexed SPY/QQQ
+price, regime action-state shading, stretch/washout pressure, component scores, market-signal
+family scores, and the latest market-signal table.
 
 ## Local Research Store
 

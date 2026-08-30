@@ -114,6 +114,7 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab regime pressure-outcomes --start 2026-08-01 --end 2026-08-28 --horizons 20,40,65
 ./bin/marketlab policy snapshot --date 2026-08-28
 ./bin/marketlab report daily --date 2026-08-28
+./bin/marketlab chart regime --start 2026-08-28 --end 2026-08-28
 ./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
 ./bin/marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 ./bin/marketlab store refresh
@@ -144,7 +145,7 @@ uv run pytest -q
 | 4. Market Signal Expansion | Complete | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
 | 5. Regime Calibration & Backtest | Complete v2 backfill tooling | Market regime | Decide whether the expanded regime families identify rare stretched/de-risk and bloodbath/re-risk zones with useful forward risk/reward separation. | Backfill, action states, normalized pressure scores, and replay tables exist; long-history calibration still needed before policy. |
 | 6. Portfolio Policy MVP | Complete v0 | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context, engine-interaction logic, and fixed-benchmark evaluation. |
-| 7. Visualization & Reporting MVP | Next | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
+| 7. Visualization & Reporting MVP | Started | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
 | 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
 
 ## Milestone 1 - Bulltard Candidate Capture
@@ -520,14 +521,24 @@ Known limitations:
 
 ## Milestone 7 - Visualization & Reporting MVP
 
+Current status: started with the first reproducible regime chart.
+
 Goal: make the research loop easy to inspect without turning the project into a dashboard-first build.
 
 Scope:
 
-- Generate the first regime chart from reproducible CLI inputs.
+- Generate the first regime chart from reproducible CLI inputs. Started with `chart regime`, which writes a self-contained HTML/SVG chart from saved price, regime, and market-signal snapshots.
 - Generate the first single-name opportunity chart with Bulltard event markers.
 - Keep notebooks exploratory; make important charts reproducible from commands.
 - Include forward evaluation layers only when clearly separated from point-in-time inputs.
+
+First useful M7 output:
+
+```bash
+./bin/marketlab chart regime --start 2026-08-28 --end 2026-08-28
+```
+
+The default output path is `reports/regime-START-END.html`.
 
 ## Milestone 8 - Evidence Expansion & Agents
 
