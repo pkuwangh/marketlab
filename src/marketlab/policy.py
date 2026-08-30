@@ -1000,9 +1000,7 @@ def _policy_forward_outcomes(
         benchmark_return = _basket_value(spy_return, qqq_return)
         benchmark_drawdown = _basket_value(spy_drawdown, qqq_drawdown)
         policy_return = (
-            benchmark_return * policy.marginal_beta_target
-            if benchmark_return is not None
-            else None
+            benchmark_return * policy.marginal_beta_target if benchmark_return is not None else None
         )
         policy_drawdown = (
             benchmark_drawdown * policy.marginal_beta_target

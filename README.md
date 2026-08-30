@@ -8,7 +8,7 @@ See `IMPLEMENTATION.md` for milestone status and the next research deliverables.
 
 ## Current Baseline
 
-Milestones 1 through 3 are complete: the repo can capture the daily Bulltard candidate set, refresh independent price history, validate candidates, compute market regime, and replay forward outcomes.
+Milestones 1 through 6 are complete at v0 depth: the repo can capture the daily Bulltard candidate set, refresh independent price history, validate candidates, compute market regime, derive bounded portfolio policy, refresh a local DuckDB research store, and replay forward outcomes.
 
 Implemented:
 
@@ -27,6 +27,11 @@ Implemented:
 - Bulltard outcome replay summaries from saved validation snapshots.
 - Market regime snapshots from SPY/QQQ trend, SPY volatility/VIX, RSP/IWM participation, and HYG/TLT risk appetite.
 - Market regime outcome replay summaries against forward SPY/QQQ returns and drawdowns.
+- Expanded market-signal snapshots including VVIX and FRED-backed credit/liquidity/rates rows when available.
+- Normalized stretch/washout pressure scores and rare action states.
+- Portfolio policy snapshots that map regime action states into bounded marginal beta, cash, overlay, and single-name risk posture.
+- Daily policy reports that combine regime state, market signals, policy posture, and Bulltard candidate context.
+- Local DuckDB research store refresh from JSON/JSONL source observations, with optional Parquet exports.
 
 ## Development
 
@@ -156,6 +161,69 @@ Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
 
 ```bash
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
+```
+
+Backfill market-regime and market-signal snapshots over local price dates:
+
+```bash
+./bin/marketlab regime backfill \
+  --start 2025-01-02 \
+  --end 2026-08-28
+```
+
+Replay rare action states or normalized pressure buckets:
+
+```bash
+./bin/marketlab regime action-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+./bin/marketlab regime pressure-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+```
+
+## Portfolio Policy
+
+Create a policy snapshot from a saved regime snapshot and any saved Bulltard candidate validation snapshot:
+
+```bash
+./bin/marketlab policy snapshot --date 2026-08-28
+```
+
+Render the daily human-facing report:
+
+```bash
+./bin/marketlab report daily --date 2026-08-28
+```
+
+Backfill and replay policy snapshots against the fixed v0 benchmark proxy:
+
+```bash
+./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
+./bin/marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+```
+
+The v0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only maps the marginal tactical sleeve:
+
+- `maintain`: target roughly neutral tactical beta and make no forced change.
+- `protect`: reduce marginal beta, preserve or raise cash, and consider covered calls.
+- `redeploy`: add exposure in tranches after washout conditions, including possible 60-90 DTE calls/call spreads or bounded put underwriting.
+
+## Local Research Store
+
+Refresh the local DuckDB store from saved observations and snapshots:
+
+```bash
+./bin/marketlab store refresh
+```
+
+Optionally also export each table as Parquet:
+
+```bash
+./bin/marketlab store refresh --parquet-root data/warehouse/parquet
+```
+
+Inspect or query the store:
+
+```bash
+./bin/marketlab store tables
+./bin/marketlab store query "select source_date, policy_state, marginal_beta_target from policy_snapshots order by source_date desc limit 10"
 ```
 
 ## Candidate Validation

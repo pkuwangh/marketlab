@@ -194,8 +194,7 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
     query_result = query_research_store(
         db_path=db_path,
         query=(
-            "select source_date, regime, action_state, stretch_pressure_score "
-            "from regime_snapshots"
+            "select source_date, regime, action_state, stretch_pressure_score from regime_snapshots"
         ),
     )
     assert query_result.columns == (

@@ -2080,8 +2080,7 @@ def _echo_policy_outcome_result(result: PortfolioPolicyOutcomeResult) -> None:
     typer.echo(f"portfolio_policy_count={len(result.policies)}")
     typer.echo(f"portfolio_policy_outcome_count={len(result.outcomes)}")
     typer.echo(
-        "available_portfolio_policy_outcome_count="
-        f"{_available_policy_outcome_count(result)}"
+        f"available_portfolio_policy_outcome_count={_available_policy_outcome_count(result)}"
     )
     typer.echo("")
     typer.echo(result.frequency_table)

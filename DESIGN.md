@@ -634,8 +634,8 @@ Build the simplest version that can teach us something, then add sophistication 
 
 - Which independent fundamental/estimate-revision data sources are practical and point-in-time enough for v0?
 
-| Recommended immediate next step: expand the independent market-regime engine. Add a market-signal snapshot layer for volatility structure, sentiment/positioning, stronger breadth, and credit/liquidity evidence; then replay those families against forward SPY/QQQ returns and drawdowns before implementing portfolio policy. |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Recommended immediate next step: make the v0 policy loop visually inspectable. Generate reproducible charts and compact reports that show SPY/QQQ price, regime/action/policy states, stretch/washout pressure, candidate markers, and forward outcome evidence from versioned snapshots. |
+|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 # 14. Implementation Infrastructure
 
@@ -841,26 +841,26 @@ marketlab/
 
 - Keep the two-engine split explicit in code and documentation: `regime` owns aggregate market context, while `bulltard` and later `opportunity` own single-name candidate evidence.
 
-- Add a market-signal snapshot layer before portfolio policy. The regime score should consume named market signal observations rather than embedding every feature directly in one scoring function.
+- Keep the market-signal snapshot layer as the evidence boundary for regime and policy. The regime score should consume named market signal observations rather than embedding every feature directly in one scoring function.
 
-- Start Market Signal Expansion with volatility structure and sentiment/positioning because they are most directly tied to marginal exposure decisions:
+- Continue Market Signal Expansion with volatility structure and sentiment/positioning only where source access is practical and measured outcome replay improves:
   - VIX level, VIX change, realized-vs-implied volatility, and VIX term structure where data is practical.
   - VVIX or a vol-of-vol proxy if a stable source is available.
   - Fear/greed-style sentiment or equivalent risk-appetite observations, using manual import first if a reliable fetcher is not available.
 
-- Strengthen breadth and credit/liquidity after the first volatility/sentiment snapshot exists. Prefer one robust signal per family over many correlated variants.
+- Strengthen breadth and credit/liquidity after the first policy loop reveals a measured weakness. Prefer one robust signal per family over many correlated variants.
 
-- Rework `regime snapshot` so it can show family-level evidence, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
+- Keep `regime snapshot` showing family-level evidence, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
 
-- Replay each added market family against forward SPY/QQQ returns and drawdowns. Keep a feature only if it improves out-of-sample separation, calibration, contradiction handling, or interpretability.
+- Replay each added market family and every policy revision against forward SPY/QQQ returns and drawdowns. Keep a feature only if it improves out-of-sample separation, calibration, contradiction handling, or interpretability.
 
-- Leave Bulltard work focused on candidate generation and measured single-name outcomes until the market-regime engine has enough independent evidence to support portfolio policy.
+- Leave Bulltard work focused on candidate generation and measured single-name outcomes. The portfolio policy consumes candidate context, but Bulltard must not drive aggregate market exposure.
 
-- Choose the first canonical regime visualization: SPY price + regime shading + continuous score + component panels.
+- Choose the first canonical regime/policy visualization: SPY/QQQ price + regime/action/policy shading + continuous stretch/washout pressure + component panels.
 
 - Choose the first canonical single-name visualization: price/relative strength + Bulltard events/lifecycle markers + opportunity-family scores + option-liquidity panel.
 
-- Define the first local directory/backup convention and ensure all generated data paths are gitignored except tiny test fixtures.
+- Keep JSON/JSONL snapshots as the durable local source of truth and DuckDB/Parquet as query/export layers. Ensure generated data paths remain gitignored except tiny test fixtures.
 
 - Implement a ResearchAgent interface with a Codex CLI backend, but keep agent-derived outputs outside the canonical numerical signal until their value is demonstrated.
 

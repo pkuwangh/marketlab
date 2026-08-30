@@ -68,11 +68,20 @@ Implemented regime calibration/action-state foundation:
 - `regime pressure-outcomes` replays top pressure buckets against forward SPY/QQQ returns and drawdowns.
 - `regime backfill` computes daily regime and market-signal snapshots over historical SPY trading dates.
 
+Implemented portfolio policy and local store foundation:
+
+- Portfolio policy snapshots under `data/snapshots/portfolio/policy/`.
+- `policy snapshot` maps saved regime/action evidence into bounded marginal beta, cash, overlay, and single-name sleeve posture.
+- `report daily` renders the human-facing daily posture report with regime, market-signal, policy, and candidate context.
+- `policy backfill` writes policy snapshots over saved regime dates.
+- `policy outcomes` compares policy snapshots against a fixed 50/50 SPY/QQQ beta-scaled benchmark proxy.
+- `store refresh` rebuilds a local DuckDB research store from JSON/JSONL source observations and snapshots, with optional Parquet exports.
+
 Not yet implemented:
 
 - VIX term structure, fear/greed or sentiment/positioning observations.
 - Stronger breadth, sentiment/positioning, VIX term structure, and richer credit/liquidity calibration.
-- Long-history threshold calibration and portfolio policy.
+- Long-history threshold calibration and real portfolio accounting beyond the v0 beta-scaled proxy.
 
 Verified live on `2026-08-26`:
 
@@ -103,6 +112,13 @@ Generated observations are written under `data/observations/`. Debug HTML under 
 ./bin/marketlab regime signal-outcomes --start 2026-07-31 --end 2026-07-31 --horizons 20
 ./bin/marketlab regime action-outcomes --start 2026-08-01 --end 2026-08-28 --horizons 20,40,65
 ./bin/marketlab regime pressure-outcomes --start 2026-08-01 --end 2026-08-28 --horizons 20,40,65
+./bin/marketlab policy snapshot --date 2026-08-28
+./bin/marketlab report daily --date 2026-08-28
+./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
+./bin/marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+./bin/marketlab store refresh
+./bin/marketlab store tables
+./bin/marketlab store query "select source_date, policy_state, marginal_beta_target from policy_snapshots order by source_date desc limit 10"
 ./bin/marketlab prices fetch-yahoo META,XAR,SRRK,DKS,QXO,SPY,QQQ --start 2025-01-01 --end 2026-08-27
 ./bin/marketlab prices import-csv META ~/Downloads/META.csv --source manual
 ./bin/marketlab bulltard validate --date 2026-08-26
@@ -127,9 +143,9 @@ uv run pytest -q
 | 3. Market Regime Foundation | Complete | Market regime | Create a first deterministic market context from available OHLCV proxies. | Regime snapshots score SPY/QQQ trend, realized volatility/VIX, breadth proxy, credit proxy, and replay buckets against forward SPY/QQQ returns/drawdowns. |
 | 4. Market Signal Expansion | Complete | Market regime | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit signal families. | `regime snapshot` shows family-level market signals, missing-source status, contradictions, and replayable evidence beyond simple trend. |
 | 5. Regime Calibration & Backtest | Complete v2 backfill tooling | Market regime | Decide whether the expanded regime families identify rare stretched/de-risk and bloodbath/re-risk zones with useful forward risk/reward separation. | Backfill, action states, normalized pressure scores, and replay tables exist; long-history calibration still needed before policy. |
-| 6. Portfolio Policy MVP | Next | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context, engine-interaction logic, and fixed-benchmark evaluation. |
-| 7. Visualization & Reporting MVP | Planned | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
-| 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, storage, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
+| 6. Portfolio Policy MVP | Complete v0 | Portfolio | Convert calibrated regime plus validated opportunities into bounded beta/cash/overlay posture. | Daily output states whether to maintain, scale down/protect, or scale up/redeploy, with candidate watch/active context, engine-interaction logic, and fixed-benchmark evaluation. |
+| 7. Visualization & Reporting MVP | Next | Shared | Make regime changes, candidate episodes, and outcome evidence visually inspectable. | CLI-generated charts show price, signals, lifecycle markers, and forward evaluation layers from versioned inputs. |
+| 8. Evidence Expansion & Agents | Later | Shared | Add fundamentals, estimates, catalysts, richer options data, and bounded agent workers only when they improve measured decisions. | Each added evidence family improves out-of-sample metrics or gets retired. |
 
 ## Milestone 1 - Bulltard Candidate Capture
 
@@ -429,6 +445,8 @@ Known limitations:
 
 ## Milestone 6 - Portfolio Policy MVP
 
+Current status: complete for v0 policy/report/store loop.
+
 Goal: translate research outputs into a daily risk posture.
 
 Scope:
@@ -459,9 +477,46 @@ Scope:
 Non-goals for this milestone:
 
 - No automated trading.
-- No policy rules until M5 has at least a basic calibration result.
 - No single-name sizing that ignores aggregate market regime.
 - No Bulltard-driven override of the independent market-regime engine.
+- No claim that v0 beta targets are final portfolio sizing; they are frozen research-policy bands for replay.
+
+Implemented v0 scope:
+
+- Added `portfolio_policy_v0` snapshots under `data/snapshots/portfolio/policy/`.
+- Mapped regime action states into policy states:
+  - `no_change` -> `maintain`
+  - `scale_down_protect` -> `protect`
+  - `scale_up_redeploy` -> `redeploy`
+- Defined bounded v0 posture bands:
+  - `maintain`: `0.95-1.05` tactical beta, keep cash reserve unchanged, normal selectivity.
+  - `protect`: `0.85-0.95` tactical beta, raise/preserve cash, avoid casual new long calls, consider covered calls.
+  - `redeploy`: `1.05-1.20` tactical beta, deploy dry powder in tranches, consider 60-90 DTE calls/call spreads or bounded put underwriting.
+- Candidate context is regime-aware:
+  - confirmed candidates become `research`, `reduced_watch`, or `active_research` depending on policy state.
+  - watch candidates remain watch/defer/entry-watch.
+  - avoid candidates remain rejected.
+- Added `report daily` to print current policy posture, regime context, market signals, candidate sleeve, rationale, and prior-policy change.
+- Added `policy backfill` and `policy outcomes`.
+- `policy outcomes` compares the v0 beta posture against a fixed 50/50 SPY/QQQ beta-scaled benchmark proxy. This intentionally excludes option overlay income/costs until the overlay implementation is explicitly modeled.
+- Added `store refresh`, `store tables`, and `store query` for a local DuckDB research store. JSON/JSONL snapshots remain the durable source of truth; DuckDB is the query layer. Optional Parquet exports are available through `--parquet-root`.
+
+First useful M6 outputs:
+
+```bash
+./bin/marketlab policy snapshot --date 2026-08-28
+./bin/marketlab report daily --date 2026-08-28
+./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
+./bin/marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+./bin/marketlab store refresh
+./bin/marketlab store query "select source_date, policy_state, marginal_beta_target from policy_snapshots order by source_date desc limit 10"
+```
+
+Known limitations:
+
+- The v0 policy bands are deliberately simple and should be calibrated against longer history before being trusted.
+- The fixed benchmark proxy measures directional beta only. It does not yet model covered-call income, option premium, assignment, slippage, taxes, or actual position sizing.
+- Candidate posture is based on the current Bulltard validation snapshot, not a full opportunity lifecycle model.
 
 ## Milestone 7 - Visualization & Reporting MVP
 
@@ -484,7 +539,6 @@ Candidates:
 - Options liquidity and spread quality.
 - Event and catalyst extraction.
 - Sector and factor context.
-- Richer storage such as DuckDB or Parquet.
 - Worker orchestration for slower collectors.
 - Bounded agent workers for qualitative extraction or contradiction review.
 
@@ -492,6 +546,8 @@ Rule: each expansion needs an expected use in validation, decision journaling, o
 
 ## Recent Commits
 
+- `3623804` - Add portfolio policy snapshots
+- `476b8ef` - Add local research store
 - `a066a55` - Add VVIX market signal
 - `70b88ec` - Add market signal snapshots
 - `4a8146e` - Handle partial Yahoo daily bars
