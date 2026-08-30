@@ -29,7 +29,7 @@ from marketlab.bulltard.validation import (
     CandidateValidationSnapshot,
     CandidateValidationSummary,
 )
-from marketlab.charts import RegimeChartResult
+from marketlab.charts import OpportunityChartResult, RegimeChartResult
 from marketlab.cli import (
     app,
     bulltard_app,
@@ -163,6 +163,7 @@ def test_chart_no_args_shows_help_without_traceback() -> None:
     assert result.exit_code != 0
     assert "Reproducible chart utilities." in result.output
     assert "regime" in result.output
+    assert "opportunity" in result.output
     assert "Traceback" not in result.output
 
 
@@ -347,6 +348,18 @@ def test_chart_regime_no_args_shows_help_without_missing_option_error() -> None:
     assert "Traceback" not in result.output
 
 
+def test_chart_opportunity_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["chart", "opportunity"])
+
+    assert result.exit_code != 0
+    assert "Render a reproducible single-name opportunity chart" in result.output
+    assert "SYMBOL" in result.output
+    assert "--date" in result.output
+    assert "Missing argument" not in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_chart_regime_outputs_chart_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -418,6 +431,91 @@ def test_chart_regime_outputs_chart_metadata(
     assert "chart_price_point_count=420" in result.output
     assert "regime_snapshot_count=20" in result.output
     assert "market_signal_count=160" in result.output
+
+
+def test_chart_opportunity_outputs_chart_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_root = tmp_path / "prices"
+    candidate_root = tmp_path / "candidates"
+    observations_root = tmp_path / "observations" / "bulltard"
+    output_path = tmp_path / "reports" / "opportunity.html"
+
+    def fake_render_opportunity_chart(
+        *,
+        source_date: date,
+        symbol: str,
+        lookback_days: int,
+        forward_days: int,
+        price_root: Path,
+        candidate_snapshot_root: Path,
+        observations_root: Path,
+        output_path: Path | None,
+    ) -> OpportunityChartResult:
+        assert source_date == date(2026, 8, 28)
+        assert symbol == "MRVL"
+        assert lookback_days == 90
+        assert forward_days == 30
+        assert price_root == price_root_arg
+        assert candidate_snapshot_root == candidate_root_arg
+        assert observations_root == observations_root_arg
+        assert output_path == output_path_arg
+        return OpportunityChartResult(
+            source_date=source_date,
+            symbol="MRVL",
+            output_path=output_path_arg,
+            chart_start_date=date(2026, 5, 30),
+            chart_end_date=date(2026, 9, 27),
+            price_symbols=("MRVL", "SPY", "QQQ"),
+            price_point_count=240,
+            flow_event_count=12,
+            available_forward_outcome_count=3,
+            validation_status="watch",
+        )
+
+    price_root_arg = price_root
+    candidate_root_arg = candidate_root
+    observations_root_arg = observations_root
+    output_path_arg = output_path
+    monkeypatch.setattr(
+        "marketlab.cli.render_opportunity_chart",
+        fake_render_opportunity_chart,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "chart",
+            "opportunity",
+            "MRVL",
+            "--date",
+            "2026-08-28",
+            "--lookback-days",
+            "90",
+            "--forward-days",
+            "30",
+            "--price-root",
+            str(price_root),
+            "--candidate-root",
+            str(candidate_root),
+            "--observations-root",
+            str(observations_root),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"chart_path={output_path}" in result.output
+    assert "chart_version=opportunity_chart_v0" in result.output
+    assert "chart_symbol=MRVL" in result.output
+    assert "chart_source_date=2026-08-28" in result.output
+    assert "chart_price_symbols=MRVL,SPY,QQQ" in result.output
+    assert "chart_price_point_count=240" in result.output
+    assert "flow_event_count=12" in result.output
+    assert "available_forward_outcome_count=3" in result.output
+    assert "validation_status=watch" in result.output
 
 
 def test_prices_import_csv_no_args_shows_help_without_missing_argument_error() -> None:

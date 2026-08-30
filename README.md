@@ -33,6 +33,7 @@ Implemented:
 - Daily policy reports that combine regime state, market signals, policy posture, and Bulltard candidate context.
 - Local DuckDB research store refresh from JSON/JSONL source observations, with optional Parquet exports.
 - Self-contained HTML/SVG regime chart generation from saved price, regime, and market-signal snapshots.
+- Self-contained HTML/SVG opportunity chart generation for one saved Bulltard candidate.
 
 ## Development
 
@@ -208,15 +209,21 @@ The v0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only m
 
 ## Visualization
 
-Generate a reproducible regime chart from saved snapshots:
+Generate reproducible charts from saved snapshots and observations:
 
 ```bash
 ./bin/marketlab chart regime --start 2026-08-28 --end 2026-08-28
+./bin/marketlab chart opportunity --date 2026-08-28 MRVL
 ```
 
-By default this writes `reports/regime-START-END.html`. The first chart shows indexed SPY/QQQ
-price, regime action-state shading, stretch/washout pressure, component scores, market-signal
-family scores, and the latest market-signal table.
+By default these write `reports/regime-START-END.html` and
+`reports/opportunity-SYMBOL-DATE.html`.
+
+The regime chart shows indexed SPY/QQQ price, regime action-state shading, stretch/washout
+pressure, component scores, market-signal family scores, and the latest market-signal table.
+The opportunity chart shows the candidate versus SPY/QQQ, Bulltard flow-premium event bars,
+20d relative strength, the point-in-time validation snapshot, and a separate forward-outcome
+table that stays marked `waiting` until enough future local price rows exist.
 
 ## Local Research Store
 

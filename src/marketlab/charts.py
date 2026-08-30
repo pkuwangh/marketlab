@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
+from marketlab.bulltard.ingest import DEFAULT_OBSERVATIONS_ROOT
+from marketlab.bulltard.validation import (
+    BENCHMARK_SYMBOLS,
+    DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+    CandidateValidationError,
+    CandidateValidationSnapshot,
+    load_candidate_validation_snapshots,
+)
 from marketlab.market_signals import (
     DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     MarketSignal,
@@ -22,6 +32,7 @@ from marketlab.prices import (
     PriceDataError,
     dedupe_symbols,
     load_price_history,
+    normalize_symbol,
 )
 from marketlab.regime import (
     DEFAULT_REGIME_SNAPSHOT_ROOT,
@@ -32,6 +43,10 @@ from marketlab.regime import (
 
 DEFAULT_CHART_REPORT_ROOT = Path("reports")
 REGIME_CHART_VERSION = "regime_chart_v0"
+OPPORTUNITY_CHART_VERSION = "opportunity_chart_v0"
+DEFAULT_OPPORTUNITY_LOOKBACK_DAYS = 120
+DEFAULT_OPPORTUNITY_FORWARD_DAYS = 65
+OPPORTUNITY_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 
 
 class ChartError(ValueError):
@@ -50,6 +65,55 @@ class RegimeChartResult:
     regime_snapshot_count: int
     market_signal_count: int
     chart_version: str = REGIME_CHART_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityChartResult:
+    """Result of rendering one single-name opportunity chart."""
+
+    source_date: date
+    symbol: str
+    output_path: Path
+    chart_start_date: date
+    chart_end_date: date
+    price_symbols: tuple[str, ...]
+    price_point_count: int
+    flow_event_count: int
+    available_forward_outcome_count: int
+    validation_status: str
+    chart_version: str = OPPORTUNITY_CHART_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class _TickerFlowEvent:
+    source_date: date
+    symbol: str
+    traded_at: datetime
+    order_type: str
+    side: str | None
+    contract: str
+    contract_type: str | None
+    expiry: date
+    contracts: int
+    premium: float | None
+    is_older: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _DailyFlowPremium:
+    traded_date: date
+    bullish_premium: float
+    bearish_premium: float
+    neutral_premium: float
+    event_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _OpportunityForwardOutcome:
+    horizon_days: int
+    return_value: float | None
+    relative_strength_spy: float | None
+    max_drawdown: float | None
 
 
 def render_regime_chart(
@@ -134,6 +198,119 @@ def render_regime_chart(
         regime_snapshot_count=result.regime_snapshot_count,
         market_signal_count=result.market_signal_count,
     ).success("Rendered regime chart")
+    return result
+
+
+def render_opportunity_chart(
+    *,
+    source_date: date,
+    symbol: str,
+    lookback_days: int = DEFAULT_OPPORTUNITY_LOOKBACK_DAYS,
+    forward_days: int = DEFAULT_OPPORTUNITY_FORWARD_DAYS,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+    observations_root: Path = DEFAULT_OBSERVATIONS_ROOT,
+    output_path: Path | None = None,
+) -> OpportunityChartResult:
+    """Render a single-name opportunity chart from saved research artifacts."""
+
+    if lookback_days < 0:
+        raise ChartError("Opportunity chart lookback days must be non-negative")
+    if forward_days < 0:
+        raise ChartError("Opportunity chart forward days must be non-negative")
+    try:
+        normalized_symbol = normalize_symbol(symbol)
+    except PriceDataError as exc:
+        raise ChartError(str(exc)) from exc
+
+    snapshot = _load_candidate_snapshot(
+        source_date=source_date,
+        symbol=normalized_symbol,
+        snapshot_root=candidate_snapshot_root,
+    )
+    chart_start_date = source_date - timedelta(days=lookback_days)
+    chart_end_date = source_date + timedelta(days=forward_days)
+    price_symbols = dedupe_symbols((normalized_symbol, *BENCHMARK_SYMBOLS))
+    price_histories = {
+        price_symbol: _price_rows_in_range(
+            symbol=price_symbol,
+            price_root=price_root,
+            start_date=chart_start_date,
+            end_date=chart_end_date,
+        )
+        for price_symbol in price_symbols
+    }
+    if not price_histories[normalized_symbol]:
+        raise ChartError(
+            f"No {normalized_symbol} price observations found from "
+            f"{chart_start_date} to {chart_end_date}"
+        )
+
+    flow_events = _load_ticker_flow_events(
+        source_date=source_date,
+        symbol=normalized_symbol,
+        observations_root=observations_root,
+    )
+    interest_note = _load_trade_interest_note(
+        source_date=source_date,
+        symbol=normalized_symbol,
+        observations_root=observations_root,
+    )
+    full_symbol_history = _full_price_history(symbol=normalized_symbol, price_root=price_root)
+    full_spy_history = _full_price_history(symbol="SPY", price_root=price_root)
+    forward_outcomes = _opportunity_forward_outcomes(
+        snapshot=snapshot,
+        price_history=full_symbol_history,
+        spy_history=full_spy_history,
+        horizons=OPPORTUNITY_OUTCOME_HORIZONS,
+    )
+    resolved_output_path = output_path or _default_opportunity_chart_path(
+        source_date=source_date,
+        symbol=normalized_symbol,
+    )
+    html = _render_opportunity_chart_html(
+        source_date=source_date,
+        symbol=normalized_symbol,
+        chart_start_date=chart_start_date,
+        chart_end_date=chart_end_date,
+        price_histories=price_histories,
+        snapshot=snapshot,
+        flow_events=flow_events,
+        interest_note=interest_note,
+        forward_outcomes=forward_outcomes,
+        price_root=price_root,
+        candidate_snapshot_root=candidate_snapshot_root,
+        observations_root=observations_root,
+    )
+    resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_output_path.write_text(html, encoding="utf-8")
+
+    result = OpportunityChartResult(
+        source_date=source_date,
+        symbol=normalized_symbol,
+        output_path=resolved_output_path,
+        chart_start_date=chart_start_date,
+        chart_end_date=chart_end_date,
+        price_symbols=price_symbols,
+        price_point_count=sum(len(rows) for rows in price_histories.values()),
+        flow_event_count=len(flow_events),
+        available_forward_outcome_count=sum(
+            1 for outcome in forward_outcomes if outcome.return_value is not None
+        ),
+        validation_status=snapshot.validation_status,
+    )
+    logger.bind(
+        source_date=source_date.isoformat(),
+        symbol=normalized_symbol,
+        output_path=str(resolved_output_path),
+        chart_start_date=chart_start_date.isoformat(),
+        chart_end_date=chart_end_date.isoformat(),
+        price_symbols=price_symbols,
+        price_point_count=result.price_point_count,
+        flow_event_count=result.flow_event_count,
+        available_forward_outcome_count=result.available_forward_outcome_count,
+        validation_status=result.validation_status,
+    ).success("Rendered opportunity chart")
     return result
 
 
@@ -263,6 +440,249 @@ def _render_regime_chart_html(
 </body>
 </html>
 """
+
+
+def _render_opportunity_chart_html(
+    *,
+    source_date: date,
+    symbol: str,
+    chart_start_date: date,
+    chart_end_date: date,
+    price_histories: dict[str, tuple[DailyPriceObservation, ...]],
+    snapshot: CandidateValidationSnapshot,
+    flow_events: tuple[_TickerFlowEvent, ...],
+    interest_note: str | None,
+    forward_outcomes: tuple[_OpportunityForwardOutcome, ...],
+    price_root: Path,
+    candidate_snapshot_root: Path,
+    observations_root: Path,
+) -> str:
+    chart_svg = _render_opportunity_chart_svg(
+        source_date=source_date,
+        symbol=symbol,
+        chart_start_date=chart_start_date,
+        chart_end_date=chart_end_date,
+        price_histories=price_histories,
+        snapshot=snapshot,
+        flow_events=flow_events,
+    )
+    escaped_symbol = escape(symbol)
+    escaped_source_date = escape(source_date.isoformat())
+    escaped_start = escape(chart_start_date.isoformat())
+    escaped_end = escape(chart_end_date.isoformat())
+    escaped_price_root = escape(str(price_root))
+    escaped_candidate_root = escape(str(candidate_snapshot_root))
+    escaped_observation_root = escape(str(observations_root))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarketLab Opportunity Chart {escaped_symbol} {escaped_source_date}</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5f6c72;
+      --grid: #d8dee2;
+      --panel: #f7f9fa;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      background: #ffffff;
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }}
+    main {{
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 24px;
+    }}
+    h1 {{
+      margin: 0 0 4px;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }}
+    h2 {{
+      margin: 24px 0 8px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }}
+    .meta {{
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }}
+    .chart-shell {{
+      border: 1px solid #d6dde1;
+      border-radius: 6px;
+      overflow-x: auto;
+      background: #ffffff;
+    }}
+    svg {{
+      display: block;
+      width: 100%;
+      min-width: 980px;
+      height: auto;
+    }}
+    table {{
+      width: 100%;
+      margin-top: 10px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }}
+    th, td {{
+      padding: 8px 10px;
+      border-bottom: 1px solid #e3e7ea;
+      text-align: left;
+      vertical-align: top;
+    }}
+    th {{
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: #f5f7f8;
+    }}
+    td:first-child {{
+      width: 210px;
+      color: var(--muted);
+    }}
+    .empty {{
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+  </style>
+</head>
+<body>
+<main>
+  <h1>{escaped_symbol} Opportunity Chart</h1>
+  <p class="meta">
+    Bulltard date: {escaped_source_date}. Window: {escaped_start} to {escaped_end}.
+    Chart version: {OPPORTUNITY_CHART_VERSION}.
+    Sources: prices={escaped_price_root}, candidates={escaped_candidate_root},
+    observations={escaped_observation_root}.
+  </p>
+  <div class="chart-shell">
+    {chart_svg}
+  </div>
+  <h2>Point-In-Time Candidate Snapshot</h2>
+  {_candidate_snapshot_table(snapshot=snapshot, interest_note=interest_note)}
+  <h2>Bulltard Flow Events</h2>
+  {_flow_event_table(flow_events)}
+  <h2>Forward Outcomes</h2>
+  {_forward_outcome_table(forward_outcomes)}
+</main>
+</body>
+</html>
+"""
+
+
+def _render_opportunity_chart_svg(
+    *,
+    source_date: date,
+    symbol: str,
+    chart_start_date: date,
+    chart_end_date: date,
+    price_histories: dict[str, tuple[DailyPriceObservation, ...]],
+    snapshot: CandidateValidationSnapshot,
+    flow_events: tuple[_TickerFlowEvent, ...],
+) -> str:
+    width = 1180
+    left = 82
+    right = 30
+    top = 44
+    gap = 36
+    price_panel = _Panel(top=top, height=250, title=f"{symbol} indexed close")
+    flow_panel = _Panel(
+        top=price_panel.bottom + gap,
+        height=150,
+        title="Bulltard flow premium by trade date",
+    )
+    relative_panel = _Panel(
+        top=flow_panel.bottom + gap,
+        height=170,
+        title="20d relative strength",
+    )
+    height = relative_panel.bottom + 62
+    plot_width = width - left - right
+    plotted_flow_events = tuple(
+        event
+        for event in flow_events
+        if chart_start_date <= event.traded_at.date() <= chart_end_date
+    )
+    x_min, x_max = _opportunity_date_domain(
+        chart_start_date=chart_start_date,
+        chart_end_date=chart_end_date,
+        source_date=source_date,
+        price_histories=price_histories,
+        flow_events=plotted_flow_events,
+    )
+    x_scale = _x_scale(x_min=x_min, x_max=x_max, left=left, plot_width=plot_width)
+    anchor_date = snapshot.price_date or source_date
+    parts = [
+        f'<svg viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="{escape(symbol)} opportunity chart">',
+        _svg_defs(),
+        _text(left, 24, f"{symbol} {source_date.isoformat()}", css_class="title"),
+    ]
+    for panel in (price_panel, flow_panel, relative_panel):
+        parts.append(_panel_background(left=left, width=plot_width, panel=panel))
+        parts.append(_panel_title(left=left, panel=panel))
+        parts.extend(_x_axis_labels(x_min=x_min, x_max=x_max, x_scale=x_scale, panel=panel))
+
+    parts.extend(
+        _vertical_event_marker(
+            marker_date=source_date,
+            x_scale=x_scale,
+            top=price_panel.top,
+            bottom=relative_panel.bottom,
+            color="#172026",
+            label="Bulltard date",
+        )
+    )
+    parts.extend(
+        _draw_opportunity_price_panel(
+            price_histories=price_histories,
+            symbol=symbol,
+            anchor_date=anchor_date,
+            x_scale=x_scale,
+            panel=price_panel,
+            left=left,
+            plot_width=plot_width,
+        )
+    )
+    parts.extend(
+        _draw_flow_premium_panel(
+            flow_events=plotted_flow_events,
+            x_min=x_min,
+            x_max=x_max,
+            x_scale=x_scale,
+            panel=flow_panel,
+            left=left,
+            plot_width=plot_width,
+        )
+    )
+    parts.extend(
+        _draw_relative_strength_panel(
+            price_histories=price_histories,
+            symbol=symbol,
+            x_scale=x_scale,
+            panel=relative_panel,
+            left=left,
+            plot_width=plot_width,
+        )
+    )
+    parts.append(_opportunity_legend(symbol=symbol, y=height - 28))
+    parts.append(_svg_style())
+    parts.append("</svg>")
+    return "\n".join(parts)
 
 
 def _render_regime_chart_svg(
@@ -560,6 +980,226 @@ def _draw_signal_panel(
     return parts
 
 
+def _draw_opportunity_price_panel(
+    *,
+    price_histories: dict[str, tuple[DailyPriceObservation, ...]],
+    symbol: str,
+    anchor_date: date,
+    x_scale: Callable[[date], float],
+    panel: _Panel,
+    left: int,
+    plot_width: int,
+) -> list[str]:
+    indexed_series = {
+        price_symbol: _anchored_indexed_price_series(rows, anchor_date=anchor_date)
+        for price_symbol, rows in price_histories.items()
+    }
+    values = [value for series in indexed_series.values() for _date, value in series]
+    if not values:
+        return []
+    lower, upper = _padded_value_domain(values=tuple(values), include_zero=False, pad_ratio=0.08)
+    y_scale = _y_scale(lower=lower, upper=upper, panel=panel)
+    parts = _y_axis_labels(
+        values=_ticks(lower, upper, 5),
+        formatter=lambda value: f"{value:.0f}",
+        y_scale=y_scale,
+        left=left,
+        plot_width=plot_width,
+        panel=panel,
+    )
+    colors = _opportunity_price_colors(symbol)
+    for price_symbol, series in indexed_series.items():
+        if not series:
+            continue
+        color = colors.get(price_symbol, "#8a5a00")
+        path = _line_path(series, x_scale=x_scale, y_scale=y_scale)
+        if path:
+            parts.append(
+                f'<path d="{path}" fill="none" stroke="{color}" stroke-width="2.4">'
+                f"<title>{escape(price_symbol)} indexed to {anchor_date.isoformat()}</title>"
+                "</path>"
+            )
+        parts.extend(
+            _point_markers(
+                series,
+                x_scale=x_scale,
+                y_scale=y_scale,
+                color=color,
+                label=price_symbol,
+            )
+        )
+    return parts
+
+
+def _draw_flow_premium_panel(
+    *,
+    flow_events: tuple[_TickerFlowEvent, ...],
+    x_min: date,
+    x_max: date,
+    x_scale: Callable[[date], float],
+    panel: _Panel,
+    left: int,
+    plot_width: int,
+) -> list[str]:
+    buckets = _daily_flow_premiums(flow_events)
+    max_abs = max(
+        (
+            abs(value)
+            for bucket in buckets
+            for value in (
+                bucket.bullish_premium,
+                bucket.bearish_premium,
+                bucket.neutral_premium,
+            )
+        ),
+        default=1.0,
+    )
+    if max_abs == 0:
+        max_abs = 1.0
+    y_scale = _y_scale(lower=-max_abs, upper=max_abs, panel=panel)
+    parts = _y_axis_labels(
+        values=(-max_abs, 0.0, max_abs),
+        formatter=_format_money_compact,
+        y_scale=y_scale,
+        left=left,
+        plot_width=plot_width,
+        panel=panel,
+    )
+    zero_y = y_scale(0.0)
+    parts.append(
+        f'<line x1="{left}" x2="{left + plot_width}" y1="{zero_y:.1f}" '
+        f'y2="{zero_y:.1f}" stroke="#88939a" stroke-width="1.2" />'
+    )
+    if not buckets:
+        parts.append(
+            _text(
+                left + 12,
+                panel.top + 24,
+                "No ticker-flow detail rows found",
+                css_class="axis",
+            )
+        )
+        return parts
+
+    bar_width = _time_bar_width(x_min=x_min, x_max=x_max, plot_width=plot_width)
+    for bucket in buckets:
+        x = x_scale(bucket.traded_date)
+        if bucket.bullish_premium:
+            y = y_scale(bucket.bullish_premium)
+            parts.append(
+                _bar_rect(
+                    x=x,
+                    y=y,
+                    width=bar_width,
+                    height=zero_y - y,
+                    color="#2f8f46",
+                    title=(
+                        f"{bucket.traded_date.isoformat()} bullish premium "
+                        f"{_format_money_compact(bucket.bullish_premium)}"
+                    ),
+                )
+            )
+        if bucket.bearish_premium:
+            y = y_scale(-bucket.bearish_premium)
+            parts.append(
+                _bar_rect(
+                    x=x,
+                    y=zero_y,
+                    width=bar_width,
+                    height=y - zero_y,
+                    color="#b23b3b",
+                    title=(
+                        f"{bucket.traded_date.isoformat()} bearish premium "
+                        f"{_format_money_compact(bucket.bearish_premium)}"
+                    ),
+                )
+            )
+        if bucket.neutral_premium:
+            y = y_scale(bucket.neutral_premium)
+            parts.append(
+                _bar_rect(
+                    x=x,
+                    y=y,
+                    width=bar_width,
+                    height=zero_y - y,
+                    color="#7d8790",
+                    title=(
+                        f"{bucket.traded_date.isoformat()} unclassified premium "
+                        f"{_format_money_compact(bucket.neutral_premium)}"
+                    ),
+                )
+            )
+        if not bucket.bullish_premium and not bucket.bearish_premium:
+            parts.append(
+                f'<circle cx="{x:.1f}" cy="{zero_y:.1f}" r="3.4" '
+                'fill="#7d8790">'
+                f"<title>{escape(bucket.traded_date.isoformat())} "
+                f"{bucket.event_count} flow events without premium</title></circle>"
+            )
+    return parts
+
+
+def _draw_relative_strength_panel(
+    *,
+    price_histories: dict[str, tuple[DailyPriceObservation, ...]],
+    symbol: str,
+    x_scale: Callable[[date], float],
+    panel: _Panel,
+    left: int,
+    plot_width: int,
+) -> list[str]:
+    symbol_history = price_histories.get(symbol, ())
+    series_by_benchmark = {
+        benchmark: _rolling_relative_strength_series(
+            symbol_history=symbol_history,
+            benchmark_history=price_histories.get(benchmark, ()),
+            lookback=20,
+        )
+        for benchmark in BENCHMARK_SYMBOLS
+        if benchmark != symbol
+    }
+    values = [value for series in series_by_benchmark.values() for _date, value in series]
+    lower, upper = (
+        _padded_value_domain(values=tuple(values), include_zero=True, pad_ratio=0.15)
+        if values
+        else (-0.10, 0.10)
+    )
+    y_scale = _y_scale(lower=lower, upper=upper, panel=panel)
+    parts = _y_axis_labels(
+        values=_ticks(lower, upper, 5),
+        formatter=lambda value: f"{value * 100:+.0f}%",
+        y_scale=y_scale,
+        left=left,
+        plot_width=plot_width,
+        panel=panel,
+    )
+    colors = {"SPY": "#59656f", "QQQ": "#7a4cc2"}
+    for benchmark, series in series_by_benchmark.items():
+        if not series:
+            continue
+        color = colors.get(benchmark, "#8a5a00")
+        label = f"{symbol} vs {benchmark}"
+        path = _line_path(series, x_scale=x_scale, y_scale=y_scale)
+        if path:
+            parts.append(
+                f'<path d="{path}" fill="none" stroke="{color}" stroke-width="2">'
+                f"<title>{escape(label)} 20d relative strength</title></path>"
+            )
+        parts.extend(
+            _point_markers(series, x_scale=x_scale, y_scale=y_scale, color=color, label=label)
+        )
+    if not values:
+        parts.append(
+            _text(
+                left + 12,
+                panel.top + 24,
+                "Not enough local price history for 20d relative strength",
+                css_class="axis",
+            )
+        )
+    return parts
+
+
 def _load_regime_snapshots_in_range(
     *,
     start_date: date,
@@ -607,6 +1247,105 @@ def _load_market_signals_in_range(
     return signals_by_date
 
 
+def _load_candidate_snapshot(
+    *,
+    source_date: date,
+    symbol: str,
+    snapshot_root: Path,
+) -> CandidateValidationSnapshot:
+    try:
+        snapshots = load_candidate_validation_snapshots(
+            source_date=source_date,
+            snapshot_root=snapshot_root,
+        )
+    except CandidateValidationError as exc:
+        raise ChartError(str(exc)) from exc
+    if not snapshots:
+        raise ChartError(f"No Bulltard candidate validation snapshots found for {source_date}")
+    for snapshot in snapshots:
+        if snapshot.symbol.upper() == symbol:
+            return snapshot
+    available = ", ".join(sorted({snapshot.symbol for snapshot in snapshots}))
+    raise ChartError(
+        f"No Bulltard candidate validation snapshot found for {symbol} on "
+        f"{source_date}; available symbols: {available}"
+    )
+
+
+def _load_ticker_flow_events(
+    *,
+    source_date: date,
+    symbol: str,
+    observations_root: Path,
+) -> tuple[_TickerFlowEvent, ...]:
+    path = observations_root / "ticker_flow" / symbol / f"{source_date.isoformat()}.jsonl"
+    if not path.is_file():
+        return ()
+    try:
+        events = tuple(_ticker_flow_event_from_dict(row) for row in _read_jsonl_rows(path))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ChartError(f"Invalid Bulltard ticker-flow observations file: {path}") from exc
+    return tuple(sorted(events, key=lambda event: event.traded_at))
+
+
+def _load_trade_interest_note(
+    *,
+    source_date: date,
+    symbol: str,
+    observations_root: Path,
+) -> str | None:
+    path = observations_root / "trades_of_interest" / f"{source_date.isoformat()}.jsonl"
+    if not path.is_file():
+        return None
+    try:
+        for row in _read_jsonl_rows(path):
+            if str(row["symbol"]).upper() == symbol:
+                return str(row["note"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ChartError(f"Invalid Bulltard Trades Of Interest observations file: {path}") from exc
+    return None
+
+
+def _read_jsonl_rows(path: Path) -> tuple[dict[str, Any], ...]:
+    try:
+        return tuple(
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    except OSError as exc:
+        raise ChartError(f"Failed to read observations file: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ChartError(f"Invalid JSONL observations file: {path}") from exc
+
+
+def _ticker_flow_event_from_dict(row: dict[str, Any]) -> _TickerFlowEvent:
+    return _TickerFlowEvent(
+        source_date=date.fromisoformat(str(row["source_date"])),
+        symbol=str(row["symbol"]).upper(),
+        traded_at=datetime.fromisoformat(str(row["traded_at"])),
+        order_type=str(row["order_type"]),
+        side=str(row["side"]) if row["side"] is not None else None,
+        contract=str(row["contract"]),
+        contract_type=str(row["contract_type"]) if row["contract_type"] is not None else None,
+        expiry=date.fromisoformat(str(row["expiry"])),
+        contracts=int(row["contracts"]),
+        premium=float(row["premium"]) if row["premium"] is not None else None,
+        is_older=bool(row["is_older"]),
+    )
+
+
+def _full_price_history(
+    *,
+    symbol: str,
+    price_root: Path,
+) -> tuple[DailyPriceObservation, ...]:
+    try:
+        return load_price_history(symbol=symbol, price_root=price_root)
+    except PriceDataError as exc:
+        raise ChartError(str(exc)) from exc
+
+
 def _price_rows_in_range(
     *,
     symbol: str,
@@ -621,12 +1360,134 @@ def _price_rows_in_range(
     return tuple(row for row in rows if start_date <= row.observed_date <= end_date)
 
 
+def _opportunity_forward_outcomes(
+    *,
+    snapshot: CandidateValidationSnapshot,
+    price_history: tuple[DailyPriceObservation, ...],
+    spy_history: tuple[DailyPriceObservation, ...],
+    horizons: tuple[int, ...],
+) -> tuple[_OpportunityForwardOutcome, ...]:
+    anchor_date = snapshot.price_date or snapshot.source_date
+    price_index = _exact_price_index(price_history, anchor_date)
+    spy_index = _exact_price_index(spy_history, anchor_date)
+    return tuple(
+        _OpportunityForwardOutcome(
+            horizon_days=horizon,
+            return_value=_forward_return(
+                price_history,
+                index=price_index,
+                horizon=horizon,
+            ),
+            relative_strength_spy=_forward_relative_strength(
+                price_history=price_history,
+                price_index=price_index,
+                spy_history=spy_history,
+                spy_index=spy_index,
+                horizon=horizon,
+            ),
+            max_drawdown=_forward_max_drawdown(
+                price_history,
+                index=price_index,
+                horizon=horizon,
+            ),
+        )
+        for horizon in horizons
+    )
+
+
+def _forward_relative_strength(
+    *,
+    price_history: tuple[DailyPriceObservation, ...],
+    price_index: int | None,
+    spy_history: tuple[DailyPriceObservation, ...],
+    spy_index: int | None,
+    horizon: int,
+) -> float | None:
+    return_value = _forward_return(price_history, index=price_index, horizon=horizon)
+    spy_return = _forward_return(spy_history, index=spy_index, horizon=horizon)
+    if return_value is None or spy_return is None:
+        return None
+    return return_value - spy_return
+
+
+def _forward_return(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    horizon: int,
+) -> float | None:
+    if index is None:
+        return None
+    future_index = index + horizon
+    if future_index >= len(history):
+        return None
+    current_close = history[index].return_close
+    if current_close == 0:
+        return None
+    return history[future_index].return_close / current_close - 1.0
+
+
+def _forward_max_drawdown(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    horizon: int,
+) -> float | None:
+    if index is None:
+        return None
+    future_index = index + horizon
+    if future_index >= len(history):
+        return None
+    current_close = history[index].return_close
+    if current_close == 0:
+        return None
+    lows = [row.return_close for row in history[index + 1 : future_index + 1]]
+    if not lows:
+        return None
+    return min(0.0, min(lows) / current_close - 1.0)
+
+
+def _exact_price_index(
+    history: tuple[DailyPriceObservation, ...],
+    observed_date: date,
+) -> int | None:
+    for index, row in enumerate(history):
+        if row.observed_date == observed_date:
+            return index
+    return None
+
+
+def _asof_price_index(
+    history: tuple[DailyPriceObservation, ...],
+    observed_date: date,
+) -> int | None:
+    for index in range(len(history) - 1, -1, -1):
+        if history[index].observed_date <= observed_date:
+            return index
+    return None
+
+
 def _indexed_price_series(
     rows: tuple[DailyPriceObservation, ...],
 ) -> tuple[tuple[date, float], ...]:
     if not rows:
         return ()
     base = rows[0].return_close
+    if base == 0:
+        return ()
+    return tuple((row.observed_date, row.return_close / base * 100.0) for row in rows)
+
+
+def _anchored_indexed_price_series(
+    rows: tuple[DailyPriceObservation, ...],
+    *,
+    anchor_date: date,
+) -> tuple[tuple[date, float], ...]:
+    if not rows:
+        return ()
+    anchor_index = _asof_price_index(rows, anchor_date)
+    base_row = rows[anchor_index] if anchor_index is not None else rows[0]
+    base = base_row.return_close
     if base == 0:
         return ()
     return tuple((row.observed_date, row.return_close / base * 100.0) for row in rows)
@@ -655,6 +1516,24 @@ def _date_domain(
     return x_min, x_max
 
 
+def _opportunity_date_domain(
+    *,
+    chart_start_date: date,
+    chart_end_date: date,
+    source_date: date,
+    price_histories: dict[str, tuple[DailyPriceObservation, ...]],
+    flow_events: tuple[_TickerFlowEvent, ...],
+) -> tuple[date, date]:
+    dates = [chart_start_date, chart_end_date, source_date]
+    dates.extend(row.observed_date for rows in price_histories.values() for row in rows)
+    dates.extend(event.traded_at.date() for event in flow_events)
+    x_min = min(dates)
+    x_max = max(dates)
+    if x_min == x_max:
+        return x_min - timedelta(days=1), x_max + timedelta(days=1)
+    return x_min, x_max
+
+
 def _x_scale(
     *,
     x_min: date,
@@ -677,6 +1556,148 @@ def _y_scale(*, lower: float, upper: float, panel: _Panel) -> Callable[[float], 
         return panel.bottom - (value - lower) / span * panel.height
 
     return scale
+
+
+def _daily_flow_premiums(
+    flow_events: tuple[_TickerFlowEvent, ...],
+) -> tuple[_DailyFlowPremium, ...]:
+    buckets: dict[date, dict[str, float | int]] = {}
+    for event in flow_events:
+        traded_date = event.traded_at.date()
+        bucket = buckets.setdefault(
+            traded_date,
+            {
+                "bullish_premium": 0.0,
+                "bearish_premium": 0.0,
+                "neutral_premium": 0.0,
+                "event_count": 0,
+            },
+        )
+        premium = abs(event.premium or 0.0)
+        if event.side == "bullish":
+            bucket["bullish_premium"] = float(bucket["bullish_premium"]) + premium
+        elif event.side == "bearish":
+            bucket["bearish_premium"] = float(bucket["bearish_premium"]) + premium
+        else:
+            bucket["neutral_premium"] = float(bucket["neutral_premium"]) + premium
+        bucket["event_count"] = int(bucket["event_count"]) + 1
+    return tuple(
+        _DailyFlowPremium(
+            traded_date=traded_date,
+            bullish_premium=float(bucket["bullish_premium"]),
+            bearish_premium=float(bucket["bearish_premium"]),
+            neutral_premium=float(bucket["neutral_premium"]),
+            event_count=int(bucket["event_count"]),
+        )
+        for traded_date, bucket in sorted(buckets.items())
+    )
+
+
+def _rolling_relative_strength_series(
+    *,
+    symbol_history: tuple[DailyPriceObservation, ...],
+    benchmark_history: tuple[DailyPriceObservation, ...],
+    lookback: int,
+) -> tuple[tuple[date, float], ...]:
+    series = []
+    for index, row in enumerate(symbol_history):
+        return_value = _trailing_return(symbol_history, index=index, lookback=lookback)
+        benchmark_index = _asof_price_index(benchmark_history, row.observed_date)
+        benchmark_return = _trailing_return(
+            benchmark_history,
+            index=benchmark_index,
+            lookback=lookback,
+        )
+        if return_value is None or benchmark_return is None:
+            continue
+        series.append((row.observed_date, return_value - benchmark_return))
+    return tuple(series)
+
+
+def _trailing_return(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    lookback: int,
+) -> float | None:
+    if index is None:
+        return None
+    past_index = index - lookback
+    if past_index < 0:
+        return None
+    past_close = history[past_index].return_close
+    if past_close == 0:
+        return None
+    return history[index].return_close / past_close - 1.0
+
+
+def _padded_value_domain(
+    *,
+    values: tuple[float, ...],
+    include_zero: bool,
+    pad_ratio: float,
+) -> tuple[float, float]:
+    clean = [value for value in values if value == value]
+    if include_zero:
+        clean.append(0.0)
+    if not clean:
+        return -1.0, 1.0
+    lower = min(clean)
+    upper = max(clean)
+    if lower == upper:
+        pad = max(abs(lower) * pad_ratio, 0.01)
+    else:
+        pad = (upper - lower) * pad_ratio
+    return lower - pad, upper + pad
+
+
+def _time_bar_width(*, x_min: date, x_max: date, plot_width: int) -> float:
+    span_days = max(1, x_max.toordinal() - x_min.toordinal())
+    return min(16.0, max(4.0, plot_width / max(8, span_days) * 0.70))
+
+
+def _bar_rect(
+    *,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    color: str,
+    title: str,
+) -> str:
+    rect_height = max(1.0, abs(height))
+    rect_y = y if height >= 0 else y + height
+    return (
+        f'<rect x="{x - width / 2:.1f}" y="{rect_y:.1f}" '
+        f'width="{width:.1f}" height="{rect_height:.1f}" fill="{color}" '
+        f'opacity="0.78"><title>{escape(title)}</title></rect>'
+    )
+
+
+def _vertical_event_marker(
+    *,
+    marker_date: date,
+    x_scale: Callable[[date], float],
+    top: int,
+    bottom: int,
+    color: str,
+    label: str,
+) -> list[str]:
+    x = x_scale(marker_date)
+    return [
+        f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{top}" y2="{bottom}" '
+        f'stroke="{color}" stroke-width="1.6" stroke-dasharray="5 5">'
+        f"<title>{escape(label)} {escape(marker_date.isoformat())}</title></line>",
+        _text(x + 6, top + 15, label, css_class="event-label"),
+    ]
+
+
+def _opportunity_price_colors(symbol: str) -> dict[str, str]:
+    return {
+        symbol: "#1b6ca8",
+        "SPY": "#59656f",
+        "QQQ": "#7a4cc2",
+    }
 
 
 def _action_backgrounds(
@@ -846,6 +1867,105 @@ def _latest_signal_rows(signals: tuple[MarketSignal, ...]) -> str:
     return "\n".join(rows)
 
 
+def _candidate_snapshot_table(
+    *,
+    snapshot: CandidateValidationSnapshot,
+    interest_note: str | None,
+) -> str:
+    rows = [
+        ("symbol", snapshot.symbol),
+        ("source", snapshot.bulltard_source),
+        ("ranked side", snapshot.ranked_side or "-"),
+        ("ranked score", _format_optional_number(snapshot.ranked_score)),
+        ("ranked trades", _format_optional_int(snapshot.ranked_trade_count)),
+        ("ranked premium", _format_optional_money(snapshot.ranked_premium)),
+        ("interest rank", _format_optional_int(snapshot.interest_rank)),
+        ("detail rows", str(snapshot.detail_rows)),
+        ("price date", snapshot.price_date.isoformat() if snapshot.price_date else "-"),
+        ("close", _format_optional_number(snapshot.close)),
+        ("dollar volume", _format_optional_money(snapshot.dollar_volume)),
+        ("5d return", _format_percent_value(snapshot.return_5d)),
+        ("20d return", _format_percent_value(snapshot.return_20d)),
+        ("60d return", _format_percent_value(snapshot.return_60d)),
+        ("20d RS vs SPY", _format_percent_value(snapshot.relative_strength_20d_spy)),
+        ("20d RS vs QQQ", _format_percent_value(snapshot.relative_strength_20d_qqq)),
+        ("MA50 distance", _format_percent_value(snapshot.ma50_distance)),
+        ("60d drawdown", _format_percent_value(snapshot.drawdown_60d)),
+        ("validation status", snapshot.validation_status),
+        ("validation reasons", ", ".join(snapshot.validation_reasons)),
+    ]
+    if interest_note:
+        rows.append(("Trades Of Interest note", interest_note))
+    return _key_value_table(rows)
+
+
+def _flow_event_table(flow_events: tuple[_TickerFlowEvent, ...]) -> str:
+    if not flow_events:
+        return '<p class="empty">No Bulltard ticker-flow rows found for this candidate date.</p>'
+    rows = sorted(
+        flow_events,
+        key=lambda event: (event.premium or 0.0, event.traded_at),
+        reverse=True,
+    )[:20]
+    parts = [
+        "<table>",
+        "<thead><tr>"
+        "<th>Traded At</th><th>Side</th><th>Order</th><th>Contract</th>"
+        "<th>Expiry</th><th>Contracts</th><th>Premium</th><th>Older</th>"
+        "</tr></thead>",
+        "<tbody>",
+    ]
+    for event in rows:
+        parts.append(
+            "<tr>"
+            f"<td>{escape(event.traded_at.isoformat(timespec='minutes'))}</td>"
+            f"<td>{escape(event.side or '-')}</td>"
+            f"<td>{escape(event.order_type)}</td>"
+            f"<td>{escape(event.contract)}</td>"
+            f"<td>{escape(event.expiry.isoformat())}</td>"
+            f"<td>{event.contracts}</td>"
+            f"<td>{escape(_format_optional_money(event.premium))}</td>"
+            f"<td>{'yes' if event.is_older else 'no'}</td>"
+            "</tr>"
+        )
+    parts.extend(["</tbody>", "</table>"])
+    return "\n".join(parts)
+
+
+def _forward_outcome_table(
+    forward_outcomes: tuple[_OpportunityForwardOutcome, ...],
+) -> str:
+    parts = [
+        "<table>",
+        "<thead><tr>"
+        "<th>Horizon</th><th>Status</th><th>Forward Return</th>"
+        "<th>RS vs SPY</th><th>Max Drawdown</th>"
+        "</tr></thead>",
+        "<tbody>",
+    ]
+    for outcome in forward_outcomes:
+        available = outcome.return_value is not None
+        parts.append(
+            "<tr>"
+            f"<td>{outcome.horizon_days} trading rows</td>"
+            f"<td>{'available' if available else 'waiting'}</td>"
+            f"<td>{escape(_format_percent_value(outcome.return_value))}</td>"
+            f"<td>{escape(_format_percent_value(outcome.relative_strength_spy))}</td>"
+            f"<td>{escape(_format_drawdown_value(outcome.max_drawdown))}</td>"
+            "</tr>"
+        )
+    parts.extend(["</tbody>", "</table>"])
+    return "\n".join(parts)
+
+
+def _key_value_table(rows: list[tuple[str, str]]) -> str:
+    parts = ["<table>", "<tbody>"]
+    for label, value in rows:
+        parts.append(f"<tr><td>{escape(label)}</td><td>{escape(value)}</td></tr>")
+    parts.extend(["</tbody>", "</table>"])
+    return "\n".join(parts)
+
+
 def _format_signal_value(signal: MarketSignal) -> str:
     value = signal.value
     if value is None:
@@ -861,6 +1981,44 @@ def _format_signal_value(signal: MarketSignal) -> str:
             return f"{value:.2f}"
         return f"{value:.4g}"
     return str(value)
+
+
+def _format_optional_int(value: int | None) -> str:
+    return str(value) if value is not None else "-"
+
+
+def _format_optional_number(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}"
+
+
+def _format_percent_value(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value * 100:+.1f}%"
+
+
+def _format_drawdown_value(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{min(0.0, value) * 100:.1f}%"
+
+
+def _format_optional_money(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return _format_money_compact(value)
+
+
+def _format_money_compact(value: float) -> str:
+    absolute = abs(value)
+    for suffix, scale in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+        if absolute >= scale:
+            scaled = value / scale
+            precision = 0 if abs(scaled) >= 100 else 1
+            return f"${scaled:.{precision}f}{suffix}"
+    return f"${value:.0f}"
 
 
 def _date_ticks(x_min: date, x_max: date, *, count: int) -> tuple[date, ...]:
@@ -905,6 +2063,24 @@ def _legend(*, width: int, y: int) -> str:
     return "\n".join(parts)
 
 
+def _opportunity_legend(*, symbol: str, y: int) -> str:
+    items = (
+        ("#1b6ca8", f"{symbol} indexed close"),
+        ("#59656f", "SPY benchmark / RS"),
+        ("#7a4cc2", "QQQ benchmark / RS"),
+        ("#2f8f46", "bullish flow premium"),
+        ("#b23b3b", "bearish flow premium"),
+        ("#172026", "Bulltard date"),
+    )
+    x = 82
+    parts = []
+    for color, label in items:
+        parts.append(f'<rect x="{x}" y="{y - 9}" width="14" height="4" fill="{color}" />')
+        parts.append(_text(x + 20, y - 5, label, css_class="legend"))
+        x += 170
+    return "\n".join(parts)
+
+
 def _svg_defs() -> str:
     return """<defs>
   <clipPath id="plotClip">
@@ -918,6 +2094,7 @@ def _svg_style() -> str:
   .title { font: 700 18px ui-sans-serif, system-ui, sans-serif; fill: #172026; }
   .panel-title { font: 700 13px ui-sans-serif, system-ui, sans-serif; fill: #172026; }
   .axis { font: 11px ui-sans-serif, system-ui, sans-serif; fill: #5f6c72; }
+  .event-label { font: 700 11px ui-sans-serif, system-ui, sans-serif; fill: #172026; }
   .legend { font: 12px ui-sans-serif, system-ui, sans-serif; fill: #364047; }
   .grid { stroke: #d8dee2; stroke-width: 1; }
   .axis-line { stroke: #88939a; stroke-width: 1; }
@@ -942,3 +2119,7 @@ def _default_regime_chart_path(*, start_date: date, end_date: date) -> Path:
     return (
         DEFAULT_CHART_REPORT_ROOT / f"regime-{start_date.isoformat()}-{end_date.isoformat()}.html"
     )
+
+
+def _default_opportunity_chart_path(*, source_date: date, symbol: str) -> Path:
+    return DEFAULT_CHART_REPORT_ROOT / f"opportunity-{symbol}-{source_date.isoformat()}.html"

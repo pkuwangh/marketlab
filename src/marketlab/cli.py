@@ -47,8 +47,12 @@ from marketlab.bulltard.validation import (
     validate_bulltard_candidates,
 )
 from marketlab.charts import (
+    DEFAULT_OPPORTUNITY_FORWARD_DAYS,
+    DEFAULT_OPPORTUNITY_LOOKBACK_DAYS,
     ChartError,
+    OpportunityChartResult,
     RegimeChartResult,
+    render_opportunity_chart,
     render_regime_chart,
 )
 from marketlab.logging import configure_logging
@@ -1274,6 +1278,76 @@ def chart_regime(
     _echo_regime_chart_result(result)
 
 
+@chart_app.command("opportunity", no_args_is_help=True)
+def chart_opportunity(
+    symbol: str = typer.Argument(
+        ...,
+        metavar="SYMBOL",
+        help="Bulltard candidate ticker symbol.",
+    ),
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Bulltard candidate snapshot date.",
+    ),
+    lookback_days: int = typer.Option(
+        DEFAULT_OPPORTUNITY_LOOKBACK_DAYS,
+        "--lookback-days",
+        min=0,
+        help="Calendar days to show before the Bulltard date.",
+    ),
+    forward_days: int = typer.Option(
+        DEFAULT_OPPORTUNITY_FORWARD_DAYS,
+        "--forward-days",
+        min=0,
+        help="Calendar days to show after the Bulltard date.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    candidate_snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--candidate-root",
+        file_okay=False,
+        help="Root directory containing Bulltard candidate validation snapshots.",
+    ),
+    observations_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--observations-root",
+        file_okay=False,
+        help="Root directory containing Bulltard observations.",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output",
+        dir_okay=False,
+        help="HTML chart path. Defaults to reports/opportunity-SYMBOL-DATE.html.",
+    ),
+) -> None:
+    """Render a reproducible single-name opportunity chart."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = render_opportunity_chart(
+            source_date=source_date,
+            symbol=symbol,
+            lookback_days=lookback_days,
+            forward_days=forward_days,
+            price_root=price_root,
+            candidate_snapshot_root=candidate_snapshot_root,
+            observations_root=observations_root,
+            output_path=output_path,
+        )
+    except ChartError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    _echo_opportunity_chart_result(result)
+
+
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
 def inspect_recap(
     recap_path: Path = typer.Argument(
@@ -2184,6 +2258,20 @@ def _echo_regime_chart_result(result: RegimeChartResult) -> None:
     typer.echo(f"chart_price_point_count={result.price_point_count}")
     typer.echo(f"regime_snapshot_count={result.regime_snapshot_count}")
     typer.echo(f"market_signal_count={result.market_signal_count}")
+
+
+def _echo_opportunity_chart_result(result: OpportunityChartResult) -> None:
+    typer.echo(f"chart_path={result.output_path}")
+    typer.echo(f"chart_version={result.chart_version}")
+    typer.echo(f"chart_symbol={result.symbol}")
+    typer.echo(f"chart_source_date={result.source_date.isoformat()}")
+    typer.echo(f"chart_start={result.chart_start_date.isoformat()}")
+    typer.echo(f"chart_end={result.chart_end_date.isoformat()}")
+    typer.echo(f"chart_price_symbols={','.join(result.price_symbols)}")
+    typer.echo(f"chart_price_point_count={result.price_point_count}")
+    typer.echo(f"flow_event_count={result.flow_event_count}")
+    typer.echo(f"available_forward_outcome_count={result.available_forward_outcome_count}")
+    typer.echo(f"validation_status={result.validation_status}")
 
 
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:

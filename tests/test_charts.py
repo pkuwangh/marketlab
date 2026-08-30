@@ -1,9 +1,14 @@
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
-from marketlab.charts import ChartError, render_regime_chart
+from marketlab.bulltard.validation import (
+    CandidateValidationSnapshot,
+    write_candidate_validation_snapshots,
+)
+from marketlab.charts import ChartError, render_opportunity_chart, render_regime_chart
 from marketlab.market_signals import MarketSignal, write_market_signal_snapshot
 from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import RegimeComponentScore, RegimeSnapshot, write_regime_snapshot
@@ -116,6 +121,126 @@ def test_render_regime_chart_requires_regime_snapshots(tmp_path: Path) -> None:
         )
 
 
+def test_render_opportunity_chart_writes_candidate_html(tmp_path: Path) -> None:
+    source_date = date(2026, 1, 31)
+    price_root = tmp_path / "prices"
+    snapshot_root = tmp_path / "candidates"
+    observations_root = tmp_path / "observations" / "bulltard"
+    output_path = tmp_path / "reports" / "opportunity.html"
+    _write_price_history(
+        price_root,
+        symbol="MRVL",
+        start=date(2026, 1, 1),
+        closes=[100.0 + index * 0.7 for index in range(170)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=date(2026, 1, 1),
+        closes=[100.0 + index * 0.2 for index in range(170)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=date(2026, 1, 1),
+        closes=[100.0 + index * 0.3 for index in range(170)],
+    )
+    write_candidate_validation_snapshots(
+        (
+            _candidate_validation_snapshot(
+                source_date=source_date,
+                symbol="MRVL",
+            ),
+        ),
+        snapshot_root=snapshot_root,
+        source_date=source_date,
+    )
+    _write_jsonl(
+        observations_root / "ticker_flow" / "MRVL" / "2026-01-31.jsonl",
+        [
+            {
+                "source_date": "2026-01-31",
+                "symbol": "MRVL",
+                "traded_at": "2026-01-31T10:15",
+                "order_type": "Puts Sold",
+                "side": "bullish",
+                "contract": "90P",
+                "contract_type": "put",
+                "expiry": "2026-03-20",
+                "contracts": 1000,
+                "premium": 2_500_000.0,
+                "is_older": False,
+            },
+            {
+                "source_date": "2026-01-31",
+                "symbol": "MRVL",
+                "traded_at": "2026-01-30T11:10",
+                "order_type": "Puts Bought",
+                "side": "bearish",
+                "contract": "95P",
+                "contract_type": "put",
+                "expiry": "2026-02-20",
+                "contracts": 500,
+                "premium": 750_000.0,
+                "is_older": False,
+            },
+        ],
+    )
+    _write_jsonl(
+        observations_root / "trades_of_interest" / "2026-01-31.jsonl",
+        [
+            {
+                "source": "bulltard",
+                "source_date": "2026-01-31",
+                "view": "trades-of-interest",
+                "rank": 2,
+                "symbol": "MRVL",
+                "note": "Fixture multi-month opportunity note.",
+            }
+        ],
+    )
+
+    result = render_opportunity_chart(
+        source_date=source_date,
+        symbol="MRVL",
+        lookback_days=25,
+        forward_days=10,
+        price_root=price_root,
+        candidate_snapshot_root=snapshot_root,
+        observations_root=observations_root,
+        output_path=output_path,
+    )
+
+    assert result.output_path == output_path
+    assert result.symbol == "MRVL"
+    assert result.price_symbols == ("MRVL", "SPY", "QQQ")
+    assert result.flow_event_count == 2
+    assert result.available_forward_outcome_count == 6
+    assert result.validation_status == "watch"
+    html = output_path.read_text(encoding="utf-8")
+    assert "MRVL Opportunity Chart" in html
+    assert "<svg" in html
+    assert "Bulltard flow premium by trade date" in html
+    assert "20d relative strength" in html
+    assert "Point-In-Time Candidate Snapshot" in html
+    assert "Fixture multi-month opportunity note." in html
+    assert "Puts Sold" in html
+    assert "Forward Outcomes" in html
+    assert "1 trading rows" in html
+
+
+def test_render_opportunity_chart_requires_candidate_snapshot(tmp_path: Path) -> None:
+    with pytest.raises(ChartError, match="No Bulltard candidate validation snapshots found"):
+        render_opportunity_chart(
+            source_date=date(2026, 1, 31),
+            symbol="MRVL",
+            price_root=tmp_path / "prices",
+            candidate_snapshot_root=tmp_path / "candidates",
+            observations_root=tmp_path / "observations",
+            output_path=tmp_path / "opportunity.html",
+        )
+
+
 def _write_price_history(
     price_root: Path,
     *,
@@ -140,6 +265,47 @@ def _write_price_history(
             for index, close in enumerate(closes)
         ),
         output_root=price_root,
+    )
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    path.write_text(payload, encoding="utf-8")
+
+
+def _candidate_validation_snapshot(
+    *,
+    source_date: date,
+    symbol: str,
+) -> CandidateValidationSnapshot:
+    return CandidateValidationSnapshot(
+        source_date=source_date,
+        feature_version="fixture_validation",
+        symbol=symbol,
+        bulltard_source="ranked+interest#2",
+        ranked_side="bullish",
+        ranked_score=10.0,
+        ranked_trade_count=12,
+        ranked_premium=24_000_000.0,
+        interest_rank=2,
+        detail_rows=2,
+        price_date=source_date,
+        close=121.0,
+        dollar_volume=200_000_000.0,
+        return_5d=0.03,
+        return_20d=0.10,
+        return_60d=0.18,
+        ma20_distance=0.05,
+        ma50_distance=-0.03,
+        ma200_distance=0.08,
+        drawdown_60d=-0.12,
+        relative_strength_20d_spy=0.04,
+        relative_strength_20d_qqq=0.03,
+        underlying_liquidity_status="liquid",
+        options_liquidity_status="unknown",
+        validation_status="watch",
+        validation_reasons=("positive_20d", "rs_spy_positive"),
     )
 
 
