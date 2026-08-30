@@ -862,7 +862,7 @@ def regime_pressure_outcomes(
     _echo_regime_pressure_outcome_result(result)
 
 
-@store_app.command("refresh", no_args_is_help=True)
+@store_app.command("refresh")
 def store_refresh(
     db_path: Path = typer.Option(
         DEFAULT_RESEARCH_DB_PATH,
@@ -932,7 +932,7 @@ def store_refresh(
     _echo_store_refresh_result(result)
 
 
-@store_app.command("tables", no_args_is_help=True)
+@store_app.command("tables")
 def store_tables(
     db_path: Path = typer.Option(
         DEFAULT_RESEARCH_DB_PATH,

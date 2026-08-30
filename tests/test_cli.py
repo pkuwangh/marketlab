@@ -64,6 +64,7 @@ from marketlab.regime import (
     RegimeSnapshot,
     RegimeSnapshotResult,
 )
+from marketlab.store import StoreRefreshResult, StoreTableRefresh
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
 
@@ -252,12 +253,22 @@ def test_regime_pressure_outcomes_no_args_shows_help_without_missing_option_erro
     assert "Traceback" not in result.output
 
 
-def test_store_refresh_no_args_shows_help_without_traceback() -> None:
+def test_store_refresh_no_args_runs_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_refresh_research_store(**kwargs):  # noqa: ANN003
+        assert kwargs["db_path"].name == "marketlab.duckdb"
+        return StoreRefreshResult(
+            db_path=kwargs["db_path"],
+            schema_version="fixture",
+            table_refreshes=(StoreTableRefresh(table_name="regime_snapshots", row_count=1),),
+        )
+
+    monkeypatch.setattr("marketlab.cli.refresh_research_store", fake_refresh_research_store)
+
     result = CliRunner().invoke(app, ["store", "refresh"])
 
-    assert result.exit_code != 0
-    assert "Refresh the local DuckDB research store" in result.output
-    assert "--db" in result.output
+    assert result.exit_code == 0
+    assert "research_db_path=marketlab.duckdb" in result.output
+    assert "regime_snapshots" in result.output
     assert "Traceback" not in result.output
 
 
