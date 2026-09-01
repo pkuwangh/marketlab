@@ -34,6 +34,8 @@ Implemented shared foundation:
 
 Implemented single-name / Bulltard foundation:
 
+- Read-only Gmail OAuth and recap acquisition can fetch the daily Bulltard email into the
+  local inbox cache before the existing parser/ingester runs.
 - Bulltard recap inspection that extracts signed Substack source URLs from saved HTML email.
 - Bulltard ranked option trades ingest from the live app route.
 - Trades Of Interest parsing from the recap email.
@@ -118,12 +120,15 @@ Normal daily operation should use the top-level command:
 ./bin/marketlab daily --date 2026-08-31
 ```
 
-It looks for `data/inbox/bulltard/recap-YYYY-MM-DD.html` and includes Bulltard capture when
-that file exists. The commands below are lower-level debugging, backfill, and focused research
-surfaces.
+It fetches the Bulltard recap from Gmail when `secrets/google-oauth-client.json` and
+`secrets/gmail-token.json` exist; otherwise it looks for
+`data/inbox/bulltard/recap-YYYY-MM-DD.html`. The commands below are lower-level debugging,
+backfill, and focused research surfaces.
 
 ```bash
 ./bin/marketlab --help
+./bin/marketlab gmail auth
+./bin/marketlab gmail bulltard-recap --date 2026-09-01
 ./bin/marketlab bulltard --help
 ./bin/marketlab bulltard inspect-recap data/inbox/bulltard/recap-2026-08-26.html
 ./bin/marketlab bulltard daily --date 2026-08-26 data/inbox/bulltard/recap-2026-08-26.html

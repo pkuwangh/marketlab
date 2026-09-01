@@ -57,6 +57,15 @@ from marketlab.charts import (
     render_opportunity_chart,
     render_regime_chart,
 )
+from marketlab.gmail import (
+    DEFAULT_GMAIL_CLIENT_SECRET_PATH,
+    DEFAULT_GMAIL_RECAP_CACHE_ROOT,
+    DEFAULT_GMAIL_TOKEN_PATH,
+    GmailError,
+    fetch_bulltard_recap_from_gmail,
+    gmail_credentials_available,
+    run_gmail_oauth_flow,
+)
 from marketlab.logging import configure_logging
 from marketlab.market_series import (
     DEFAULT_FRED_MARKET_SERIES_IDS,
@@ -142,6 +151,10 @@ market_series_app = typer.Typer(
     help="Scalar market series utilities.",
     no_args_is_help=True,
 )
+gmail_app = typer.Typer(
+    help="Gmail recap acquisition utilities.",
+    no_args_is_help=True,
+)
 regime_app = typer.Typer(
     help="Market regime utilities.",
     no_args_is_help=True,
@@ -165,6 +178,7 @@ chart_app = typer.Typer(
 app.add_typer(bulltard_app, name="bulltard")
 app.add_typer(prices_app, name="prices")
 app.add_typer(market_series_app, name="market-series")
+app.add_typer(gmail_app, name="gmail")
 app.add_typer(regime_app, name="regime")
 app.add_typer(store_app, name="store")
 app.add_typer(policy_app, name="policy")
@@ -203,6 +217,131 @@ def root(
     configure_logging(log_level.value)
 
 
+@gmail_app.command("auth")
+def gmail_auth(
+    client_secret_path: Path = typer.Option(
+        DEFAULT_GMAIL_CLIENT_SECRET_PATH,
+        "--client-secret",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Google OAuth client secret JSON path.",
+    ),
+    token_path: Path = typer.Option(
+        DEFAULT_GMAIL_TOKEN_PATH,
+        "--token",
+        dir_okay=False,
+        help="Local Gmail OAuth token path.",
+    ),
+    port: int = typer.Option(
+        0,
+        "--port",
+        min=0,
+        help="Local OAuth callback port. Use 0 to choose an available port.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--browser/--no-browser",
+        help="Open the authorization URL in a browser.",
+    ),
+    timeout_seconds: int = typer.Option(
+        300,
+        "--timeout-seconds",
+        min=1,
+        help="Seconds to wait for the OAuth browser callback.",
+    ),
+) -> None:
+    """Authorize read-only Gmail access for recap acquisition."""
+
+    try:
+        result = run_gmail_oauth_flow(
+            client_secret_path=client_secret_path,
+            token_path=token_path,
+            port=port,
+            open_browser=open_browser,
+            timeout_seconds=timeout_seconds,
+            auth_url_callback=lambda url: typer.echo(f"authorization_url={url}"),
+        )
+    except GmailError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"gmail_token_path={result.token_path}")
+    typer.echo(f"gmail_scope={result.scope}")
+    typer.echo(f"gmail_token_expires_at={result.expires_at or ''}")
+
+
+@gmail_app.command("bulltard-recap", no_args_is_help=True)
+def gmail_bulltard_recap(
+    source_date_value: str = typer.Option(
+        ...,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Bulltard recap date to fetch from Gmail.",
+    ),
+    client_secret_path: Path = typer.Option(
+        DEFAULT_GMAIL_CLIENT_SECRET_PATH,
+        "--client-secret",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Google OAuth client secret JSON path.",
+    ),
+    token_path: Path = typer.Option(
+        DEFAULT_GMAIL_TOKEN_PATH,
+        "--token",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Local Gmail OAuth token path.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_GMAIL_RECAP_CACHE_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for cached recap files.",
+    ),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        help="Override the default Gmail search query.",
+    ),
+    max_results: int = typer.Option(
+        10,
+        "--max-results",
+        min=1,
+        help="Maximum Gmail messages to inspect.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing cached recap for the same date.",
+    ),
+) -> None:
+    """Fetch the Bulltard recap email from Gmail and cache it locally."""
+
+    source_date = _parse_source_date(source_date_value)
+    try:
+        result = fetch_bulltard_recap_from_gmail(
+            source_date=source_date,
+            client_secret_path=client_secret_path,
+            token_path=token_path,
+            output_root=output_root,
+            query=query,
+            max_results=max_results,
+            overwrite=overwrite,
+        )
+    except GmailError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"gmail_recap_path={result.recap_path}")
+    typer.echo(f"gmail_message_id={result.message_id}")
+    typer.echo(f"gmail_thread_id={result.thread_id or ''}")
+    typer.echo(f"gmail_subject={result.subject or ''}")
+    typer.echo(f"gmail_from={result.sender or ''}")
+    typer.echo(f"gmail_received_at={result.received_at or ''}")
+    typer.echo(f"gmail_query={result.query}")
+
+
 @app.command("daily")
 def daily_run(
     source_date_value: str | None = typer.Option(
@@ -225,6 +364,11 @@ def daily_run(
         True,
         "--bulltard/--no-bulltard",
         help="Capture and validate Bulltard candidates when a recap file is available.",
+    ),
+    use_gmail_flag: bool = typer.Option(
+        True,
+        "--gmail/--no-gmail",
+        help="Fetch the Bulltard recap from Gmail when no local recap file is present.",
     ),
     require_recap: bool = typer.Option(
         False,
@@ -342,6 +486,23 @@ def daily_run(
         "--bulltard-debug-root",
         file_okay=False,
         help="Root directory for Bulltard parser debug payloads.",
+    ),
+    gmail_client_secret_path: Path = typer.Option(
+        DEFAULT_GMAIL_CLIENT_SECRET_PATH,
+        "--gmail-client-secret",
+        dir_okay=False,
+        help="Google OAuth client secret JSON path for automatic Gmail recap fetch.",
+    ),
+    gmail_token_path: Path = typer.Option(
+        DEFAULT_GMAIL_TOKEN_PATH,
+        "--gmail-token",
+        dir_okay=False,
+        help="Local Gmail OAuth token path for automatic Gmail recap fetch.",
+    ),
+    gmail_query: str | None = typer.Option(
+        None,
+        "--gmail-query",
+        help="Override the default Gmail search query used by --gmail.",
     ),
     regime_snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
@@ -478,6 +639,38 @@ def daily_run(
     bulltard_ran = False
     if run_bulltard_flag:
         typer.echo("[bulltard]")
+        if (
+            recap_path is None
+            and not resolved_recap_path.is_file()
+            and use_gmail_flag
+            and gmail_credentials_available(
+                client_secret_path=gmail_client_secret_path,
+                token_path=gmail_token_path,
+            )
+        ):
+            try:
+                gmail_result = fetch_bulltard_recap_from_gmail(
+                    source_date=source_date,
+                    client_secret_path=gmail_client_secret_path,
+                    token_path=gmail_token_path,
+                    output_root=DEFAULT_GMAIL_RECAP_CACHE_ROOT,
+                    query=gmail_query,
+                )
+            except GmailError as exc:
+                if require_recap:
+                    raise typer.BadParameter(str(exc), param_hint="--gmail") from exc
+                _handle_optional_daily_error(
+                    "gmail_bulltard_recap",
+                    exc,
+                    strict=strict_optional_stages,
+                )
+            else:
+                resolved_recap_path = gmail_result.recap_path
+                typer.echo(f"gmail_recap_path={gmail_result.recap_path}")
+                typer.echo(f"gmail_message_id={gmail_result.message_id}")
+        elif recap_path is None and not resolved_recap_path.is_file() and use_gmail_flag:
+            typer.echo("gmail_status=skipped_missing_credentials")
+
         if not resolved_recap_path.is_file():
             if recap_path is not None or require_recap:
                 raise typer.BadParameter(

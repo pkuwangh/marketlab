@@ -334,7 +334,7 @@ Those views contain table values and ticker links rather than only an empty Java
 ### Deterministic ingest flow
 
 ```text
-Gmail recap
+Gmail recap fetched through read-only OAuth, or an equivalent saved recap artifact
     ↓
 extract original signed Substack database URL
     ↓

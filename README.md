@@ -85,10 +85,10 @@ The routine operating path is one command:
 ```
 
 By default it uses today's local date, refreshes market sources, writes the regime snapshot,
-uses `data/inbox/bulltard/recap-YYYY-MM-DD.html` when that recap file exists, validates
+fetches the Bulltard recap from Gmail when read-only Gmail credentials exist, validates
 captured candidates, renders the daily policy report and regime chart, and refreshes the
-local DuckDB store. If the recap file is missing, the market-regime and policy loop still
-runs and Bulltard is skipped.
+local DuckDB store. If Gmail is not configured and `data/inbox/bulltard/recap-YYYY-MM-DD.html`
+is missing, the market-regime and policy loop still runs and Bulltard is skipped.
 
 For a specific date:
 
@@ -98,6 +98,26 @@ For a specific date:
 
 The lower-level `regime`, `bulltard`, `policy`, `chart`, and `store` commands remain available
 for debugging, backfills, and focused research.
+
+## Gmail Recap Fetch
+
+Gmail access is read-only and uses local OAuth credentials. Put a Google OAuth desktop-client
+JSON file at `secrets/google-oauth-client.json`, then authorize once:
+
+```bash
+./bin/marketlab gmail auth
+```
+
+After authorization, the token is stored at `secrets/gmail-token.json`. Both `secrets/` and
+`data/` are gitignored. To test only the email acquisition step:
+
+```bash
+./bin/marketlab gmail bulltard-recap --date 2026-09-01
+```
+
+This searches Gmail for the recap, caches it as
+`data/inbox/bulltard/recap-YYYY-MM-DD.html`, verifies that it contains a signed Bulltard app
+link, and leaves the existing Bulltard parser/ingester to do the rest.
 
 ## Bulltard Utilities
 

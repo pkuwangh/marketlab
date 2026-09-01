@@ -34,6 +34,7 @@ from marketlab.cli import (
     app,
     bulltard_app,
     chart_app,
+    gmail_app,
     market_series_app,
     policy_app,
     prices_app,
@@ -41,6 +42,7 @@ from marketlab.cli import (
     report_app,
     store_app,
 )
+from marketlab.gmail import GmailAuthResult, GmailBulltardRecapResult
 from marketlab.market_series import MarketSeriesFetchResult
 from marketlab.market_signals import MarketSignal
 from marketlab.policy import DailyPolicyReportResult, PortfolioPolicySnapshot
@@ -77,6 +79,7 @@ def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert bulltard_app.info.no_args_is_help is True
     assert prices_app.info.no_args_is_help is True
     assert market_series_app.info.no_args_is_help is True
+    assert gmail_app.info.no_args_is_help is True
     assert regime_app.info.no_args_is_help is True
     assert store_app.info.no_args_is_help is True
     assert policy_app.info.no_args_is_help is True
@@ -281,6 +284,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
             "daily",
             "--date",
             "2026-08-31",
+            "--no-gmail",
             "--price-root",
             str(price_root),
             "--market-series-root",
@@ -554,6 +558,179 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
     assert "bulltard_ran=true" in result.output
 
 
+def test_daily_run_fetches_missing_default_recap_from_gmail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    client_secret_path = tmp_path / "secrets" / "google-oauth-client.json"
+    token_path = tmp_path / "secrets" / "gmail-token.json"
+    client_secret_path.parent.mkdir(parents=True)
+    client_secret_path.write_text("{}", encoding="utf-8")
+    token_path.write_text("{}", encoding="utf-8")
+    events: list[str] = []
+
+    def fake_compute_regime_snapshot(
+        *,
+        source_date: date,
+        price_root: Path,
+        market_series_root: Path,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> RegimeSnapshotResult:
+        assert source_date == date(2026, 9, 1)
+        events.append("regime")
+        return RegimeSnapshotResult(
+            source_date=source_date,
+            snapshot=_regime_snapshot(source_date=source_date),
+            snapshot_path=snapshot_root / "regime.json",
+            table="fixture regime table",
+            signals=(),
+            signal_snapshot_path=signal_snapshot_root / "market-signals.jsonl",
+        )
+
+    def fake_fetch_bulltard_recap_from_gmail(
+        *,
+        source_date: date,
+        client_secret_path: Path,
+        token_path: Path,
+        output_root: Path,
+        query: str | None,
+    ) -> GmailBulltardRecapResult:
+        assert events == ["regime"]
+        assert source_date == date(2026, 9, 1)
+        assert client_secret_path == Path("secrets/google-oauth-client.json")
+        assert token_path == Path("secrets/gmail-token.json")
+        assert output_root == Path("data/inbox/bulltard")
+        assert query == "fixture gmail query"
+        recap_path = output_root / "recap-2026-09-01.html"
+        recap_path.parent.mkdir(parents=True)
+        recap_path.write_text("fixture recap", encoding="utf-8")
+        events.append("gmail")
+        return GmailBulltardRecapResult(
+            source_date=source_date,
+            message_id="message-1",
+            thread_id="thread-1",
+            subject="Bulltard recap",
+            sender="James <james@example.com>",
+            received_at="Tue, 1 Sep 2026 13:00:00 -0700",
+            recap_path=recap_path,
+            signed_url="https://substack.com/redirect/fixture?j=token",
+            query=query or "",
+        )
+
+    def fake_run_daily_workflow(
+        *,
+        source_date,
+        recap_path: Path,
+        output_root: Path,
+        debug_root: Path,
+        fetch_ticker_details: bool,
+        top_ranked: int,
+        extra_tickers: tuple[str, ...],
+        limit: int,
+    ) -> DailyWorkflowResult:
+        assert events == ["regime", "gmail"]
+        assert recap_path == Path("data/inbox/bulltard/recap-2026-09-01.html")
+        events.append("bulltard")
+        plan = IngestPlan(
+            source_date=source_date,
+            view=BulltardView.RANKED_OPTION_TRADES,
+            recap_path=recap_path,
+            signed_url="https://substack.com/redirect/fixture?j=token",
+            observation_path=output_root / "ranked_option_trades" / "2026-09-01.jsonl",
+        )
+        return DailyWorkflowResult(
+            source_date=source_date,
+            ranked_result=IngestResult(
+                fetched_view=FetchedView(
+                    plan=plan,
+                    final_url="https://app.jamesbulltard.com/ranked_option_trades",
+                    status_code=200,
+                    content_type="text/html",
+                    byte_count=42,
+                    debug_path=debug_root / "ranked_option_trades" / "2026-09-01.html",
+                ),
+                row_count=40,
+                observation_path=plan.observation_path,
+            ),
+            trades_of_interest_result=None,
+            ticker_results=(),
+            ticker_failures=(),
+            candidate_table="symbol source\nMETA   ranked",
+        )
+
+    def fake_validate_bulltard_candidates(**kwargs) -> CandidateValidationResult:
+        assert events == ["regime", "gmail", "bulltard"]
+        events.append("validate")
+        source_date = kwargs["source_date"]
+        return CandidateValidationResult(
+            source_date=source_date,
+            snapshots=(),
+            snapshot_path=Path("candidate-validation.jsonl"),
+            summary=CandidateValidationSummary(
+                candidate_count=0,
+                confirm_count=0,
+                watch_count=0,
+                avoid_count=0,
+                missing_price_count=0,
+                thin_underlying_count=0,
+            ),
+            table="fixture validation table",
+        )
+
+    def fake_compute_daily_policy_report(**kwargs) -> DailyPolicyReportResult:
+        assert events == ["regime", "gmail", "bulltard", "validate"]
+        events.append("report")
+        source_date = kwargs["source_date"]
+        policy = _portfolio_policy_snapshot(source_date=source_date)
+        return DailyPolicyReportResult(
+            source_date=source_date,
+            policy=policy,
+            previous_policy=None,
+            policy_snapshot_path=Path("policy.json"),
+            report="fixture daily report",
+        )
+
+    monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_bulltard_recap_from_gmail",
+        fake_fetch_bulltard_recap_from_gmail,
+    )
+    monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
+    monkeypatch.setattr(
+        "marketlab.cli.validate_bulltard_candidates", fake_validate_bulltard_candidates
+    )
+    monkeypatch.setattr(
+        "marketlab.cli.compute_daily_policy_report", fake_compute_daily_policy_report
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "daily",
+            "--date",
+            "2026-09-01",
+            "--no-prices",
+            "--no-market-series",
+            "--no-chart",
+            "--no-store",
+            "--no-outcomes",
+            "--gmail-query",
+            "fixture gmail query",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert events == ["regime", "gmail", "bulltard", "validate", "report"]
+    assert "gmail_recap_path=data/inbox/bulltard/recap-2026-09-01.html" in result.output
+    assert "gmail_message_id=message-1" in result.output
+    assert "bulltard_ran=true" in result.output
+
+
 def test_bulltard_no_args_shows_help_without_traceback() -> None:
     result = CliRunner().invoke(app, ["bulltard"])
 
@@ -580,6 +757,149 @@ def test_market_series_no_args_shows_help_without_traceback() -> None:
     assert "Scalar market series utilities." in result.output
     assert "fetch-fred" in result.output
     assert "Traceback" not in result.output
+
+
+def test_gmail_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["gmail"])
+
+    assert result.exit_code != 0
+    assert "Gmail recap acquisition utilities." in result.output
+    assert "auth" in result.output
+    assert "bulltard-recap" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_gmail_auth_outputs_token_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_secret_path = tmp_path / "client-secret.json"
+    token_path = tmp_path / "gmail-token.json"
+    client_secret_path.write_text("{}", encoding="utf-8")
+
+    def fake_run_gmail_oauth_flow(
+        *,
+        client_secret_path: Path,
+        token_path: Path,
+        port: int,
+        open_browser: bool,
+        timeout_seconds: int,
+        auth_url_callback,
+    ) -> GmailAuthResult:
+        assert client_secret_path == client_secret_path_arg
+        assert token_path == token_path_arg
+        assert port == 8765
+        assert open_browser is False
+        assert timeout_seconds == 12
+        auth_url_callback("https://accounts.google.com/o/oauth2/v2/auth?fixture=1")
+        return GmailAuthResult(
+            token_path=token_path,
+            scope="https://www.googleapis.com/auth/gmail.readonly",
+            expires_at="2026-09-01T20:00:00+00:00",
+        )
+
+    client_secret_path_arg = client_secret_path
+    token_path_arg = token_path
+    monkeypatch.setattr("marketlab.cli.run_gmail_oauth_flow", fake_run_gmail_oauth_flow)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "gmail",
+            "auth",
+            "--client-secret",
+            str(client_secret_path),
+            "--token",
+            str(token_path),
+            "--port",
+            "8765",
+            "--no-browser",
+            "--timeout-seconds",
+            "12",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (
+        "authorization_url=https://accounts.google.com/o/oauth2/v2/auth?fixture=1" in result.output
+    )
+    assert f"gmail_token_path={token_path}" in result.output
+    assert "gmail_scope=https://www.googleapis.com/auth/gmail.readonly" in result.output
+
+
+def test_gmail_bulltard_recap_outputs_cached_recap_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_secret_path = tmp_path / "client-secret.json"
+    token_path = tmp_path / "gmail-token.json"
+    output_root = tmp_path / "inbox"
+    client_secret_path.write_text("{}", encoding="utf-8")
+    token_path.write_text("{}", encoding="utf-8")
+
+    def fake_fetch_bulltard_recap_from_gmail(
+        *,
+        source_date: date,
+        client_secret_path: Path,
+        token_path: Path,
+        output_root: Path,
+        query: str | None,
+        max_results: int,
+        overwrite: bool,
+    ) -> GmailBulltardRecapResult:
+        assert source_date == date(2026, 9, 1)
+        assert client_secret_path == client_secret_path_arg
+        assert token_path == token_path_arg
+        assert output_root == output_root_arg
+        assert query == "fixture query"
+        assert max_results == 5
+        assert overwrite is True
+        return GmailBulltardRecapResult(
+            source_date=source_date,
+            message_id="message-1",
+            thread_id="thread-1",
+            subject="Bulltard recap",
+            sender="James <james@example.com>",
+            received_at="Tue, 1 Sep 2026 13:00:00 -0700",
+            recap_path=output_root / "recap-2026-09-01.html",
+            signed_url="https://substack.com/redirect/fixture?j=token",
+            query=query or "",
+        )
+
+    client_secret_path_arg = client_secret_path
+    token_path_arg = token_path
+    output_root_arg = output_root
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_bulltard_recap_from_gmail",
+        fake_fetch_bulltard_recap_from_gmail,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "gmail",
+            "bulltard-recap",
+            "--date",
+            "2026-09-01",
+            "--client-secret",
+            str(client_secret_path),
+            "--token",
+            str(token_path),
+            "--output-root",
+            str(output_root),
+            "--query",
+            "fixture query",
+            "--max-results",
+            "5",
+            "--overwrite",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"gmail_recap_path={output_root / 'recap-2026-09-01.html'}" in result.output
+    assert "gmail_message_id=message-1" in result.output
+    assert "gmail_subject=Bulltard recap" in result.output
+    assert "gmail_query=fixture query" in result.output
 
 
 def test_regime_no_args_shows_help_without_traceback() -> None:
