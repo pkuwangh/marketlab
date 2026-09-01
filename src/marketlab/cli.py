@@ -217,7 +217,7 @@ def root(
     configure_logging(log_level.value)
 
 
-@gmail_app.command("auth")
+@gmail_app.command("auth", no_args_is_help=True)
 def gmail_auth(
     client_secret_path: Path = typer.Option(
         DEFAULT_GMAIL_CLIENT_SECRET_PATH,

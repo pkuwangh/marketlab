@@ -127,7 +127,7 @@ backfill, and focused research surfaces.
 
 ```bash
 ./bin/marketlab --help
-./bin/marketlab gmail auth
+./bin/marketlab gmail auth --client-secret secrets/google-oauth-client.json
 ./bin/marketlab gmail bulltard-recap --date 2026-09-01
 ./bin/marketlab bulltard --help
 ./bin/marketlab bulltard inspect-recap data/inbox/bulltard/recap-2026-08-26.html

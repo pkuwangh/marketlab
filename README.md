@@ -105,7 +105,7 @@ Gmail access is read-only and uses local OAuth credentials. Put a Google OAuth d
 JSON file at `secrets/google-oauth-client.json`, then authorize once:
 
 ```bash
-./bin/marketlab gmail auth
+./bin/marketlab gmail auth --client-secret secrets/google-oauth-client.json
 ```
 
 After authorization, the token is stored at `secrets/gmail-token.json`. Both `secrets/` and

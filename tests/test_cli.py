@@ -769,6 +769,16 @@ def test_gmail_no_args_shows_help_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
+def test_gmail_auth_no_args_shows_help_without_default_path_error() -> None:
+    result = CliRunner().invoke(app, ["gmail", "auth"])
+
+    assert result.exit_code != 0
+    assert "Authorize read-only Gmail access" in result.output
+    assert "--client-secret" in result.output
+    assert "Invalid value" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_gmail_auth_outputs_token_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
