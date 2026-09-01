@@ -74,6 +74,9 @@ Implemented regime calibration/action-state foundation:
 
 Implemented portfolio policy and local store foundation:
 
+- Top-level `daily` runs the normal research cycle: market source refresh, regime snapshot,
+  Gmail recap acquisition when credentials exist, Bulltard capture/validation/outcomes when a
+  recap is available, report/chart rendering, and DuckDB store refresh.
 - Portfolio policy snapshots under `data/snapshots/portfolio/policy/`.
 - `policy snapshot` maps saved regime/action evidence into bounded marginal beta, cash, overlay, and single-name sleeve posture.
 - `report daily` renders the human-facing daily posture report with regime, market-signal, policy, and candidate context.
@@ -99,15 +102,8 @@ Not yet implemented:
 - VIX term structure, fear/greed or sentiment/positioning observations.
 - Stronger breadth, sentiment/positioning, VIX term structure, and richer credit/liquidity calibration.
 - Migration tooling to move old flat snapshot files into the canonical nested layout and optionally retire read fallback.
-- Dedicated market-signal producer module/CLI; current v0 signal generation still lives inside the regime workflow.
+- A standalone market-signal production command separate from `regime snapshot`; current v0 signal generation still lives inside the regime workflow.
 - Long-history threshold calibration and real portfolio accounting beyond the v0 beta-scaled proxy.
-
-Verified live on `2026-08-26`:
-
-- Ranked option trade rows: 40
-- Trades Of Interest tickers: `META`, `XAR`, `SRRK`, `DKS`, `QXO`
-- Ticker detail fetches: 5
-- Ticker detail failures: 0
 
 Generated observations are written under `data/observations/`. Debug HTML under `data/debug/` is only parser evidence and is not part of the product surface.
 
@@ -128,6 +124,7 @@ backfill, and focused research surfaces.
 ```bash
 ./bin/marketlab --help
 ./bin/marketlab gmail auth --client-secret secrets/google-oauth-client.json
+./bin/marketlab gmail auth --no-browser --port 8765
 ./bin/marketlab gmail bulltard-recap --date 2026-09-01
 ./bin/marketlab bulltard --help
 ./bin/marketlab bulltard inspect-recap data/inbox/bulltard/recap-2026-08-26.html
@@ -256,7 +253,7 @@ Non-goals for this milestone:
 
 - No portfolio construction.
 - No automated trade recommendations.
-- No broad database abstraction unless JSONL stops being workable for these replay queries.
+- No database-first redesign; JSONL remains the source of truth and DuckDB is only a rebuildable query layer.
 - No LLM interpretation in the core scoring path.
 
 First useful M2 outputs:
@@ -265,8 +262,6 @@ First useful M2 outputs:
 ./bin/marketlab bulltard daily --date 2026-08-28 data/inbox/bulltard/recap-2026-08-28.html --fetch-prices --validate --outcomes
 ./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-28
 ```
-
-The command names can change later, but the deliverable cannot: candidate validation plus measured outcomes.
 
 ## Milestone 3 - Market Regime Foundation
 
@@ -292,7 +287,7 @@ Current implementation notes:
 
 - `regime snapshot --fetch-prices` refreshes the regime proxy price set and writes a snapshot.
 - `regime outcomes` replays saved regime snapshots against forward SPY/QQQ behavior.
-- `bulltard daily` no longer accepts `--regime`; combined daily orchestration should be top-level later, not nested under Bulltard.
+- `bulltard daily` no longer accepts `--regime`; combined daily orchestration now lives at top-level `marketlab daily`.
 - Regime outcome tables report available forward rows separately and omit empty horizons from the default display.
 
 Verified live:
@@ -314,11 +309,11 @@ Known limitations:
 - Volatility is currently represented by VIX, VVIX where available, and SPY realized volatility, not VIX term structure.
 - Breadth and credit/liquidity are ETF proxies, not full market breadth or financing-condition datasets.
 - Sentiment/positioning is not implemented.
-- The current composite has not been calibrated across enough history to support portfolio policy.
+- The current composite has not been calibrated across enough history to support trusted portfolio policy beyond the provisional v0 mapper.
 
 Non-goals for this milestone:
 
-- No portfolio sizing policy.
+- No portfolio sizing policy inside the M3 regime layer.
 - No trade automation.
 - No optimization loop over thresholds.
 
@@ -327,44 +322,6 @@ Non-goals for this milestone:
 Current status: complete v0.
 
 Goal: make the market-regime engine richer than simple SPY/QQQ trend by adding independent market signal families that directly affect marginal exposure decisions.
-
-Target v0 scope:
-
-- Add a market-signal snapshot layer under `data/snapshots/market/signals/` or an equivalent local path.
-- Represent signal rows with date, family, name, value, status, source, availability date/time, and feature version.
-- Add volatility-structure observations:
-  - VIX level and change
-  - VIX term structure where data is practical
-  - realized-vs-implied volatility
-  - VVIX or a vol-of-vol proxy if source access is reliable
-- Add sentiment/positioning observations:
-  - fear/greed-style risk appetite, initially via manual import if needed
-  - put/call or positioning proxies later when source access is clear
-- Strengthen breadth beyond ETF proxies:
-  - percentage above moving averages
-  - new highs/lows
-  - advance/decline or equivalent breadth series if practical
-- Improve credit/liquidity evidence only after the above exists.
-- Update `regime snapshot` to consume these market-signal snapshots and display family-level evidence, missing-source status, and contradictions.
-
-Exit criterion:
-
-- A regime snapshot shows independent market signal families, not just index price features.
-- Missing signal families are explicit and reduce confidence rather than silently disappearing.
-- Each family can be replayed against forward SPY/QQQ returns and drawdowns.
-
-First implementation slice:
-
-- Create the signal-row model, writer/loader, and compact table formatter.
-- Wire current regime component evidence into this market-signal snapshot format without changing the composite score yet.
-- Add one new signal family after the snapshot contract exists, starting with volatility structure if a stable source is available, otherwise a manual import path.
-
-Non-goals for this milestone:
-
-- No portfolio policy yet.
-- No source shopping rabbit hole before the signal snapshot format exists.
-- No large data warehouse migration.
-- No Bulltard-driven market model.
 
 Completed scope:
 
@@ -475,7 +432,7 @@ Known limitations:
 
 - The current action thresholds are candidate rules, not calibrated portfolio policy.
 - Existing local snapshots cover only a small recent sample unless a longer historical run is generated.
-- This milestone measures market pressure/action states only; it does not yet choose exact cash percentages, covered-call overwrite levels, or 60-90 DTE option budgets.
+- This milestone measures market pressure/action states only; the v0 policy layer maps them to provisional bands, not exact real-account cash percentages, covered-call overwrite levels, or 60-90 DTE option budgets.
 - Pressure bucket replay needs longer saved history before top-decile rows are statistically meaningful.
 
 ## Milestone 6 - Portfolio Policy MVP
@@ -598,21 +555,7 @@ Candidates:
 
 Rule: each expansion needs an expected use in validation, decision journaling, outcomes, or regime. Otherwise it waits.
 
-## Recent Commits
+## Change History
 
-- `3623804` - Add portfolio policy snapshots
-- `476b8ef` - Add local research store
-- `a066a55` - Add VVIX market signal
-- `70b88ec` - Add market signal snapshots
-- `4a8146e` - Handle partial Yahoo daily bars
-- `155c1b5` - Clean up outcome summary tables
-- `20c952f` - Mark market regime milestone complete
-- `68c38e8` - Add regime to Bulltard daily workflow
-- `dc873b7` - Replay market regime outcomes
-- `30a628c` - Add market regime snapshots
-- `1754ccb` - Use stock volume as liquidity gate
-- `5ed773c` - Mark candidate validation milestone complete
-- `51fd905` - Replay saved outcomes from daily workflow
-- `186fe71` - Run daily validation with price refresh
-- `4cedf90` - Refresh candidate prices automatically
-- `3466745` - Document yfinance price source
+Implementation history is intentionally not duplicated here because it goes stale quickly. Use
+`git log --oneline` for the current commit sequence and keep this file focused on milestone state.

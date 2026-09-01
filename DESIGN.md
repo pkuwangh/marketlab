@@ -1,7 +1,7 @@
 # Market Regime & Large-Cap Opportunity Research System
 
-**High-Level Design - Version 0.9**
-**Status:** Two-engine, market-regime-first implementation baseline with explicit rare-action operating objective
+**High-Level Design - Version 1.0**
+**Status:** Two-engine, local-first research loop with Gmail recap acquisition, reproducible snapshots, rare-action regime policy, and rebuildable DuckDB query state
 **Primary audience:** coding/research agents and the human researcher
 
 > **Purpose:** Build a durable, testable research process that (1) sizes marginal market exposure while maintaining a permanent long-term core in SPY/QQQ and (2) identifies unusually attractive multi-month opportunities in large, fundamentally viable, options-liquid individual stocks.
@@ -138,7 +138,7 @@ The two engines answer different questions and should not be blended prematurely
 | Market regime | Is the market stretched enough to scale down/protect, washed out enough to scale up/redeploy, or quiet enough to do nothing? | Trend, VIX/VVIX/volatility term structure, breadth, credit/liquidity, sentiment/positioning | Primary near-term engine |
 | Single-name opportunity | Which large, liquid stocks have multi-month asymmetric opportunities worth using the tactical risk budget on? | Bulltard signals, price/relative strength, fundamentals, catalysts, options liquidity | Secondary until regime evidence is credible |
 
-Portfolio policy may exist as a bounded v0 research proxy, but it should remain provisional until the market-regime engine has a more credible evidence base than simple index trend and measured replay. The single-name engine can continue collecting candidates in parallel, but it should not drive aggregate market exposure.
+Portfolio policy exists as a bounded v0 research proxy, but it remains provisional until the market-regime engine has longer-history calibration and real portfolio accounting. The single-name engine can continue collecting candidates in parallel, but it should not drive aggregate market exposure.
 
 ## Engine Interaction
 
@@ -166,17 +166,18 @@ Agent calls should have explicit inputs and structured outputs. For example, a B
 
 ## Execution model
 
-Development should begin as an explicitly invoked research workflow (CLI and/or notebook), not as an automated trading service. Once ingestion and snapshot semantics are stable, selected collection jobs may be scheduled. A typical deterministic run is: ingest → validate → build snapshot → compute shared features → score SPY/QQQ regime → extract/refresh Bulltard candidates → gate/rank single-name opportunities → invoke bounded critics/research agents → calculate portfolio posture/risk budget → persist → render report.
+The current operating path is an explicitly invoked CLI workflow, not an automated trading service. Once ingestion and snapshot semantics are stable over repeated use, selected collection jobs may be scheduled. A typical deterministic run is: refresh market sources → compute shared features and market-signal snapshots → score SPY/QQQ regime → fetch the Bulltard recap from Gmail or a saved artifact → extract/validate single-name candidates → calculate portfolio posture/risk budget → persist → render report/chart outputs.
 
-| Mode                | Typical invocation                 | Behavior                                                                                       |
-|---------------------|------------------------------------|------------------------------------------------------------------------------------------------|
-| Manual research     | marketlab regime --date YYYY-MM-DD | Reproduce a specific historical official signal from frozen data.                              |
-| Live preview        | marketlab regime --live            | Calculate a provisional intraday view without changing the official historical record.         |
-| Scheduled ingestion | cron → run_daily_pipeline.py       | Collect data and create snapshots after the workflow is stable; no autonomous trade execution. |
+| Mode                 | Typical invocation                                      | Behavior                                                                                       |
+|----------------------|---------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| Routine daily run    | marketlab daily                                         | Refresh local observations, write current snapshots, fetch the recap when Gmail is authorized, render report/chart output, and rebuild DuckDB. |
+| Historical/debug run | marketlab daily --date YYYY-MM-DD                       | Reproduce or rebuild a specific date from local/fetched sources using explicit snapshot identifiers where needed. |
+| Focused research     | marketlab regime snapshot / bulltard daily / policy outcomes | Run one subsystem for backfills, debugging, or evidence review. |
+| Scheduled ingestion  | cron → marketlab daily                                  | Optional later trigger after the workflow is stable; no autonomous trade execution. |
 
 ## Suggested initial storage
 
-A lightweight local research stack such as DuckDB + Parquet is appropriate initially. Raw observations should be immutable; normalized tables and feature tables should reference the source snapshot and version that produced them. Suggested logical tables include market_prices, volatility, breadth, macro, sentiment, security_master, universe_membership, security_fundamentals, option_liquidity, daily_features, regime_snapshots, single_name_features, opportunity_snapshots, candidate_state_transitions, bulltard_recaps, bulltard_signals, portfolio_snapshots, research_experiments, model_versions, and signal_outcomes.
+A lightweight local research stack is the default: JSON/JSONL snapshots are the durable source of truth, DuckDB is a rebuildable query layer, and Parquet exports are optional. Raw observations should be immutable; normalized tables and feature tables should reference the source snapshot and version that produced them. Suggested logical tables include market_prices, volatility, breadth, macro, sentiment, security_master, universe_membership, security_fundamentals, option_liquidity, daily_features, regime_snapshots, single_name_features, opportunity_snapshots, candidate_state_transitions, bulltard_recaps, bulltard_signals, portfolio_snapshots, research_experiments, model_versions, and signal_outcomes.
 
 # 4. Time, Snapshots & Reproducibility
 
@@ -314,7 +315,7 @@ The subscription should be treated as a structured research source rather than a
 
 The goal is not to archive the Bulltard app or mirror its database. The app is an interface to a subscription data source. MarketLab should retrieve the specific views needed for a research question, parse them into structured observations, and store only the observations and provenance needed to reproduce our own analysis.
 
-Because the daily database/link may be ephemeral, **data ingestion may eventually be automated even though trading remains manual**. The desired automation boundary is ingest/extract only: use the recap link while it is valid, pull a narrow set of relevant rows, and make those rows available for testing candidate quality. There is no broker integration or autonomous order path.
+Because the daily database/link may be ephemeral, **recap acquisition and data ingestion are automated even though trading remains manual**. The automation boundary is ingest/extract only: use the recap link while it is valid, pull a narrow set of relevant rows, and make those rows available for testing candidate quality. There is no broker integration or autonomous order path.
 
 ## Confirmed daily-access mechanics
 
@@ -372,28 +373,28 @@ This ingester is deterministic infrastructure, **not an agent browsing task**. P
 
 The original signed Substack URL and scanner token should be treated as short-lived capabilities. They must never be committed to Git or exposed in generated public reports. Local operational logs may show exact temporary URLs when useful for debugging; redaction belongs in public/exported artifacts or explicit commands, not as a default feature that obscures local bring-up.
 
-A suggested v0 local layout is:
+The v0 local layout is:
 
 ```text
 data/inbox/bulltard/
-└── recap-2026-08-24.html        # saved email/input, gitignored
+└── recap-2026-08-24.html        # Gmail-cached or manually saved recap input, gitignored
 
 data/observations/bulltard/
 └── ranked_option_trades/
     └── 2026-08-24.jsonl         # parsed rows + minimal provenance, gitignored
 ```
 
-Move to DuckDB/Parquet when the row volume or query patterns justify it. Do not introduce a database solely to make the skeleton look complete.
+The local DuckDB database is a rebuildable query index over these files, not the canonical source of truth. Optional Parquet exports are for backup/interchange.
 
 ### Ingest command contract
 
-The first implementation should expose a boring, repeatable command such as:
+The lower-level ingest command remains a boring, repeatable fallback for one saved recap:
 
 ```bash
 marketlab bulltard ingest --date 2026-08-24 --view ranked-option-trades data/inbox/bulltard/recap-2026-08-24.html
 ```
 
-Its responsibility is only to: read the requested recap, extract the signed link, establish daily access, retrieve one named view, parse rows, write structured observations, and report what it produced. Candidate scoring is a separate step. A failed ingest should fail visibly and should not be filled from a later date.
+Its responsibility is only to: read the requested recap, extract the signed link, establish daily access, retrieve one named view, parse rows, write structured observations, and report what it produced. The routine path is `marketlab daily`, which handles Gmail acquisition before calling the Bulltard workflow when a recap is available. A failed ingest should fail visibly and should not be filled from a later date.
 
 ## Research questions
 
@@ -634,7 +635,7 @@ Build the simplest version that can teach us something, then add sophistication 
 
 - Which independent fundamental/estimate-revision data sources are practical and point-in-time enough for v0?
 
-| Recommended immediate next step: finish the remaining research-boundary hardening path. Prioritize immutable source-observation history, policy hysteresis/cooldowns, and the first real opportunity lifecycle/gating model. |
+| Recommended immediate next step: run the fresh daily loop for several real sessions, then calibrate rare-action thresholds and policy bands against longer saved history before adding new signal families. |
 |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 # 14. Implementation Infrastructure
@@ -655,7 +656,7 @@ The initial infrastructure should optimize for iteration speed and scientific re
 
 - repo/: source code, tests, notebooks, configs, migration/schema definitions, AGENTS.md, and documentation.
 
-- data/inbox/: user-supplied inputs such as saved recaps. Preserve acquisition/availability timestamps when known.
+- data/inbox/: Gmail-cached or manually supplied inputs such as Bulltard recaps. Preserve acquisition/availability timestamps when known.
 
 - data/observations/: structured rows ingested from market data, option-liquidity sources, fundamentals, and external research signals.
 
@@ -663,7 +664,7 @@ The initial infrastructure should optimize for iteration speed and scientific re
 
 - data/snapshots/: named prior-close, intraday-preview, and official-EOD snapshots, including eligible-universe and opportunity state.
 
-- marketlab.duckdb: active local metadata/query database; periodically checkpoint or export for backup.
+- marketlab.duckdb: rebuildable local metadata/query database generated from `data/`; periodically checkpoint or export only after the source files are worth preserving.
 
 - reports/: reproducible daily reports, research figures, and experiment summaries.
 
@@ -758,7 +759,7 @@ Useful cohort views include: Bulltard signals by type; repeated-flow episodes; c
 
 - Every exported figure should embed or accompany the date range, snapshot version, universe version when relevant, feature version, regime/opportunity model version, and code/experiment revision.
 
-## Suggested command surface
+## Current and Future Command Surface
 
 Visualization should be reproducible from the CLI rather than existing only inside a notebook. Example commands:
 
@@ -766,23 +767,19 @@ Visualization should be reproducible from the CLI rather than existing only insi
 
 - marketlab daily --date 2026-08-24
 
-- marketlab chart regime --symbol SPY --start 2024-01-01 --model regime_v3
+- marketlab chart regime --start 2026-08-24 --end 2026-08-24
 
-- marketlab chart components --date 2026-08-24
+- marketlab chart opportunity --date 2026-08-24 MU
 
-- marketlab chart event-study --transition neutral,cautious --horizon 65
+- marketlab report daily --date 2026-08-24
 
-- marketlab chart forward-buckets --symbol QQQ --horizons 40,50,65
+- marketlab regime pressure-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 
-- marketlab opportunity show --symbol MU --date 2026-08-24
+- marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 
-- marketlab chart opportunity --symbol MU --start 2026-01-01
+- marketlab store query "select source_date, policy_state, marginal_beta_target from policy_snapshots order by source_date desc limit 10"
 
-- marketlab opportunity candidates --date 2026-08-24 --state validated,active_setup
-
-- marketlab chart opportunity-buckets --horizons 20,40,65,126
-
-- marketlab report --date 2026-08-24 --with-charts
+Future command surfaces such as event studies, forward-bucket charts, and lifecycle-specific opportunity views should be added only after the underlying measurements are stable enough to justify them.
 
 This architecture makes visual research cheap during exploration while keeping the final claims auditable. A visual relationship is treated as a hypothesis generator; the forward-return and drawdown analyses decide whether the relationship survives statistical testing.
 
@@ -850,12 +847,12 @@ marketlab/
 
 - Keep the two-engine split explicit in code and documentation: `regime` owns aggregate market context, while `bulltard` and later `opportunity` own single-name candidate evidence.
 
-- Keep hardening the market-signal snapshot layer as the evidence boundary for regime and policy. The current v0 consumes saved/generated signal rows; next steps are moving signal production into a dedicated module, adding calibrated signal families, and replay-testing policy decisions by signal version.
+- Keep hardening the market-signal snapshot layer as the evidence boundary for regime and policy. The current v0 consumes saved/generated signal rows; next steps are longer-history calibration, measured source expansion, and a standalone signal-production command only if the regime workflow becomes too coupled.
 
-- Continue Market Signal Expansion with volatility structure and sentiment/positioning only where source access is practical and measured outcome replay improves:
-  - VIX level, VIX change, realized-vs-implied volatility, and VIX term structure where data is practical.
-  - VVIX or a vol-of-vol proxy if a stable source is available.
-  - Fear/greed-style sentiment or equivalent risk-appetite observations, using manual import first if a reliable fetcher is not available.
+- Continue Market Signal Expansion only where source access is practical and measured outcome replay improves:
+  - VIX term structure and realized-vs-implied volatility where the data source is reliable.
+  - Fear/greed-style sentiment or equivalent risk-appetite observations from a stable source-specific importer.
+  - Put/call or positioning proxies only after source semantics are clear.
 
 - Strengthen breadth and credit/liquidity after the first policy loop reveals a measured weakness. Prefer one robust signal per family over many correlated variants.
 
@@ -865,7 +862,7 @@ marketlab/
 
 - Leave Bulltard work focused on candidate generation and measured single-name outcomes. The portfolio policy consumes candidate context, but Bulltard must not drive aggregate market exposure.
 
-- Extend the first canonical regime/policy visualization: keep SPY/QQQ price, regime/action shading, stretch/washout pressure, component panels, and policy state visible; add real current portfolio beta/cash once portfolio accounting exists.
+- Continue extending the canonical regime/policy visualization: keep SPY/QQQ price, regime/action shading, stretch/washout pressure, component panels, and policy state visible; add real current portfolio beta/cash once portfolio accounting exists.
 
 - Extend the first canonical single-name visualization after the opportunity engine exists: add lifecycle markers, opportunity-family scores, and option-liquidity panels beyond the current candidate-validation view.
 

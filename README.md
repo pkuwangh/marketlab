@@ -23,7 +23,9 @@ Implemented:
 - Trades Of Interest parsing from the recap.
 - Ticker detail retrieval and flow-history parsing.
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
-- One-command daily Bulltard workflow for candidate capture, optional price refresh, validation, and outcome replay.
+- Top-level `daily` workflow for market refresh, Gmail recap acquisition, Bulltard capture,
+  validation, reporting, charting, and store refresh. A Bulltard-only daily command remains
+  available for focused debugging.
 - Daily OHLCV price fetch from Yahoo Finance through `yfinance` into local observations.
 - Price and scalar market-series observations with availability/retrieval metadata and non-overwrite guards for same-date corrections.
 - Local daily OHLCV CSV import into the same price observation format.
@@ -158,18 +160,21 @@ This searches Gmail for the recap, caches it as
 `data/inbox/bulltard/recap-YYYY-MM-DD.html`, verifies that it contains a signed Bulltard app
 link, and leaves the existing Bulltard parser/ingester to do the rest.
 
-## Bulltard Utilities
+## Bulltard Debug Utilities
+
+Routine use should go through `./bin/marketlab daily`. The commands in this section are lower-level
+debugging and manual-fallback surfaces for a specific saved recap file.
 
 Inspect a local recap and print the signed source URL:
 
 ```bash
-uv run marketlab bulltard inspect-recap tests/fixtures/bulltard/recap.html
+./bin/marketlab bulltard inspect-recap tests/fixtures/bulltard/recap.html
 ```
 
 Retrieve and parse the first targeted view:
 
 ```bash
-uv run marketlab bulltard ingest \
+./bin/marketlab bulltard ingest \
   --date 2026-08-24 \
   --view ranked-option-trades \
   data/inbox/bulltard/recap-2026-08-24.html
@@ -182,7 +187,7 @@ view into `data/debug/bulltard/...` for parser troubleshooting, and writes parse
 Retrieve and parse the Bulltard detail page for one ticker from the same signed recap access:
 
 ```bash
-uv run marketlab bulltard ticker \
+./bin/marketlab bulltard ticker \
   INTC \
   data/inbox/bulltard/recap-2026-08-24.html \
   --date 2026-08-24
@@ -195,7 +200,7 @@ Ticker flow observations are written under
 Parse the recap's Trades Of Interest section into local observations:
 
 ```bash
-uv run marketlab bulltard trades-of-interest \
+./bin/marketlab bulltard trades-of-interest \
   --date 2026-08-26 \
   data/inbox/bulltard/recap-2026-08-26.html
 ```
@@ -203,13 +208,13 @@ uv run marketlab bulltard trades-of-interest \
 Review ranked candidates and attach any ticker-flow detail already collected:
 
 ```bash
-uv run marketlab bulltard candidates --date 2026-08-26
+./bin/marketlab bulltard candidates --date 2026-08-26
 ```
 
-Run the daily Bulltard loop in one command:
+Run the Bulltard-only daily loop against a saved recap file:
 
 ```bash
-uv run marketlab bulltard daily \
+./bin/marketlab bulltard daily \
   --date 2026-08-26 \
   data/inbox/bulltard/recap-2026-08-26.html
 ```
@@ -219,7 +224,7 @@ fetches ticker detail for the Trades Of Interest names, and prints the candidate
 Use `--top-ranked N` to also fetch detail for the top N ranked database names, or
 `--no-ticker-details` to skip detail fetches.
 
-Run the full daily Bulltard candidate loop:
+Run the full Bulltard-only candidate loop:
 
 ```bash
 ./bin/marketlab bulltard daily \
@@ -342,7 +347,8 @@ Inspect or query the store:
 
 ## Candidate Validation
 
-For normal daily use, let `bulltard daily --fetch-prices` refresh the candidate price set. To refresh a captured date explicitly:
+For normal daily use, let `./bin/marketlab daily` refresh prices, acquire the recap, validate
+candidates, and replay outcomes. To refresh a captured Bulltard date explicitly:
 
 ```bash
 ./bin/marketlab bulltard refresh-prices \
@@ -398,15 +404,25 @@ Replay forward outcomes after enough future price rows exist:
 ./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26
 ```
 
-If you save the whole Gmail web page, the file may contain only Gmail/Substack shell links rather
-than the database link. For bring-up, use a saved message artifact or a small local text file
-containing the copied link address for the recap's database/app button. Gmail may wrap the useful
-Substack redirect as a `https://www.google.com/url?q=...` link; the tool unwraps that form.
+If you need a manual fallback, pass a local recap artifact or a small text file containing the
+recap's database/app link to the lower-level Bulltard commands. Gmail may wrap the useful Substack
+redirect as a `https://www.google.com/url?q=...` link; the tool unwraps that form.
+
+## Reset Local Research Data
+
+To rebuild from scratch while keeping Gmail authorization intact:
+
+```bash
+rm -rf data reports marketlab.duckdb marketlab.duckdb.wal marketlab.duckdb.tmp
+./bin/marketlab daily
+```
+
+Do not delete `secrets/` unless you intentionally want to redo Gmail OAuth.
 
 CLI logging uses Loguru. Set verbosity with:
 
 ```bash
-uv run marketlab --log-level DEBUG bulltard inspect-recap tests/fixtures/bulltard/recap.html
+./bin/marketlab --log-level DEBUG bulltard inspect-recap tests/fixtures/bulltard/recap.html
 ```
 
 The live research database, inbox files, generated observations, debug payloads, reports, and credentials are intentionally gitignored.
