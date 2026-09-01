@@ -117,21 +117,29 @@ By default this opens a browser, asks Google for Gmail read-only access, receive
 on `127.0.0.1`, and writes `secrets/gmail-token.json`. That token is what future runs use and
 refresh locally. Keep both files under `secrets/`; both `secrets/` and `data/` are gitignored.
 
-If the command runs on a machine without a browser, use a fixed callback port and open the
-printed `authorization_url` yourself:
+If the command runs on a machine without a normal interactive browser, or Google shows a
+message like "JavaScript turned off" after the command opens Chrome, use the manual browser
+path instead. Pick a fixed callback port and have MarketLab print the `authorization_url`:
 
 ```bash
 ./bin/marketlab gmail auth --no-browser --port 8765
 ```
 
-If that machine is remote over SSH, forward the same port first, for example:
+Open the printed URL in a normal local browser. If MarketLab is running on a remote machine
+over SSH, forward the same port before running the auth command:
 
 ```bash
 ssh -L 8765:127.0.0.1:8765 YOUR_REMOTE
 ```
 
-The default `--port 0` chooses any free local port and is the easiest option on a normal local
-desktop. A fixed `--port` is mainly for SSH forwarding or firewall rules.
+After approval, Google redirects to `127.0.0.1:8765`, the SSH tunnel sends that callback back
+to MarketLab, and the command should print `MarketLab Gmail authorization complete.` The default
+`--port 0` chooses any free local port and is the easiest option on a normal local desktop. A
+fixed `--port` is mainly for SSH forwarding or firewall rules.
+
+If Google says the app is still in testing and only developer-approved testers can access it,
+add your Gmail address under the project's OAuth consent screen test users, then rerun the
+auth command and open the new URL.
 
 After auth, the daily workflow can fetch the recap and create `data/inbox/bulltard/`
 automatically:
