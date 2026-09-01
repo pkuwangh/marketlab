@@ -14,6 +14,7 @@ from marketlab.bulltard.models import (
 )
 
 _MONEY_RE = re.compile(r"^\$?([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*([KMB])?$", re.IGNORECASE)
+PARSER_VERSION = "bulltard_html_parsers_v0"
 
 
 class ParserError(ValueError):

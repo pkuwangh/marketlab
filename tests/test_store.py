@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +30,7 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
     regime_root = tmp_path / "regime"
     signal_root = tmp_path / "signals"
     candidate_root = tmp_path / "candidates"
+    bulltard_root = tmp_path / "observations" / "bulltard"
     db_path = tmp_path / "marketlab.duckdb"
     parquet_root = tmp_path / "parquet"
 
@@ -170,6 +172,83 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
         snapshot_root=candidate_root,
         source_date=source_date,
     )
+    _write_jsonl(
+        bulltard_root / "ranked_option_trades" / "2026-08-28.jsonl",
+        [
+            {
+                "source": "bulltard",
+                "source_date": "2026-08-28",
+                "view": "ranked-option-trades",
+                "ingest_id": "fixture-ingest",
+                "parser_version": "fixture_parser",
+                "side": "bullish",
+                "symbol": "META",
+                "trade_count": 12,
+                "last_trade_date": "2026-08-28",
+                "avg_dte": 45.0,
+                "score": 10.0,
+                "premium": 24_000_000.0,
+            }
+        ],
+    )
+    _write_jsonl(
+        bulltard_root / "trades_of_interest" / "2026-08-28.jsonl",
+        [
+            {
+                "source": "bulltard",
+                "source_date": "2026-08-28",
+                "view": "trades-of-interest",
+                "ingest_id": "fixture-ingest",
+                "parser_version": "fixture_parser",
+                "rank": 1,
+                "symbol": "META",
+                "note": "fixture note",
+            }
+        ],
+    )
+    _write_jsonl(
+        bulltard_root / "ticker_flow" / "META" / "2026-08-28.jsonl",
+        [
+            {
+                "source": "bulltard",
+                "source_date": "2026-08-28",
+                "view": "ticker-flow-history",
+                "ingest_id": "fixture-ingest",
+                "parser_version": "fixture_parser",
+                "symbol": "META",
+                "traded_at": "2026-08-28T10:30",
+                "order_type": "Calls Bought",
+                "side": "bullish",
+                "contract": "META 2026-10-16 800C",
+                "contract_type": "call",
+                "expiry": "2026-10-16",
+                "contracts": 100,
+                "premium": 250_000.0,
+                "is_older": False,
+            }
+        ],
+    )
+    _write_json(
+        bulltard_root / "ranked_option_trades" / "2026-08-28.meta.json",
+        {
+            "source": "bulltard",
+            "record_type": "bulltard-ingest-run",
+            "schema_version": "bulltard_ingest_v0",
+            "ingest_id": "fixture-ingest",
+            "source_date": "2026-08-28",
+            "retrieved_at": "2026-08-28T22:00:00Z",
+            "view": "ranked-option-trades",
+            "symbol": None,
+            "final_url": "https://app.jamesbulltard.com/ranked_option_trades",
+            "status_code": 200,
+            "content_type": "text/html",
+            "byte_count": 1234,
+            "debug_path": "debug.html",
+            "recap_path": "recap.html",
+            "parser_version": "fixture_parser",
+            "row_count": 1,
+        },
+    )
 
     result = refresh_research_store(
         db_path=db_path,
@@ -178,6 +257,7 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
         regime_snapshot_root=regime_root,
         market_signal_snapshot_root=signal_root,
         candidate_snapshot_root=candidate_root,
+        bulltard_observation_root=bulltard_root,
         parquet_root=parquet_root,
     )
 
@@ -188,6 +268,10 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
     assert counts["regime_components"] == 1
     assert counts["regime_pressure_features"] == 1
     assert counts["market_signals"] == 1
+    assert counts["bulltard_ingest_runs"] == 1
+    assert counts["bulltard_ranked_option_trades"] == 1
+    assert counts["bulltard_trades_of_interest"] == 1
+    assert counts["bulltard_ticker_flow"] == 1
     assert counts["candidate_snapshots"] == 1
     assert (parquet_root / "regime_snapshots.parquet").is_file()
 
@@ -208,3 +292,14 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
 
     summary = summarize_research_store(db_path=db_path)
     assert ("regime_snapshots", 1) in summary.rows
+
+
+def _write_json(path: Path, row: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(row, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    path.write_text(payload, encoding="utf-8")

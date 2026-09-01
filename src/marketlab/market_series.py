@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from io import StringIO
 from pathlib import Path
@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 from loguru import logger
+
+from marketlab.snapshots.models import utc_timestamp
 
 DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT = Path("data/observations/market/series")
 FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -67,6 +69,7 @@ class MarketSeriesObservation:
     availability_date: date
     value: float
     unit: str
+    retrieved_at: str | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +80,7 @@ class MarketSeriesObservation:
             "availability_date": self.availability_date.isoformat(),
             "value": self.value,
             "unit": self.unit,
+            "retrieved_at": self.retrieved_at,
         }
 
 
@@ -164,6 +168,8 @@ def fetch_fred_series(
         )
         if not rows:
             raise MarketSeriesError(f"No FRED rows returned for {normalized_series_id}")
+        retrieved_at = utc_timestamp()
+        rows = tuple(replace(row, retrieved_at=retrieved_at) for row in rows)
         logger.bind(
             series_id=normalized_series_id,
             row_count=len(rows),
@@ -227,8 +233,9 @@ def write_market_series_observations(
     rows: tuple[MarketSeriesObservation, ...],
     *,
     output_root: Path = DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+    overwrite: bool = False,
 ) -> Path:
-    """Write scalar market series observations, merging by observed date."""
+    """Write scalar market series observations, merging without silent corrections."""
 
     if not rows:
         raise MarketSeriesError("Cannot write an empty market series observation set")
@@ -243,6 +250,14 @@ def write_market_series_observations(
     }
     merged_rows = dict(existing_rows)
     for row in rows:
+        existing_row = merged_rows.get(row.observed_date)
+        if existing_row is not None and not overwrite:
+            if existing_row != row:
+                raise MarketSeriesError(
+                    "Refusing to overwrite existing market series observation with different "
+                    f"content: {output_path} {row.observed_date.isoformat()}"
+                )
+            continue
         merged_rows[row.observed_date] = row
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +346,7 @@ def _observation_from_dict(row: dict[str, Any]) -> MarketSeriesObservation:
         availability_date=date.fromisoformat(str(row["availability_date"])),
         value=float(row["value"]),
         unit=str(row["unit"]),
+        retrieved_at=_optional_str(row.get("retrieved_at")),
     )
 
 
@@ -356,6 +372,12 @@ def _required(row: dict[str, str | None], key: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"Missing {key}")
     return value.strip()
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _is_missing_value(value: object) -> bool:

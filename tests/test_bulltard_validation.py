@@ -100,7 +100,7 @@ def test_validate_bulltard_candidates_writes_price_validation_snapshot(
         limit=3,
     )
 
-    assert result.snapshot_path == snapshot_root / "2026-03-02.jsonl"
+    assert result.snapshot_path == _candidate_snapshot_path(snapshot_root, source_date)
     assert result.snapshot_path.is_file()
     assert [snapshot.symbol for snapshot in result.snapshots] == ["META", "WEAK", "THIN"]
     assert result.snapshots[0].validation_status == "confirm"
@@ -128,6 +128,32 @@ def test_validate_bulltard_candidates_writes_price_validation_snapshot(
         snapshot_root=snapshot_root,
     )
     assert loaded == result.snapshots
+
+    legacy_root = tmp_path / "legacy-snapshots"
+    legacy_root.mkdir()
+    (legacy_root / "2026-03-02.jsonl").write_text(
+        "".join(json.dumps(snapshot.to_dict()) + "\n" for snapshot in result.snapshots),
+        encoding="utf-8",
+    )
+    assert (
+        load_candidate_validation_snapshots(
+            source_date=source_date,
+            snapshot_root=legacy_root,
+        )
+        == result.snapshots
+    )
+
+
+def _candidate_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
+    source_date_value = source_date.isoformat()
+    return (
+        snapshot_root
+        / source_date_value
+        / "eod"
+        / f"{source_date_value}_eod"
+        / "bulltard_candidate_validation_rules_v0+candidate_validation_only_v0"
+        / "candidate-validation.jsonl"
+    )
 
 
 def _write_price_history(

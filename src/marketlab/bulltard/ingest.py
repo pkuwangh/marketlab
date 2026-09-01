@@ -14,6 +14,7 @@ from loguru import logger
 
 from marketlab.bulltard.models import BulltardView, IngestPlan
 from marketlab.bulltard.parsers import (
+    PARSER_VERSION,
     ParserError,
     parse_ranked_option_trades,
     parse_ticker_flow_history,
@@ -23,12 +24,14 @@ from marketlab.bulltard.recaps import (
     extract_signed_source_url,
     extract_trades_of_interest,
 )
+from marketlab.snapshots.models import utc_timestamp, write_immutable_payload
 
 DEFAULT_OBSERVATIONS_ROOT = Path("data/observations/bulltard")
 DEFAULT_DEBUG_ROOT = Path("data/debug/bulltard")
 APP_HOST = "app.jamesbulltard.com"
 APP_ORIGIN = f"https://{APP_HOST}"
 HTTP_TIMEOUT_SECONDS = 30.0
+BULLTARD_INGEST_SCHEMA_VERSION = "bulltard_ingest_v0"
 _DATE_IN_NAME_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,15}$")
 
@@ -56,6 +59,7 @@ class IngestResult:
     fetched_view: FetchedView
     row_count: int
     observation_path: Path
+    metadata_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,7 @@ class TickerIngestResult:
     fetched_page: FetchedTickerPage
     row_count: int
     observation_path: Path
+    metadata_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +95,7 @@ class TradesOfInterestIngestResult:
     row_count: int
     observation_path: Path
     symbols: tuple[str, ...]
+    metadata_path: Path | None = None
 
 
 def build_ingest_plan(
@@ -201,9 +207,31 @@ def ingest_planned_view(
 
     fetched_view = fetch_ingest_view(plan, debug_root=debug_root, client=client)
     rows = _parse_fetched_view(fetched_view)
-    fetched_view.plan.observation_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(json.dumps(row.to_dict(), sort_keys=True) + "\n" for row in rows)
-    fetched_view.plan.observation_path.write_text(payload, encoding="utf-8")
+    retrieved_at = utc_timestamp()
+    ingest_id = _ingest_id(
+        source_date=plan.source_date,
+        view=plan.view.value,
+    )
+    payload = _observation_rows_payload(rows, ingest_id=ingest_id)
+    write_immutable_payload(
+        path=fetched_view.plan.observation_path,
+        payload=payload,
+        error_cls=IngestError,
+    )
+    metadata_path = _write_ingest_metadata(
+        metadata_path=_metadata_path(fetched_view.plan.observation_path),
+        source_date=plan.source_date,
+        view=plan.view.value,
+        row_count=len(rows),
+        retrieved_at=retrieved_at,
+        final_url=fetched_view.final_url,
+        status_code=fetched_view.status_code,
+        content_type=fetched_view.content_type,
+        byte_count=fetched_view.byte_count,
+        debug_path=fetched_view.debug_path,
+        recap_path=plan.recap_path,
+        ingest_id=ingest_id,
+    )
 
     logger.bind(
         source_date=plan.source_date.isoformat(),
@@ -215,6 +243,7 @@ def ingest_planned_view(
         fetched_view=fetched_view,
         row_count=len(rows),
         observation_path=plan.observation_path,
+        metadata_path=metadata_path,
     )
 
 
@@ -321,9 +350,33 @@ def ingest_ticker_page(
     observation_path = (
         output_root / "ticker_flow" / fetched_page.symbol / f"{source_date.isoformat()}.jsonl"
     )
-    observation_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(json.dumps(row.to_dict(), sort_keys=True) + "\n" for row in rows)
-    observation_path.write_text(payload, encoding="utf-8")
+    retrieved_at = utc_timestamp()
+    ingest_id = _ingest_id(
+        source_date=source_date,
+        view="ticker-flow-history",
+        symbol=fetched_page.symbol,
+    )
+    payload = _observation_rows_payload(rows, ingest_id=ingest_id)
+    write_immutable_payload(
+        path=observation_path,
+        payload=payload,
+        error_cls=IngestError,
+    )
+    metadata_path = _write_ingest_metadata(
+        metadata_path=_metadata_path(observation_path),
+        source_date=source_date,
+        view="ticker-flow-history",
+        row_count=len(rows),
+        retrieved_at=retrieved_at,
+        final_url=fetched_page.final_url,
+        status_code=fetched_page.status_code,
+        content_type=fetched_page.content_type,
+        byte_count=fetched_page.byte_count,
+        debug_path=fetched_page.debug_path,
+        recap_path=recap_path,
+        ingest_id=ingest_id,
+        symbol=fetched_page.symbol,
+    )
 
     logger.bind(
         source_date=source_date.isoformat(),
@@ -335,6 +388,7 @@ def ingest_ticker_page(
         fetched_page=fetched_page,
         row_count=len(rows),
         observation_path=observation_path,
+        metadata_path=metadata_path,
     )
 
 
@@ -362,9 +416,31 @@ def ingest_trades_of_interest(
         raise IngestError("No Trades Of Interest entries found in recap")
 
     observation_path = output_root / "trades_of_interest" / f"{source_date.isoformat()}.jsonl"
-    observation_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(json.dumps(row.to_dict(), sort_keys=True) + "\n" for row in rows)
-    observation_path.write_text(payload, encoding="utf-8")
+    retrieved_at = utc_timestamp()
+    ingest_id = _ingest_id(
+        source_date=source_date,
+        view="trades-of-interest",
+    )
+    payload = _observation_rows_payload(rows, ingest_id=ingest_id)
+    write_immutable_payload(
+        path=observation_path,
+        payload=payload,
+        error_cls=IngestError,
+    )
+    metadata_path = _write_ingest_metadata(
+        metadata_path=_metadata_path(observation_path),
+        source_date=source_date,
+        view="trades-of-interest",
+        row_count=len(rows),
+        retrieved_at=retrieved_at,
+        final_url=None,
+        status_code=None,
+        content_type=None,
+        byte_count=None,
+        debug_path=None,
+        recap_path=recap_path,
+        ingest_id=ingest_id,
+    )
 
     symbols = tuple(row.symbol for row in rows)
     logger.bind(
@@ -379,6 +455,7 @@ def ingest_trades_of_interest(
         row_count=len(rows),
         observation_path=observation_path,
         symbols=symbols,
+        metadata_path=metadata_path,
     )
 
 
@@ -402,6 +479,80 @@ def _parse_fetched_view(fetched_view: FetchedView):
                 )
     except ParserError as exc:
         raise IngestError(str(exc)) from exc
+
+
+def _observation_rows_payload(rows, *, ingest_id: str) -> str:
+    payload_rows = []
+    for row in rows:
+        row_payload = row.to_dict()
+        row_payload["ingest_id"] = ingest_id
+        row_payload["parser_version"] = PARSER_VERSION
+        payload_rows.append(row_payload)
+    return "".join(json.dumps(row, sort_keys=True) + "\n" for row in payload_rows)
+
+
+def _write_ingest_metadata(
+    *,
+    metadata_path: Path,
+    source_date: date,
+    view: str,
+    row_count: int,
+    retrieved_at: str,
+    final_url: str | None,
+    status_code: int | None,
+    content_type: str | None,
+    byte_count: int | None,
+    debug_path: Path | None,
+    recap_path: Path,
+    ingest_id: str,
+    symbol: str | None = None,
+) -> Path:
+    payload = (
+        json.dumps(
+            {
+                "source": "bulltard",
+                "record_type": "bulltard-ingest-run",
+                "schema_version": BULLTARD_INGEST_SCHEMA_VERSION,
+                "ingest_id": ingest_id,
+                "source_date": source_date.isoformat(),
+                "retrieved_at": retrieved_at,
+                "view": view,
+                "symbol": symbol,
+                "final_url": final_url,
+                "status_code": status_code,
+                "content_type": content_type,
+                "byte_count": byte_count,
+                "debug_path": str(debug_path) if debug_path else None,
+                "recap_path": str(recap_path),
+                "parser_version": PARSER_VERSION,
+                "row_count": row_count,
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    write_immutable_payload(
+        path=metadata_path,
+        payload=payload,
+        error_cls=IngestError,
+    )
+    return metadata_path
+
+
+def _metadata_path(observation_path: Path) -> Path:
+    return observation_path.with_suffix(".meta.json")
+
+
+def _ingest_id(*, source_date: date, view: str, symbol: str | None = None) -> str:
+    parts = [source_date.isoformat(), _slug(view)]
+    if symbol:
+        parts.append(_slug(symbol))
+    parts.append(PARSER_VERSION)
+    return "__".join(parts)
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-").lower()
 
 
 def _get(client: httpx.Client, url: str, *, purpose: str) -> httpx.Response:

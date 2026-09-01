@@ -1,5 +1,8 @@
+import json
 from datetime import date, timedelta
 from pathlib import Path
+
+import pytest
 
 from marketlab.market_series import MarketSeriesObservation, write_market_series_observations
 from marketlab.market_signals import (
@@ -10,6 +13,7 @@ from marketlab.market_signals import (
 from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import (
     RegimeComponentScore,
+    RegimeError,
     RegimeSnapshot,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
@@ -22,6 +26,21 @@ from marketlab.regime import (
     refresh_regime_prices,
     write_regime_snapshot,
 )
+
+
+def test_write_regime_snapshot_refuses_different_same_date(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 28)
+    snapshot_root = tmp_path / "snapshots"
+    write_regime_snapshot(
+        _snapshot(source_date=source_date, regime="risk_on", score=2),
+        snapshot_root=snapshot_root,
+    )
+
+    with pytest.raises(RegimeError, match="Refusing to overwrite"):
+        write_regime_snapshot(
+            _snapshot(source_date=source_date, regime="risk_off", score=-2),
+            snapshot_root=snapshot_root,
+        )
 
 
 def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> None:
@@ -120,9 +139,12 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         signal_snapshot_root=signal_snapshot_root,
     )
 
-    assert result.snapshot_path == snapshot_root / "2026-08-15.json"
+    assert result.snapshot_path == _regime_snapshot_path(snapshot_root, source_date)
     assert result.snapshot_path.is_file()
-    assert result.signal_snapshot_path == signal_snapshot_root / "2026-08-15.jsonl"
+    assert result.signal_snapshot_path == _market_signal_snapshot_path(
+        signal_snapshot_root,
+        source_date,
+    )
     assert result.signal_snapshot_path.is_file()
     assert result.snapshot.regime == "risk_on"
     assert result.snapshot.score == 5
@@ -269,10 +291,10 @@ def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
     assert result.source_dates == (date(2026, 8, 14), date(2026, 8, 15))
     assert len(result.snapshot_paths) == 2
     assert len(result.signal_snapshot_paths) == 2
-    assert (snapshot_root / "2026-08-14.json").is_file()
-    assert (snapshot_root / "2026-08-15.json").is_file()
-    assert (signal_snapshot_root / "2026-08-14.jsonl").is_file()
-    assert (signal_snapshot_root / "2026-08-15.jsonl").is_file()
+    assert _regime_snapshot_path(snapshot_root, date(2026, 8, 14)).is_file()
+    assert _regime_snapshot_path(snapshot_root, date(2026, 8, 15)).is_file()
+    assert _market_signal_snapshot_path(signal_snapshot_root, date(2026, 8, 14)).is_file()
+    assert _market_signal_snapshot_path(signal_snapshot_root, date(2026, 8, 15)).is_file()
     loaded = load_regime_snapshot(source_date=end_date, snapshot_root=snapshot_root)
     assert loaded is not None
     assert loaded.regime == "risk_on"
@@ -311,6 +333,216 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
     assert action.stretch_score >= 3
     assert action.washout_score == 0
     assert "Stretched/de-risk threshold crossed" in action.reason
+
+
+def test_write_regime_snapshot_keeps_signal_times_separate(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 28)
+    snapshot_root = tmp_path / "snapshots"
+
+    eod_path = write_regime_snapshot(
+        _snapshot(source_date=source_date, regime="risk_on", score=2),
+        snapshot_root=snapshot_root,
+    )
+    preview_path = write_regime_snapshot(
+        _snapshot(
+            source_date=source_date,
+            regime="risk_off",
+            score=-2,
+            signal_time="intraday_preview",
+        ),
+        snapshot_root=snapshot_root,
+    )
+
+    assert eod_path != preview_path
+    assert load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root).regime == (
+        "risk_on"
+    )
+    preview = load_regime_snapshot(
+        source_date=source_date,
+        snapshot_root=snapshot_root,
+        signal_time="intraday_preview",
+    )
+    assert preview is not None
+    assert preview.regime == "risk_off"
+
+
+def test_write_regime_snapshot_keeps_model_versions_separate(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 28)
+    snapshot_root = tmp_path / "snapshots"
+
+    v1_path = write_regime_snapshot(
+        _snapshot(
+            source_date=source_date,
+            regime="risk_on",
+            score=2,
+            model_version="fixture_model_v1",
+        ),
+        snapshot_root=snapshot_root,
+    )
+    v2_path = write_regime_snapshot(
+        _snapshot(
+            source_date=source_date,
+            regime="risk_off",
+            score=-2,
+            model_version="fixture_model_v2",
+        ),
+        snapshot_root=snapshot_root,
+    )
+
+    assert v1_path != v2_path
+    v1 = load_regime_snapshot(
+        source_date=source_date,
+        snapshot_root=snapshot_root,
+        model_version="fixture_model_v1",
+    )
+    v2 = load_regime_snapshot(
+        source_date=source_date,
+        snapshot_root=snapshot_root,
+        model_version="fixture_model_v2",
+    )
+    assert v1 is not None
+    assert v2 is not None
+    assert v1.regime == "risk_on"
+    assert v2.regime == "risk_off"
+
+
+def test_compute_regime_snapshot_consumes_saved_market_signal_boundary(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 28)
+    signal_root = tmp_path / "signals"
+    snapshot_root = tmp_path / "regime"
+    signals = (
+        _market_signal(
+            source_date=source_date,
+            family="trend",
+            name="price_proxy",
+            status="weak",
+            score=-2,
+            value="saved trend",
+            details={
+                "price_date": "2026-08-28",
+                "spy_return_20d": -0.10,
+                "spy_return_60d": -0.14,
+                "spy_ma50_distance": -0.08,
+                "spy_ma200_distance": -0.03,
+                "qqq_return_20d": -0.12,
+                "qqq_ma50_distance": -0.09,
+                "qqq_ma200_distance": -0.04,
+                "missing_symbols": [],
+            },
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="volatility",
+            name="price_proxy",
+            status="elevated",
+            score=-1,
+            value="saved volatility",
+            details={
+                "price_date": "2026-08-28",
+                "spy_realized_vol_20d": 0.34,
+                "vix_close": 31.0,
+                "missing_symbols": [],
+            },
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="breadth",
+            name="price_proxy",
+            status="narrow",
+            score=-1,
+            value="saved breadth",
+            details={
+                "price_date": "2026-08-28",
+                "rsp_spy_relative_20d": -0.04,
+                "iwm_spy_relative_20d": -0.05,
+                "missing_symbols": [],
+            },
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="credit",
+            name="price_proxy",
+            status="defensive",
+            score=-1,
+            value="saved credit",
+            details={
+                "price_date": "2026-08-28",
+                "hyg_tlt_relative_20d": -0.03,
+                "missing_symbols": [],
+            },
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="volatility",
+            name="vol_of_vol",
+            status="stressed",
+            score=-1,
+            value=130.0,
+            details={"vvix_close": 130.0},
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="credit",
+            name="credit_spread",
+            status="mixed",
+            score=0,
+            value=4.2,
+            unit="percent_level",
+            details={"credit_spread": 4.2},
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="liquidity",
+            name="financial_conditions",
+            status="neutral",
+            score=0,
+            value=0.0,
+            details={"financial_conditions": 0.0},
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="rates",
+            name="yield_curve",
+            status="flat",
+            score=0,
+            value=0.1,
+            unit="percentage_points",
+            details={"yield_curve": 0.1},
+        ),
+    )
+    signal_path = write_market_signal_snapshot(signals, snapshot_root=signal_root)
+
+    result = compute_regime_snapshot(
+        source_date=source_date,
+        price_root=tmp_path / "missing-prices",
+        market_series_root=tmp_path / "missing-series",
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_root,
+    )
+
+    assert result.signal_snapshot_path == signal_path
+    assert result.snapshot.score == -5
+    assert result.snapshot.regime == "risk_off"
+    assert result.snapshot.price_date == source_date
+    assert result.snapshot.spy_return_20d == -0.10
+    assert result.snapshot.vix_close == 31.0
+    assert result.snapshot.vvix_close == 130.0
+    assert result.snapshot.market_signal_snapshot_version == "2026-08-28_eod"
+
+
+def test_load_regime_snapshot_reads_legacy_flat_file(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 28)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir(parents=True)
+    (snapshot_root / "2026-08-28.json").write_text(
+        json.dumps(_snapshot(source_date=source_date, regime="risk_on", score=2).to_dict()) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+
+    assert loaded is not None
+    assert loaded.regime == "risk_on"
 
 
 def test_derive_regime_action_state_flags_washout_market() -> None:
@@ -773,11 +1005,14 @@ def _snapshot(
     hyg_tlt_relative_20d: float | None = 0.02,
     vix_close: float | None = 16.0,
     vvix_close: float | None = 85.0,
+    model_version: str = "fixture_model",
+    signal_time: str = "eod",
+    snapshot_version: str | None = None,
 ) -> RegimeSnapshot:
     return RegimeSnapshot(
         source_date=source_date,
         feature_version="fixture_features",
-        model_version="fixture_model",
+        model_version=model_version,
         price_date=source_date,
         regime=regime,
         score=score,
@@ -805,6 +1040,32 @@ def _snapshot(
         hyg_tlt_relative_20d=hyg_tlt_relative_20d,
         vix_close=vix_close,
         vvix_close=vvix_close,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
+    )
+
+
+def _regime_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
+    source_date_value = source_date.isoformat()
+    return (
+        snapshot_root
+        / source_date_value
+        / "eod"
+        / f"{source_date_value}_eod"
+        / "market_regime_score_v0"
+        / "regime.json"
+    )
+
+
+def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
+    source_date_value = source_date.isoformat()
+    return (
+        snapshot_root
+        / source_date_value
+        / "eod"
+        / f"{source_date_value}_eod"
+        / "market_signals_model_v0"
+        / "market-signals.jsonl"
     )
 
 
@@ -866,6 +1127,8 @@ def _market_signal(
     status: str,
     score: int,
     value: float | str | None,
+    unit: str | None = None,
+    details: dict[str, object] | None = None,
 ) -> MarketSignal:
     return MarketSignal(
         source_date=source_date,
@@ -875,9 +1138,10 @@ def _market_signal(
         status=status,
         score=score,
         value=value,
-        unit="index" if isinstance(value, float) else "text",
+        unit=unit or ("index" if isinstance(value, float) else "text"),
         source="fixture",
         observed_date=source_date,
         availability_date=source_date,
         reason="fixture",
+        details=details or {},
     )

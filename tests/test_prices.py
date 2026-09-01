@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from marketlab.prices import (
+    DailyPriceObservation,
     PriceDataError,
     fetch_and_write_stooq_daily_prices,
     fetch_and_write_yahoo_daily_prices,
@@ -14,6 +15,7 @@ from marketlab.prices import (
     parse_stooq_daily_csv,
     parse_yahoo_daily_frame,
     to_stooq_symbol,
+    write_price_observations,
 )
 
 
@@ -86,6 +88,17 @@ def test_import_daily_price_csv_writes_local_observations(tmp_path: Path) -> Non
     assert rows[0].source == "fixture"
     assert rows[1].close == 107.0
     assert rows[1].adjusted_close == 106.5
+
+
+def test_write_price_observations_refuses_same_date_correction(tmp_path: Path) -> None:
+    first = _price_row(close=104.0)
+    corrected = _price_row(close=105.0)
+    output_root = tmp_path / "prices"
+
+    write_price_observations((first,), output_root=output_root)
+
+    with pytest.raises(PriceDataError, match="Refusing to overwrite"):
+        write_price_observations((corrected,), output_root=output_root)
 
 
 def test_parse_yahoo_daily_frame_reads_adjusted_close() -> None:
@@ -204,3 +217,18 @@ def test_to_stooq_symbol_adds_us_suffix_only_when_needed() -> None:
     assert to_stooq_symbol("BRK.B") == "brk.b.us"
     assert to_stooq_symbol("BMW.DE") == "bmw.de"
     assert to_stooq_symbol("^SPX") == "^spx"
+
+
+def _price_row(*, close: float) -> DailyPriceObservation:
+    return DailyPriceObservation(
+        source="fixture",
+        source_symbol="META",
+        symbol="META",
+        observed_date=date(2026, 8, 24),
+        open=100.0,
+        high=105.0,
+        low=99.0,
+        close=close,
+        volume=1_000_000,
+        adjusted_close=close,
+    )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -31,13 +31,27 @@ from marketlab.prices import (
 from marketlab.regime import (
     DEFAULT_REGIME_OUTCOME_HORIZONS,
     DEFAULT_REGIME_SNAPSHOT_ROOT,
+    REGIME_SNAPSHOT_FILENAME,
     RegimeError,
     RegimeSnapshot,
+    derive_regime_action_state,
     load_regime_snapshot,
+)
+from marketlab.snapshots.models import (
+    SignalTime,
+    current_code_revision,
+    default_snapshot_version,
+    resolve_snapshot_path,
+    signal_time_value,
+    snapshot_source_dates,
+    utc_timestamp,
+    versioned_snapshot_path,
+    write_immutable_payload,
 )
 
 DEFAULT_POLICY_SNAPSHOT_ROOT = Path("data/snapshots/portfolio/policy")
 PORTFOLIO_POLICY_VERSION = "portfolio_policy_v0"
+POLICY_SNAPSHOT_FILENAME = "portfolio-policy.json"
 PORTFOLIO_POLICY_STATES = ("maintain", "protect", "redeploy")
 POLICY_BENCHMARK_PROXY = "50/50 SPY/QQQ beta-scaled proxy; option overlays excluded"
 
@@ -112,13 +126,36 @@ class PortfolioPolicySnapshot:
     candidate_highlights: tuple[PolicyCandidate, ...]
     rationale: tuple[str, ...]
     benchmark_proxy: str = POLICY_BENCHMARK_PROXY
+    signal_time: str = SignalTime.EOD.value
+    snapshot_version: str | None = None
+    regime_snapshot_version: str | None = None
+    market_signal_snapshot_version: str | None = None
+    candidate_snapshot_version: str | None = None
+    created_at: str | None = field(default=None, compare=False)
+    code_revision: str | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        signal_time = signal_time_value(self.signal_time)
+        object.__setattr__(self, "signal_time", signal_time)
+        if not self.snapshot_version:
+            object.__setattr__(
+                self,
+                "snapshot_version",
+                default_snapshot_version(self.source_date, signal_time=signal_time),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "source": "marketlab",
             "snapshot_type": "portfolio-policy",
             "source_date": self.source_date.isoformat(),
+            "signal_date": self.source_date.isoformat(),
+            "signal_time": self.signal_time,
+            "snapshot_version": self.snapshot_version,
             "policy_version": self.policy_version,
+            "regime_snapshot_version": self.regime_snapshot_version,
+            "market_signal_snapshot_version": self.market_signal_snapshot_version,
+            "candidate_snapshot_version": self.candidate_snapshot_version,
             "regime": self.regime,
             "regime_score": self.regime_score,
             "regime_confidence": self.regime_confidence,
@@ -151,6 +188,8 @@ class PortfolioPolicySnapshot:
             ],
             "rationale": list(self.rationale),
             "benchmark_proxy": self.benchmark_proxy,
+            "created_at": self.created_at,
+            "code_revision": self.code_revision,
         }
 
 
@@ -248,8 +287,11 @@ def compute_portfolio_policy_snapshot(
     *,
     source_date: date,
     regime_snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    market_signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> PortfolioPolicySnapshotResult:
     """Compute one portfolio policy snapshot from saved regime and candidate snapshots."""
@@ -257,10 +299,25 @@ def compute_portfolio_policy_snapshot(
     regime_snapshot = _load_required_regime_snapshot(
         source_date=source_date,
         snapshot_root=regime_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
+    market_signals = _load_market_signals(
+        source_date=source_date,
+        snapshot_root=market_signal_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
+    )
+    if _has_regime_component_boundary(market_signals):
+        regime_snapshot = _regime_snapshot_with_market_signal_action(
+            regime_snapshot=regime_snapshot,
+            signals=market_signals,
+        )
     candidate_snapshots = _load_candidate_snapshots(
         source_date=source_date,
         snapshot_root=candidate_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     snapshot = derive_portfolio_policy_snapshot(
         regime_snapshot=regime_snapshot,
@@ -293,8 +350,11 @@ def compute_portfolio_policy_backfill(
     start_date: date,
     end_date: date,
     regime_snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    market_signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> PortfolioPolicyBackfillResult:
     """Compute policy snapshots for every saved regime snapshot in a date range."""
@@ -307,6 +367,7 @@ def compute_portfolio_policy_backfill(
         start_date=start_date,
         end_date=end_date,
         suffix=".json",
+        filename=REGIME_SNAPSHOT_FILENAME,
     )
     if not source_dates:
         raise PortfolioPolicyError(f"No regime snapshots found from {start_date} to {end_date}")
@@ -316,8 +377,11 @@ def compute_portfolio_policy_backfill(
         result = compute_portfolio_policy_snapshot(
             source_date=source_date,
             regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
             candidate_snapshot_root=candidate_snapshot_root,
             policy_snapshot_root=policy_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
         if result.snapshot_path is not None:
@@ -344,6 +408,8 @@ def compute_daily_policy_report(
     market_signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> DailyPolicyReportResult:
     """Build a concise daily report from saved regime, signal, and candidate snapshots."""
@@ -351,17 +417,23 @@ def compute_daily_policy_report(
     policy_result = compute_portfolio_policy_snapshot(
         source_date=source_date,
         regime_snapshot_root=regime_snapshot_root,
+        market_signal_snapshot_root=market_signal_snapshot_root,
         candidate_snapshot_root=candidate_snapshot_root,
         policy_snapshot_root=policy_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
         write_snapshot=write_snapshot,
     )
     previous_policy = _latest_policy_snapshot_before(
         source_date=source_date,
         snapshot_root=policy_snapshot_root,
+        signal_time=signal_time,
     )
     signals = _load_market_signals(
         source_date=source_date,
         snapshot_root=market_signal_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     report = format_daily_policy_report(
         policy=policy_result.snapshot,
@@ -408,6 +480,11 @@ def derive_portfolio_policy_snapshot(
     return PortfolioPolicySnapshot(
         source_date=regime_snapshot.source_date,
         policy_version=PORTFOLIO_POLICY_VERSION,
+        signal_time=regime_snapshot.signal_time,
+        snapshot_version=regime_snapshot.snapshot_version,
+        regime_snapshot_version=regime_snapshot.snapshot_version,
+        market_signal_snapshot_version=regime_snapshot.market_signal_snapshot_version,
+        candidate_snapshot_version=_shared_candidate_snapshot_version(candidate_snapshots),
         regime=regime_snapshot.regime,
         regime_score=regime_snapshot.score,
         regime_confidence=regime_snapshot.confidence,
@@ -449,16 +526,43 @@ def write_portfolio_policy_snapshot(
     snapshot: PortfolioPolicySnapshot,
     *,
     snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    overwrite: bool = False,
 ) -> Path:
     """Write one portfolio policy snapshot."""
 
-    path = snapshot_root / f"{snapshot.source_date.isoformat()}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(snapshot.to_dict(), sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        path = versioned_snapshot_path(
+            snapshot_root=snapshot_root,
+            source_date=snapshot.source_date,
+            signal_time=snapshot.signal_time,
+            snapshot_version=snapshot.snapshot_version,
+            artifact_version=snapshot.policy_version,
+            filename=POLICY_SNAPSHOT_FILENAME,
+        )
+    except ValueError as exc:
+        raise PortfolioPolicyError(str(exc)) from exc
+    payload = (
+        json.dumps(
+            _with_write_provenance(
+                snapshot.to_dict(),
+                created_at=utc_timestamp(),
+                code_revision=current_code_revision(),
+            ),
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    wrote = write_immutable_payload(
+        path=path,
+        payload=payload,
+        error_cls=PortfolioPolicyError,
+        overwrite=overwrite,
+    )
     logger.bind(
         source_date=snapshot.source_date.isoformat(),
         policy_state=snapshot.policy_state,
         snapshot_path=str(path),
+        wrote=wrote,
     ).success("Wrote portfolio policy snapshot")
     return path
 
@@ -467,11 +571,25 @@ def load_portfolio_policy_snapshot(
     *,
     source_date: date,
     snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+    policy_version: str | None = None,
 ) -> PortfolioPolicySnapshot | None:
     """Load one portfolio policy snapshot if present."""
 
-    path = snapshot_root / f"{source_date.isoformat()}.json"
-    if not path.is_file():
+    try:
+        path = resolve_snapshot_path(
+            snapshot_root=snapshot_root,
+            source_date=source_date,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            artifact_version=policy_version,
+            filename=POLICY_SNAPSHOT_FILENAME,
+            legacy_suffix=".json",
+        )
+    except ValueError as exc:
+        raise PortfolioPolicyError(str(exc)) from exc
+    if path is None:
         return None
     try:
         return _policy_snapshot_from_dict(json.loads(path.read_text(encoding="utf-8")))
@@ -727,9 +845,20 @@ def format_policy_outcome_summary(
     return _format_table(table)
 
 
-def _load_required_regime_snapshot(*, source_date: date, snapshot_root: Path) -> RegimeSnapshot:
+def _load_required_regime_snapshot(
+    *,
+    source_date: date,
+    snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+) -> RegimeSnapshot:
     try:
-        snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+        snapshot = load_regime_snapshot(
+            source_date=source_date,
+            snapshot_root=snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+        )
     except RegimeError as exc:
         raise PortfolioPolicyError(str(exc)) from exc
     if snapshot is None:
@@ -741,19 +870,34 @@ def _load_candidate_snapshots(
     *,
     source_date: date,
     snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
 ) -> tuple[CandidateValidationSnapshot, ...]:
     try:
         return load_candidate_validation_snapshots(
             source_date=source_date,
             snapshot_root=snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
         )
     except CandidateValidationError as exc:
         raise PortfolioPolicyError(str(exc)) from exc
 
 
-def _load_market_signals(*, source_date: date, snapshot_root: Path) -> tuple[MarketSignal, ...]:
+def _load_market_signals(
+    *,
+    source_date: date,
+    snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+) -> tuple[MarketSignal, ...]:
     try:
-        return load_market_signal_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+        return load_market_signal_snapshot(
+            source_date=source_date,
+            snapshot_root=snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+        )
     except MarketSignalError as exc:
         raise PortfolioPolicyError(str(exc)) from exc
 
@@ -764,6 +908,43 @@ def _policy_state_from_action(action_state: str) -> str:
     if action_state == "scale_up_redeploy":
         return "redeploy"
     return "maintain"
+
+
+def _regime_snapshot_with_market_signal_action(
+    *,
+    regime_snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeSnapshot:
+    action = derive_regime_action_state(snapshot=regime_snapshot, signals=signals)
+    return replace(
+        regime_snapshot,
+        action_version=action.action_version,
+        action_state=action.state,
+        stretch_score=action.stretch_score,
+        washout_score=action.washout_score,
+        action_confidence=action.confidence,
+        action_reason=action.reason,
+        market_signal_snapshot_version=_shared_market_signal_snapshot_version(signals),
+    )
+
+
+def _has_regime_component_boundary(signals: tuple[MarketSignal, ...]) -> bool:
+    return all(
+        _market_signal_by_name(signals, family=family, name="price_proxy") is not None
+        for family in ("trend", "volatility", "breadth", "credit")
+    )
+
+
+def _market_signal_by_name(
+    signals: tuple[MarketSignal, ...],
+    *,
+    family: str,
+    name: str,
+) -> MarketSignal | None:
+    for signal in signals:
+        if signal.family == family and signal.name == name:
+            return signal
+    return None
 
 
 def _policy_settings(policy_state: str) -> dict[str, Any]:
@@ -864,6 +1045,30 @@ def _policy_candidate_highlights(
     )
 
 
+def _shared_candidate_snapshot_version(
+    candidates: tuple[CandidateValidationSnapshot, ...],
+) -> str | None:
+    versions = {
+        getattr(candidate, "snapshot_version", None)
+        for candidate in candidates
+        if getattr(candidate, "snapshot_version", None)
+    }
+    if len(versions) == 1:
+        return versions.pop()
+    if len(versions) > 1:
+        return "mixed"
+    return None
+
+
+def _shared_market_signal_snapshot_version(signals: tuple[MarketSignal, ...]) -> str | None:
+    versions = {signal.snapshot_version for signal in signals if signal.snapshot_version}
+    if len(versions) == 1:
+        return versions.pop()
+    if len(versions) > 1:
+        return "mixed"
+    return None
+
+
 def _policy_candidate(
     *,
     policy_state: str,
@@ -920,6 +1125,7 @@ def _load_policy_snapshots_in_range(
         start_date=start_date,
         end_date=end_date,
         suffix=".json",
+        filename=POLICY_SNAPSHOT_FILENAME,
     ):
         snapshot = load_portfolio_policy_snapshot(
             source_date=source_date,
@@ -936,13 +1142,14 @@ def _snapshot_dates_in_range(
     start_date: date,
     end_date: date,
     suffix: str,
+    filename: str,
 ) -> tuple[date, ...]:
     dates: list[date] = []
-    for path in sorted(root.glob(f"*{suffix}")):
-        try:
-            source_date = date.fromisoformat(path.stem)
-        except ValueError:
-            continue
+    for source_date in snapshot_source_dates(
+        snapshot_root=root,
+        legacy_suffix=suffix,
+        filename=filename,
+    ):
         if start_date <= source_date <= end_date:
             dates.append(source_date)
     return tuple(dates)
@@ -952,6 +1159,7 @@ def _latest_policy_snapshot_before(
     *,
     source_date: date,
     snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
 ) -> PortfolioPolicySnapshot | None:
     prior_dates = tuple(
         candidate_date
@@ -960,12 +1168,17 @@ def _latest_policy_snapshot_before(
             start_date=date.min,
             end_date=source_date,
             suffix=".json",
+            filename=POLICY_SNAPSHOT_FILENAME,
         )
         if candidate_date < source_date
     )
     if not prior_dates:
         return None
-    return load_portfolio_policy_snapshot(source_date=prior_dates[-1], snapshot_root=snapshot_root)
+    return load_portfolio_policy_snapshot(
+        source_date=prior_dates[-1],
+        snapshot_root=snapshot_root,
+        signal_time=signal_time,
+    )
 
 
 def _load_price_histories(
@@ -1086,9 +1299,17 @@ def _basket_value(left: float | None, right: float | None) -> float | None:
 
 
 def _policy_snapshot_from_dict(row: dict[str, Any]) -> PortfolioPolicySnapshot:
+    source_date = date.fromisoformat(str(row["source_date"]))
+    signal_time = str(row.get("signal_time", SignalTime.EOD.value))
     return PortfolioPolicySnapshot(
-        source_date=date.fromisoformat(str(row["source_date"])),
+        source_date=source_date,
         policy_version=str(row["policy_version"]),
+        signal_time=signal_time,
+        snapshot_version=_optional_str(row.get("snapshot_version"))
+        or default_snapshot_version(source_date, signal_time=signal_time),
+        regime_snapshot_version=_optional_str(row.get("regime_snapshot_version")),
+        market_signal_snapshot_version=_optional_str(row.get("market_signal_snapshot_version")),
+        candidate_snapshot_version=_optional_str(row.get("candidate_snapshot_version")),
         regime=str(row["regime"]),
         regime_score=int(row["regime_score"]),
         regime_confidence=str(row["regime_confidence"]),
@@ -1120,6 +1341,8 @@ def _policy_snapshot_from_dict(row: dict[str, Any]) -> PortfolioPolicySnapshot:
         ),
         rationale=tuple(str(reason) for reason in row.get("rationale", ())),
         benchmark_proxy=str(row.get("benchmark_proxy", POLICY_BENCHMARK_PROXY)),
+        created_at=_optional_str(row.get("created_at")),
+        code_revision=_optional_str(row.get("code_revision")),
     )
 
 
@@ -1222,6 +1445,26 @@ def _optional_int(value: object) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _with_write_provenance(
+    row: dict[str, Any],
+    *,
+    created_at: str,
+    code_revision: str | None,
+) -> dict[str, Any]:
+    enriched = dict(row)
+    if enriched.get("created_at") is None:
+        enriched["created_at"] = created_at
+    if enriched.get("code_revision") is None:
+        enriched["code_revision"] = code_revision
+    return enriched
 
 
 def _average(values) -> float | None:

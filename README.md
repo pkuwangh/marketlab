@@ -8,32 +8,44 @@ See `IMPLEMENTATION.md` for milestone status and the next research deliverables.
 
 ## Current Baseline
 
-Milestones 1 through 6 are complete at v0 depth: the repo can capture the daily Bulltard candidate set, refresh independent price history, validate candidates, compute market regime, derive bounded portfolio policy, refresh a local DuckDB research store, and replay forward outcomes.
+Milestones 1 through 7 are complete at v0 depth: the repo can capture the daily Bulltard candidate set, refresh independent price history, validate candidates, compute market regime, derive bounded portfolio policy, refresh a local DuckDB research store, replay forward outcomes, and render reproducible reports/charts.
 
 Implemented:
 
 - Python package skeleton with `uv`, Typer CLI, Loguru logging, and focused tests.
 - Repo-local `bin/marketlab` command shim.
 - Snapshot identity model.
+- Snapshot identity fields on regime, market-signal, candidate-validation, and policy snapshot payloads.
+- Canonical versioned snapshot paths by date, signal time, snapshot version, and artifact version, with legacy flat-file loaders retained for migration.
 - Bulltard recap source URL extraction against local text or HTML recap artifacts.
 - Bulltard ranked option trades ingest.
+- Bulltard ingest metadata sidecars that link parsed rows to retrieval context and parser version.
 - Trades Of Interest parsing from the recap.
 - Ticker detail retrieval and flow-history parsing.
 - Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
 - One-command daily Bulltard workflow for candidate capture, optional price refresh, validation, and outcome replay.
 - Daily OHLCV price fetch from Yahoo Finance through `yfinance` into local observations.
+- Price and scalar market-series observations with availability/retrieval metadata and non-overwrite guards for same-date corrections.
 - Local daily OHLCV CSV import into the same price observation format.
 - Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
 - Bulltard outcome replay summaries from saved validation snapshots.
 - Market regime snapshots from SPY/QQQ trend, SPY volatility/VIX, RSP/IWM participation, and HYG/TLT risk appetite.
 - Market regime outcome replay summaries against forward SPY/QQQ returns and drawdowns.
 - Expanded market-signal snapshots including VVIX and FRED-backed credit/liquidity/rates rows when available.
+- Market regime and policy computation consume saved market-signal snapshots as the v0 evidence boundary when available; generated signal rows carry structured numeric details for replay.
 - Normalized stretch/washout pressure scores and rare action states.
 - Portfolio policy snapshots that map regime action states into bounded marginal beta, cash, overlay, and single-name risk posture.
 - Daily policy reports that combine regime state, market signals, policy posture, and Bulltard candidate context.
-- Local DuckDB research store refresh from JSON/JSONL source observations, with optional Parquet exports.
-- Self-contained HTML/SVG regime chart generation from saved price, regime, and market-signal snapshots.
+- Local DuckDB research store refresh from JSON/JSONL source observations, Bulltard ingest rows, and snapshots, with optional Parquet exports.
+- Self-contained HTML/SVG regime chart generation from saved price, regime, market-signal, and policy snapshots.
 - Self-contained HTML/SVG opportunity chart generation for one saved Bulltard candidate.
+
+Current limitations:
+
+- Legacy flat snapshot files are still supported for read compatibility; there is no migration command yet to move old files into the canonical layout.
+- Portfolio policy remains a hard-threshold v0 mapper, not a fully calibrated policy with hysteresis/cooldowns.
+- Candidate validation is not yet the full opportunity engine: options-liquidity, fundamental viability, instrument suitability, lifecycle episodes, thesis, and invalidation are still future work.
+- Market-signal production still uses hard-coded v0 feature thresholds; richer calibrated signal families are future work.
 
 ## Development
 
@@ -63,6 +75,29 @@ Repo-local command shims live in `bin/`. The `marketlab` executable is linked th
 ```
 
 The link points into `.venv/bin/`, so run `uv sync` or `uv run ...` first on a fresh checkout.
+
+## Normal Daily Use
+
+The routine operating path is one command:
+
+```bash
+./bin/marketlab daily
+```
+
+By default it uses today's local date, refreshes market sources, writes the regime snapshot,
+uses `data/inbox/bulltard/recap-YYYY-MM-DD.html` when that recap file exists, validates
+captured candidates, renders the daily policy report and regime chart, and refreshes the
+local DuckDB store. If the recap file is missing, the market-regime and policy loop still
+runs and Bulltard is skipped.
+
+For a specific date:
+
+```bash
+./bin/marketlab daily --date 2026-08-31
+```
+
+The lower-level `regime`, `bulltard`, `policy`, `chart`, and `store` commands remain available
+for debugging, backfills, and focused research.
 
 ## Bulltard Utilities
 

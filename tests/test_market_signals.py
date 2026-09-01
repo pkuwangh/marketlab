@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -31,8 +32,19 @@ def test_write_and_load_market_signal_snapshot(tmp_path: Path) -> None:
     path = write_market_signal_snapshot((signal,), snapshot_root=tmp_path)
     loaded = load_market_signal_snapshot(source_date=date(2026, 8, 28), snapshot_root=tmp_path)
 
-    assert path == tmp_path / "2026-08-28.jsonl"
+    assert path == _market_signal_snapshot_path(tmp_path, date(2026, 8, 28))
     assert loaded == (signal,)
+
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    (legacy_root / "2026-08-28.jsonl").write_text(
+        json.dumps(signal.to_dict()) + "\n",
+        encoding="utf-8",
+    )
+    assert load_market_signal_snapshot(
+        source_date=date(2026, 8, 28),
+        snapshot_root=legacy_root,
+    ) == (signal,)
 
 
 def test_write_market_signal_snapshot_rejects_mixed_dates(tmp_path: Path) -> None:
@@ -105,4 +117,16 @@ def _signal(*, source_date: date) -> MarketSignal:
         observed_date=source_date,
         availability_date=source_date,
         reason="fixture signal",
+    )
+
+
+def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
+    source_date_value = source_date.isoformat()
+    return (
+        snapshot_root
+        / source_date_value
+        / "eod"
+        / f"{source_date_value}_eod"
+        / "market_signals_model_v0"
+        / "market-signals.jsonl"
     )

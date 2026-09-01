@@ -9,6 +9,7 @@ from pathlib import Path
 from loguru import logger
 
 from marketlab.bulltard.validation import (
+    CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
     DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     CandidateValidationError,
     CandidateValidationSnapshot,
@@ -20,6 +21,7 @@ from marketlab.prices import (
     PriceDataError,
     load_price_history,
 )
+from marketlab.snapshots.models import snapshot_source_dates
 
 DEFAULT_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 
@@ -204,11 +206,11 @@ def _load_snapshots_in_range(
     snapshot_root: Path,
 ) -> tuple[CandidateValidationSnapshot, ...]:
     snapshots: list[CandidateValidationSnapshot] = []
-    for path in sorted(snapshot_root.glob("*.jsonl")):
-        try:
-            source_date = date.fromisoformat(path.stem)
-        except ValueError:
-            continue
+    for source_date in snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".jsonl",
+        filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
+    ):
         if start_date <= source_date <= end_date:
             try:
                 snapshots.extend(

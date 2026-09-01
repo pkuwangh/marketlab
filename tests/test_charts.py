@@ -10,6 +10,7 @@ from marketlab.bulltard.validation import (
 )
 from marketlab.charts import ChartError, render_opportunity_chart, render_regime_chart
 from marketlab.market_signals import MarketSignal, write_market_signal_snapshot
+from marketlab.policy import PortfolioPolicySnapshot, write_portfolio_policy_snapshot
 from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import RegimeComponentScore, RegimeSnapshot, write_regime_snapshot
 
@@ -20,6 +21,7 @@ def test_render_regime_chart_writes_regime_html(tmp_path: Path) -> None:
     price_root = tmp_path / "prices"
     regime_root = tmp_path / "regime"
     signal_root = tmp_path / "signals"
+    policy_root = tmp_path / "policy"
     output_path = tmp_path / "reports" / "regime.html"
     _write_price_history(
         price_root,
@@ -74,6 +76,10 @@ def test_render_regime_chart_writes_regime_html(tmp_path: Path) -> None:
         ),
         snapshot_root=signal_root,
     )
+    write_portfolio_policy_snapshot(
+        _policy_snapshot(source_date=end_date, policy_state="protect"),
+        snapshot_root=policy_root,
+    )
 
     result = render_regime_chart(
         start_date=start_date,
@@ -81,6 +87,7 @@ def test_render_regime_chart_writes_regime_html(tmp_path: Path) -> None:
         price_root=price_root,
         regime_snapshot_root=regime_root,
         market_signal_snapshot_root=signal_root,
+        policy_snapshot_root=policy_root,
         output_path=output_path,
     )
 
@@ -89,6 +96,7 @@ def test_render_regime_chart_writes_regime_html(tmp_path: Path) -> None:
     assert result.price_point_count == 10
     assert result.regime_snapshot_count == 2
     assert result.market_signal_count == 2
+    assert result.policy_snapshot_count == 1
     html = output_path.read_text(encoding="utf-8")
     assert "MarketLab Regime Chart" in html
     assert "<svg" in html
@@ -96,6 +104,8 @@ def test_render_regime_chart_writes_regime_html(tmp_path: Path) -> None:
     assert "stretch pressure" in html
     assert "Regime component scores" in html
     assert "Market signal family scores" in html
+    assert "Portfolio policy state" in html
+    assert "target_beta=0.9" in html
     assert "vol_of_vol" in html
     assert "credit_spread" in html
 
@@ -372,6 +382,40 @@ def _regime_snapshot(
         stretch_pressure_score=stretch_pressure_score,
         washout_pressure_score=washout_pressure_score,
         pressure_confidence="medium",
+    )
+
+
+def _policy_snapshot(*, source_date: date, policy_state: str) -> PortfolioPolicySnapshot:
+    return PortfolioPolicySnapshot(
+        source_date=source_date,
+        policy_version="fixture_policy",
+        regime="risk_on",
+        regime_score=4,
+        regime_confidence="medium",
+        regime_price_date=source_date,
+        regime_action_state="scale_down_protect",
+        regime_action_confidence="medium",
+        regime_action_reason="fixture action",
+        stretch_score=3,
+        washout_score=0,
+        stretch_pressure_score=0.8,
+        washout_pressure_score=0.1,
+        pressure_confidence="medium",
+        policy_state=policy_state,
+        policy_confidence="medium",
+        marginal_beta_target=0.9,
+        marginal_beta_range="0.85-0.95 tactical beta",
+        cash_posture="raise or preserve cash",
+        long_delta_stance="avoid fresh long calls",
+        overlay_stance="consider covered calls",
+        put_underwriting_stance="prefer defined risk",
+        single_name_risk_budget="reduced",
+        candidate_count=0,
+        confirm_candidate_count=0,
+        watch_candidate_count=0,
+        avoid_candidate_count=0,
+        candidate_highlights=(),
+        rationale=("fixture",),
     )
 
 

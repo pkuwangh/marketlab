@@ -43,6 +43,7 @@ from marketlab.cli import (
 )
 from marketlab.market_series import MarketSeriesFetchResult
 from marketlab.market_signals import MarketSignal
+from marketlab.policy import DailyPolicyReportResult, PortfolioPolicySnapshot
 from marketlab.prices import PriceFetchResult
 from marketlab.regime import (
     MarketSignalForwardOutcome,
@@ -89,7 +90,468 @@ def test_typer_no_args_shows_help_without_traceback() -> None:
     assert result.exit_code != 0
     assert "MarketLab research workflow CLI." in result.output
     assert "--version" in result.output
+    assert "daily" in result.output
     assert "Traceback" not in result.output
+
+
+def test_daily_run_skips_missing_recap_and_runs_core_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "series"
+    regime_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    candidate_root = tmp_path / "candidates"
+    policy_root = tmp_path / "policy"
+    db_path = tmp_path / "marketlab.duckdb"
+
+    def fake_refresh_regime_prices(
+        *,
+        start_date: date,
+        end_date: date,
+        price_root: Path,
+    ) -> RegimePriceRefreshResult:
+        assert start_date == date(2025, 2, 27)
+        assert end_date == date(2026, 8, 31)
+        events.append("regime_prices")
+        return RegimePriceRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("SPY", "QQQ"),
+            price_results=(),
+            price_failures=(),
+        )
+
+    def fake_fetch_and_write_fred_series(
+        *,
+        series_ids: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+    ) -> tuple[MarketSeriesFetchResult, ...]:
+        assert events == ["regime_prices"]
+        assert start_date == date(2025, 2, 27)
+        assert end_date == date(2026, 8, 31)
+        assert output_root == market_series_root
+        events.append("market_series")
+        return (
+            MarketSeriesFetchResult(
+                series_id=series_ids[0],
+                source_series_id=series_ids[0],
+                observation_path=output_root / f"{series_ids[0]}.jsonl",
+                row_count=10,
+                latest_observed_date=date(2026, 8, 28),
+                latest_availability_date=date(2026, 8, 31),
+            ),
+        )
+
+    def fake_compute_regime_snapshot(
+        *,
+        source_date: date,
+        price_root: Path,
+        market_series_root: Path,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> RegimeSnapshotResult:
+        assert events == ["regime_prices", "market_series"]
+        assert source_date == date(2026, 8, 31)
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        assert write_snapshot is True
+        events.append("regime")
+        snapshot = _regime_snapshot(source_date=source_date)
+        return RegimeSnapshotResult(
+            source_date=source_date,
+            snapshot=snapshot,
+            snapshot_path=snapshot_root / "regime.json",
+            table="fixture regime table",
+            signals=(),
+            signal_snapshot_path=signal_snapshot_root / "market-signals.jsonl",
+        )
+
+    def fake_run_daily_workflow(**_kwargs) -> DailyWorkflowResult:
+        pytest.fail("Bulltard should be skipped when the default recap file is missing")
+
+    def fake_compute_daily_policy_report(
+        *,
+        source_date: date,
+        regime_snapshot_root: Path,
+        market_signal_snapshot_root: Path,
+        candidate_snapshot_root: Path,
+        policy_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> DailyPolicyReportResult:
+        assert events == ["regime_prices", "market_series", "regime"]
+        assert regime_snapshot_root == regime_root
+        assert market_signal_snapshot_root == signal_root
+        assert candidate_snapshot_root == candidate_root
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        assert write_snapshot is True
+        events.append("report")
+        policy = _portfolio_policy_snapshot(source_date=source_date)
+        return DailyPolicyReportResult(
+            source_date=source_date,
+            policy=policy,
+            previous_policy=None,
+            policy_snapshot_path=policy_snapshot_root / "portfolio-policy.json",
+            report="fixture daily report",
+        )
+
+    def fake_render_regime_chart(
+        *,
+        start_date: date,
+        end_date: date,
+        symbol: str,
+        comparison_symbol: str | None,
+        price_root: Path,
+        regime_snapshot_root: Path,
+        market_signal_snapshot_root: Path,
+        policy_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        output_path: Path | None,
+    ) -> RegimeChartResult:
+        assert events == ["regime_prices", "market_series", "regime", "report"]
+        assert start_date == date(2026, 8, 31)
+        assert end_date == date(2026, 8, 31)
+        assert symbol == "SPY"
+        assert comparison_symbol == "QQQ"
+        assert policy_snapshot_root == policy_root
+        assert output_path is None
+        events.append("chart")
+        return RegimeChartResult(
+            start_date=start_date,
+            end_date=end_date,
+            output_path=tmp_path / "reports" / "regime.html",
+            price_symbols=("SPY", "QQQ"),
+            price_point_count=10,
+            regime_snapshot_count=1,
+            market_signal_count=4,
+            policy_snapshot_count=1,
+        )
+
+    def fake_refresh_research_store(
+        *,
+        db_path: Path,
+        price_root: Path,
+        market_series_root: Path,
+        regime_snapshot_root: Path,
+        market_signal_snapshot_root: Path,
+        candidate_snapshot_root: Path,
+        policy_snapshot_root: Path,
+        bulltard_observation_root: Path,
+    ) -> StoreRefreshResult:
+        assert events == ["regime_prices", "market_series", "regime", "report", "chart"]
+        assert db_path == db_path_arg
+        assert bulltard_observation_root == bulltard_root_arg
+        events.append("store")
+        return StoreRefreshResult(
+            db_path=db_path,
+            schema_version="fixture_store",
+            table_refreshes=(StoreTableRefresh(table_name="regime_snapshots", row_count=1),),
+        )
+
+    bulltard_root_arg = tmp_path / "bulltard"
+    db_path_arg = db_path
+    monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_fred_series",
+        fake_fetch_and_write_fred_series,
+    )
+    monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
+    monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
+    monkeypatch.setattr(
+        "marketlab.cli.compute_daily_policy_report",
+        fake_compute_daily_policy_report,
+    )
+    monkeypatch.setattr("marketlab.cli.render_regime_chart", fake_render_regime_chart)
+    monkeypatch.setattr("marketlab.cli.refresh_research_store", fake_refresh_research_store)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "daily",
+            "--date",
+            "2026-08-31",
+            "--price-root",
+            str(price_root),
+            "--market-series-root",
+            str(market_series_root),
+            "--bulltard-root",
+            str(bulltard_root_arg),
+            "--regime-root",
+            str(regime_root),
+            "--signal-root",
+            str(signal_root),
+            "--candidate-root",
+            str(candidate_root),
+            "--policy-root",
+            str(policy_root),
+            "--db",
+            str(db_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert events == ["regime_prices", "market_series", "regime", "report", "chart", "store"]
+    assert "daily_date=2026-08-31" in result.output
+    assert "bulltard_status=skipped_missing_recap" in result.output
+    assert "fixture daily report" in result.output
+    assert "daily_status=complete" in result.output
+    assert "bulltard_ran=false" in result.output
+
+
+def test_daily_run_uses_default_recap_file_for_bulltard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    recap_path = tmp_path / "data" / "inbox" / "bulltard" / "recap-2026-08-31.html"
+    recap_path.parent.mkdir(parents=True)
+    recap_path.write_text("fixture recap", encoding="utf-8")
+    events: list[str] = []
+
+    def fake_refresh_regime_prices(
+        *,
+        start_date: date,
+        end_date: date,
+        price_root: Path,
+    ) -> RegimePriceRefreshResult:
+        assert start_date == date(2025, 2, 27)
+        assert end_date == date(2026, 8, 31)
+        events.append("regime_prices")
+        return RegimePriceRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("SPY", "QQQ"),
+            price_results=(),
+            price_failures=(),
+        )
+
+    def fake_compute_regime_snapshot(
+        *,
+        source_date: date,
+        price_root: Path,
+        market_series_root: Path,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> RegimeSnapshotResult:
+        assert events == ["regime_prices"]
+        events.append("regime")
+        return RegimeSnapshotResult(
+            source_date=source_date,
+            snapshot=_regime_snapshot(source_date=source_date),
+            snapshot_path=snapshot_root / "regime.json",
+            table="fixture regime table",
+            signals=(),
+            signal_snapshot_path=signal_snapshot_root / "market-signals.jsonl",
+        )
+
+    def fake_run_daily_workflow(
+        *,
+        source_date,
+        recap_path: Path,
+        output_root: Path,
+        debug_root: Path,
+        fetch_ticker_details: bool,
+        top_ranked: int,
+        extra_tickers: tuple[str, ...],
+        limit: int,
+    ) -> DailyWorkflowResult:
+        assert events == ["regime_prices", "regime"]
+        assert source_date == date(2026, 8, 31)
+        assert recap_path == Path("data/inbox/bulltard/recap-2026-08-31.html")
+        assert fetch_ticker_details is True
+        assert top_ranked == 2
+        assert extra_tickers == ("META",)
+        assert limit == 3
+        events.append("bulltard")
+        plan = IngestPlan(
+            source_date=source_date,
+            view=BulltardView.RANKED_OPTION_TRADES,
+            recap_path=recap_path,
+            signed_url="https://jamesbulltard.substack.com/redirect?token=fixture-secret",
+            observation_path=output_root / "ranked_option_trades" / "2026-08-31.jsonl",
+        )
+        return DailyWorkflowResult(
+            source_date=source_date,
+            ranked_result=IngestResult(
+                fetched_view=FetchedView(
+                    plan=plan,
+                    final_url="https://app.jamesbulltard.com/ranked_option_trades",
+                    status_code=200,
+                    content_type="text/html",
+                    byte_count=42,
+                    debug_path=debug_root / "ranked_option_trades" / "2026-08-31.html",
+                ),
+                row_count=40,
+                observation_path=plan.observation_path,
+            ),
+            trades_of_interest_result=TradesOfInterestIngestResult(
+                source_date=source_date,
+                recap_path=recap_path,
+                row_count=1,
+                observation_path=output_root / "trades_of_interest" / "2026-08-31.jsonl",
+                symbols=("META",),
+            ),
+            ticker_results=(),
+            ticker_failures=(),
+            candidate_table="symbol source\nMETA   ranked+interest#1",
+        )
+
+    def fake_refresh_candidate_price_set(
+        *,
+        source_date: date,
+        start_date: date,
+        end_date: date,
+        observations_root: Path,
+        price_root: Path,
+        limit: int,
+    ) -> CandidatePriceRefreshResult:
+        assert events == ["regime_prices", "regime", "bulltard"]
+        events.append("candidate_prices")
+        return CandidatePriceRefreshResult(
+            source_date=source_date,
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=("META", "SPY", "QQQ"),
+            price_results=(),
+            price_failures=(),
+        )
+
+    def fake_validate_bulltard_candidates(
+        *,
+        source_date: date,
+        observations_root: Path,
+        price_root: Path,
+        snapshot_root: Path,
+        limit: int,
+        min_dollar_volume: float,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> CandidateValidationResult:
+        assert events == ["regime_prices", "regime", "bulltard", "candidate_prices"]
+        assert limit == 3
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        events.append("validate")
+        return CandidateValidationResult(
+            source_date=source_date,
+            snapshots=(),
+            snapshot_path=snapshot_root / "candidate-validation.jsonl",
+            summary=CandidateValidationSummary(
+                candidate_count=0,
+                confirm_count=0,
+                watch_count=0,
+                avoid_count=0,
+                missing_price_count=0,
+                thin_underlying_count=0,
+            ),
+            table="fixture validation table",
+        )
+
+    def fake_compute_bulltard_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> CandidateOutcomeResult:
+        assert events == ["regime_prices", "regime", "bulltard", "candidate_prices", "validate"]
+        assert start_date == date(2026, 8, 31)
+        assert end_date == date(2026, 8, 31)
+        assert horizons == (1, 5, 20, 40, 65, 126)
+        events.append("outcomes")
+        return CandidateOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(),
+            summary_rows=(),
+            table="No outcome rows found.",
+        )
+
+    def fake_compute_daily_policy_report(**kwargs) -> DailyPolicyReportResult:
+        assert events == [
+            "regime_prices",
+            "regime",
+            "bulltard",
+            "candidate_prices",
+            "validate",
+            "outcomes",
+        ]
+        source_date = kwargs["source_date"]
+        events.append("report")
+        policy = _portfolio_policy_snapshot(source_date=source_date)
+        return DailyPolicyReportResult(
+            source_date=source_date,
+            policy=policy,
+            previous_policy=None,
+            policy_snapshot_path=Path("policy.json"),
+            report="fixture daily report",
+        )
+
+    monkeypatch.setattr("marketlab.cli.refresh_regime_prices", fake_refresh_regime_prices)
+    monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
+    monkeypatch.setattr("marketlab.cli.run_daily_workflow", fake_run_daily_workflow)
+    monkeypatch.setattr(
+        "marketlab.cli.refresh_candidate_price_set",
+        fake_refresh_candidate_price_set,
+    )
+    monkeypatch.setattr(
+        "marketlab.cli.validate_bulltard_candidates",
+        fake_validate_bulltard_candidates,
+    )
+    monkeypatch.setattr("marketlab.cli.compute_bulltard_outcomes", fake_compute_bulltard_outcomes)
+    monkeypatch.setattr(
+        "marketlab.cli.compute_daily_policy_report",
+        fake_compute_daily_policy_report,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "daily",
+            "--date",
+            "2026-08-31",
+            "--no-market-series",
+            "--no-chart",
+            "--no-store",
+            "--top-ranked",
+            "2",
+            "--ticker",
+            "META",
+            "--limit",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert events == [
+        "regime_prices",
+        "regime",
+        "bulltard",
+        "candidate_prices",
+        "validate",
+        "outcomes",
+        "report",
+    ]
+    assert "ranked_row_count=40" in result.output
+    assert "candidate_validation_count=0" in result.output
+    assert "fixture daily report" in result.output
+    assert "bulltard_ran=true" in result.output
 
 
 def test_bulltard_no_args_shows_help_without_traceback() -> None:
@@ -367,6 +829,7 @@ def test_chart_regime_outputs_chart_metadata(
     price_root = tmp_path / "prices"
     regime_root = tmp_path / "regime"
     signal_root = tmp_path / "signals"
+    policy_root = tmp_path / "policy"
     output_path = tmp_path / "reports" / "regime.html"
 
     def fake_render_regime_chart(
@@ -378,6 +841,9 @@ def test_chart_regime_outputs_chart_metadata(
         price_root: Path,
         regime_snapshot_root: Path,
         market_signal_snapshot_root: Path,
+        policy_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
         output_path: Path | None,
     ) -> RegimeChartResult:
         assert start_date == date(2026, 1, 1)
@@ -387,6 +853,9 @@ def test_chart_regime_outputs_chart_metadata(
         assert price_root == price_root_arg
         assert regime_snapshot_root == regime_root_arg
         assert market_signal_snapshot_root == signal_root_arg
+        assert policy_snapshot_root == policy_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
         assert output_path == output_path_arg
         return RegimeChartResult(
             start_date=start_date,
@@ -396,11 +865,13 @@ def test_chart_regime_outputs_chart_metadata(
             price_point_count=420,
             regime_snapshot_count=20,
             market_signal_count=160,
+            policy_snapshot_count=18,
         )
 
     price_root_arg = price_root
     regime_root_arg = regime_root
     signal_root_arg = signal_root
+    policy_root_arg = policy_root
     output_path_arg = output_path
     monkeypatch.setattr("marketlab.cli.render_regime_chart", fake_render_regime_chart)
 
@@ -419,6 +890,8 @@ def test_chart_regime_outputs_chart_metadata(
             str(regime_root),
             "--signal-root",
             str(signal_root),
+            "--policy-root",
+            str(policy_root),
             "--output",
             str(output_path),
         ],
@@ -431,6 +904,7 @@ def test_chart_regime_outputs_chart_metadata(
     assert "chart_price_point_count=420" in result.output
     assert "regime_snapshot_count=20" in result.output
     assert "market_signal_count=160" in result.output
+    assert "policy_snapshot_count=18" in result.output
 
 
 def test_chart_opportunity_outputs_chart_metadata(
@@ -451,6 +925,8 @@ def test_chart_opportunity_outputs_chart_metadata(
         price_root: Path,
         candidate_snapshot_root: Path,
         observations_root: Path,
+        signal_time,
+        snapshot_version: str | None,
         output_path: Path | None,
     ) -> OpportunityChartResult:
         assert source_date == date(2026, 8, 28)
@@ -460,6 +936,8 @@ def test_chart_opportunity_outputs_chart_metadata(
         assert price_root == price_root_arg
         assert candidate_snapshot_root == candidate_root_arg
         assert observations_root == observations_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
         assert output_path == output_path_arg
         return OpportunityChartResult(
             source_date=source_date,
@@ -1231,6 +1709,8 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         market_series_root: Path,
         snapshot_root: Path,
         signal_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
         write_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["prices", "market-series"]
@@ -1239,6 +1719,8 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         assert market_series_root == market_series_root_arg
         assert snapshot_root == snapshot_root_arg
         assert signal_snapshot_root == signal_snapshot_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
         assert write_snapshot is True
         events.append("snapshot")
         snapshot = _regime_snapshot(source_date=source_date)
@@ -1423,6 +1905,8 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         market_series_root: Path,
         snapshot_root: Path,
         signal_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
         write_snapshot: bool,
     ) -> RegimeBackfillResult:
         assert events == ["prices", "market-series"]
@@ -1432,6 +1916,8 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         assert market_series_root == market_series_root_arg
         assert snapshot_root == snapshot_root_arg
         assert signal_snapshot_root == signal_snapshot_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
         assert write_snapshot is True
         events.append("backfill")
         return RegimeBackfillResult(
@@ -1894,11 +2380,15 @@ def test_bulltard_validate_outputs_snapshot_and_table(
         snapshot_root: Path,
         limit: int,
         min_dollar_volume: float,
+        signal_time,
+        snapshot_version: str | None,
         write_snapshot: bool,
     ) -> CandidateValidationResult:
         assert source_date == date(2026, 8, 26)
         assert limit == 5
         assert min_dollar_volume == 10_000_000.0
+        assert signal_time == "eod"
+        assert snapshot_version is None
         assert write_snapshot is True
         return CandidateValidationResult(
             source_date=source_date,
@@ -2228,6 +2718,8 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         snapshot_root: Path,
         limit: int,
         min_dollar_volume: float,
+        signal_time,
+        snapshot_version: str | None,
         write_snapshot: bool,
     ) -> CandidateValidationResult:
         assert events == ["capture", "candidate_prices"]
@@ -2235,6 +2727,8 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         assert price_root == price_root_arg
         assert snapshot_root == snapshot_root_arg
         assert limit == 12
+        assert signal_time == "eod"
+        assert snapshot_version is None
         assert write_snapshot is True
         events.append("validate")
         return CandidateValidationResult(
@@ -2449,6 +2943,40 @@ def _regime_snapshot(*, source_date: date) -> RegimeSnapshot:
         hyg_tlt_relative_20d=0.03,
         vix_close=16.0,
         vvix_close=85.0,
+    )
+
+
+def _portfolio_policy_snapshot(*, source_date: date) -> PortfolioPolicySnapshot:
+    return PortfolioPolicySnapshot(
+        source_date=source_date,
+        policy_version="fixture_policy",
+        regime="risk_on",
+        regime_score=5,
+        regime_confidence="high",
+        regime_price_date=source_date,
+        regime_action_state="no_change",
+        regime_action_confidence="medium",
+        regime_action_reason="fixture action",
+        stretch_score=1,
+        washout_score=0,
+        stretch_pressure_score=0.30,
+        washout_pressure_score=0.20,
+        pressure_confidence="medium",
+        policy_state="maintain",
+        policy_confidence="medium",
+        marginal_beta_target=1.0,
+        marginal_beta_range="0.95-1.05 tactical beta",
+        cash_posture="maintain dry powder",
+        long_delta_stance="no forced change",
+        overlay_stance="selective only",
+        put_underwriting_stance="selective only",
+        single_name_risk_budget="normal",
+        candidate_count=0,
+        confirm_candidate_count=0,
+        watch_candidate_count=0,
+        avoid_candidate_count=0,
+        candidate_highlights=(),
+        rationale=("fixture rationale",),
     )
 
 

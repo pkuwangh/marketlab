@@ -10,6 +10,9 @@ from typing import Any
 
 from loguru import logger
 
+from marketlab.bulltard.ingest import (
+    DEFAULT_OBSERVATIONS_ROOT as DEFAULT_BULLTARD_OBSERVATIONS_ROOT,
+)
 from marketlab.bulltard.validation import DEFAULT_CANDIDATE_SNAPSHOT_ROOT
 from marketlab.market_series import DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT
 from marketlab.market_signals import DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT
@@ -18,7 +21,7 @@ from marketlab.prices import DEFAULT_PRICE_OBSERVATIONS_ROOT
 from marketlab.regime import DEFAULT_REGIME_SNAPSHOT_ROOT
 
 DEFAULT_RESEARCH_DB_PATH = Path("marketlab.duckdb")
-STORE_SCHEMA_VERSION = "research_store_v0"
+STORE_SCHEMA_VERSION = "research_store_v1"
 
 
 class ResearchStoreError(ValueError):
@@ -60,6 +63,7 @@ def refresh_research_store(
     market_signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    bulltard_observation_root: Path = DEFAULT_BULLTARD_OBSERVATIONS_ROOT,
     parquet_root: Path | None = None,
 ) -> StoreRefreshResult:
     """Rebuild queryable DuckDB tables from local snapshot and observation files."""
@@ -77,6 +81,7 @@ def refresh_research_store(
         market_signal_snapshot_root=str(market_signal_snapshot_root),
         candidate_snapshot_root=str(candidate_snapshot_root),
         policy_snapshot_root=str(policy_snapshot_root),
+        bulltard_observation_root=str(bulltard_observation_root),
         parquet_root=str(parquet_root) if parquet_root else None,
     ).info("Refreshing local research store")
 
@@ -108,6 +113,26 @@ def refresh_research_store(
             _refresh_market_signals(
                 connection,
                 root=market_signal_snapshot_root,
+                parquet_root=parquet_root,
+            ),
+            _refresh_bulltard_ingest_runs(
+                connection,
+                root=bulltard_observation_root,
+                parquet_root=parquet_root,
+            ),
+            _refresh_bulltard_ranked_trades(
+                connection,
+                root=bulltard_observation_root,
+                parquet_root=parquet_root,
+            ),
+            _refresh_bulltard_trades_of_interest(
+                connection,
+                root=bulltard_observation_root,
+                parquet_root=parquet_root,
+            ),
+            _refresh_bulltard_ticker_flow(
+                connection,
+                root=bulltard_observation_root,
                 parquet_root=parquet_root,
             ),
             _refresh_candidate_snapshots(
@@ -250,6 +275,8 @@ def _refresh_daily_prices(
         ("source_symbol", "VARCHAR"),
         ("symbol", "VARCHAR"),
         ("observed_date", "DATE"),
+        ("availability_date", "DATE"),
+        ("retrieved_at", "VARCHAR"),
         ("open", "DOUBLE"),
         ("high", "DOUBLE"),
         ("low", "DOUBLE"),
@@ -270,6 +297,8 @@ def _refresh_daily_prices(
                 _optional_str(row.get("source_symbol")),
                 _optional_str(row.get("symbol")),
                 _optional_date(row.get("date")),
+                _optional_date(row.get("availability_date")) or _optional_date(row.get("date")),
+                _optional_str(row.get("retrieved_at")),
                 _optional_float(row.get("open")),
                 _optional_float(row.get("high")),
                 _optional_float(row.get("low")),
@@ -303,6 +332,7 @@ def _refresh_market_series(
         ("availability_date", "DATE"),
         ("value", "DOUBLE"),
         ("unit", "VARCHAR"),
+        ("retrieved_at", "VARCHAR"),
     )
     rows = tuple(
         (
@@ -313,6 +343,7 @@ def _refresh_market_series(
             _optional_date(row.get("availability_date")),
             _optional_float(row.get("value")),
             _optional_str(row.get("unit")),
+            _optional_str(row.get("retrieved_at")),
         )
         for row in _read_jsonl_files(root)
     )
@@ -333,6 +364,10 @@ def _refresh_regime_snapshots(
 ) -> StoreTableRefresh:
     schema = (
         ("source_date", "DATE"),
+        ("signal_date", "DATE"),
+        ("signal_time", "VARCHAR"),
+        ("snapshot_version", "VARCHAR"),
+        ("market_signal_snapshot_version", "VARCHAR"),
         ("price_date", "DATE"),
         ("feature_version", "VARCHAR"),
         ("model_version", "VARCHAR"),
@@ -350,10 +385,16 @@ def _refresh_regime_snapshots(
         ("washout_pressure_score", "DOUBLE"),
         ("pressure_confidence", "VARCHAR"),
         ("missing_symbols", "VARCHAR"),
+        ("created_at", "VARCHAR"),
+        ("code_revision", "VARCHAR"),
     )
     rows = tuple(
         (
             _optional_date(row.get("source_date")),
+            _optional_date(row.get("signal_date")) or _optional_date(row.get("source_date")),
+            _optional_str(row.get("signal_time")),
+            _optional_str(row.get("snapshot_version")),
+            _optional_str(row.get("market_signal_snapshot_version")),
             _optional_date(row.get("price_date")),
             _optional_str(row.get("feature_version")),
             _optional_str(row.get("model_version")),
@@ -371,6 +412,8 @@ def _refresh_regime_snapshots(
             _optional_float(row.get("washout_pressure_score")),
             _optional_str(row.get("pressure_confidence")),
             ",".join(str(symbol) for symbol in row.get("missing_symbols", ())),
+            _optional_str(row.get("created_at")),
+            _optional_str(row.get("code_revision")),
         )
         for row in _read_json_files(root)
     )
@@ -472,7 +515,11 @@ def _refresh_market_signals(
 ) -> StoreTableRefresh:
     schema = (
         ("source_date", "DATE"),
+        ("signal_date", "DATE"),
+        ("signal_time", "VARCHAR"),
+        ("snapshot_version", "VARCHAR"),
         ("feature_version", "VARCHAR"),
+        ("model_version", "VARCHAR"),
         ("family", "VARCHAR"),
         ("signal", "VARCHAR"),
         ("status", "VARCHAR"),
@@ -484,6 +531,9 @@ def _refresh_market_signals(
         ("observed_date", "DATE"),
         ("availability_date", "DATE"),
         ("reason", "VARCHAR"),
+        ("details_json", "VARCHAR"),
+        ("created_at", "VARCHAR"),
+        ("code_revision", "VARCHAR"),
     )
     rows = []
     for row in _read_jsonl_files(root):
@@ -491,7 +541,11 @@ def _refresh_market_signals(
         rows.append(
             (
                 _optional_date(row.get("source_date")),
+                _optional_date(row.get("signal_date")) or _optional_date(row.get("source_date")),
+                _optional_str(row.get("signal_time")),
+                _optional_str(row.get("snapshot_version")),
                 _optional_str(row.get("feature_version")),
+                _optional_str(row.get("model_version")),
                 _optional_str(row.get("family")),
                 _optional_str(row.get("name")),
                 _optional_str(row.get("status")),
@@ -503,6 +557,9 @@ def _refresh_market_signals(
                 _optional_date(row.get("observed_date")),
                 _optional_date(row.get("availability_date")),
                 _optional_str(row.get("reason")),
+                json.dumps(row.get("details", {}), sort_keys=True),
+                _optional_str(row.get("created_at")),
+                _optional_str(row.get("code_revision")),
             )
         )
     return _replace_table(
@@ -510,6 +567,186 @@ def _refresh_market_signals(
         table_name="market_signals",
         schema=schema,
         rows=tuple(rows),
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_bulltard_ingest_runs(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("ingest_id", "VARCHAR"),
+        ("source_date", "DATE"),
+        ("retrieved_at", "VARCHAR"),
+        ("view", "VARCHAR"),
+        ("symbol", "VARCHAR"),
+        ("final_url", "VARCHAR"),
+        ("status_code", "INTEGER"),
+        ("content_type", "VARCHAR"),
+        ("byte_count", "INTEGER"),
+        ("debug_path", "VARCHAR"),
+        ("recap_path", "VARCHAR"),
+        ("parser_version", "VARCHAR"),
+        ("row_count", "INTEGER"),
+        ("schema_version", "VARCHAR"),
+    )
+    rows = tuple(
+        (
+            _optional_str(row.get("ingest_id")),
+            _optional_date(row.get("source_date")),
+            _optional_str(row.get("retrieved_at")),
+            _optional_str(row.get("view")),
+            _optional_str(row.get("symbol")),
+            _optional_str(row.get("final_url")),
+            _optional_int(row.get("status_code")),
+            _optional_str(row.get("content_type")),
+            _optional_int(row.get("byte_count")),
+            _optional_str(row.get("debug_path")),
+            _optional_str(row.get("recap_path")),
+            _optional_str(row.get("parser_version")),
+            _optional_int(row.get("row_count")),
+            _optional_str(row.get("schema_version")),
+        )
+        for row in _read_json_files_recursive(root, pattern="*.meta.json")
+    )
+    return _replace_table(
+        connection,
+        table_name="bulltard_ingest_runs",
+        schema=schema,
+        rows=rows,
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_bulltard_ranked_trades(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("source_date", "DATE"),
+        ("ingest_id", "VARCHAR"),
+        ("parser_version", "VARCHAR"),
+        ("view", "VARCHAR"),
+        ("side", "VARCHAR"),
+        ("symbol", "VARCHAR"),
+        ("trade_count", "INTEGER"),
+        ("last_trade_date", "DATE"),
+        ("avg_dte", "DOUBLE"),
+        ("score", "DOUBLE"),
+        ("premium", "DOUBLE"),
+    )
+    rows = tuple(
+        (
+            _optional_date(row.get("source_date")),
+            _optional_str(row.get("ingest_id")),
+            _optional_str(row.get("parser_version")),
+            _optional_str(row.get("view")),
+            _optional_str(row.get("side")),
+            _optional_str(row.get("symbol")),
+            _optional_int(row.get("trade_count")),
+            _optional_date(row.get("last_trade_date")),
+            _optional_float(row.get("avg_dte")),
+            _optional_float(row.get("score")),
+            _optional_float(row.get("premium")),
+        )
+        for row in _read_jsonl_files(root / "ranked_option_trades")
+    )
+    return _replace_table(
+        connection,
+        table_name="bulltard_ranked_option_trades",
+        schema=schema,
+        rows=rows,
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_bulltard_trades_of_interest(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("source_date", "DATE"),
+        ("ingest_id", "VARCHAR"),
+        ("parser_version", "VARCHAR"),
+        ("view", "VARCHAR"),
+        ("rank", "INTEGER"),
+        ("symbol", "VARCHAR"),
+        ("note", "VARCHAR"),
+    )
+    rows = tuple(
+        (
+            _optional_date(row.get("source_date")),
+            _optional_str(row.get("ingest_id")),
+            _optional_str(row.get("parser_version")),
+            _optional_str(row.get("view")),
+            _optional_int(row.get("rank")),
+            _optional_str(row.get("symbol")),
+            _optional_str(row.get("note")),
+        )
+        for row in _read_jsonl_files(root / "trades_of_interest")
+    )
+    return _replace_table(
+        connection,
+        table_name="bulltard_trades_of_interest",
+        schema=schema,
+        rows=rows,
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_bulltard_ticker_flow(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("source_date", "DATE"),
+        ("ingest_id", "VARCHAR"),
+        ("parser_version", "VARCHAR"),
+        ("view", "VARCHAR"),
+        ("symbol", "VARCHAR"),
+        ("traded_at", "VARCHAR"),
+        ("order_type", "VARCHAR"),
+        ("side", "VARCHAR"),
+        ("contract", "VARCHAR"),
+        ("contract_type", "VARCHAR"),
+        ("expiry", "DATE"),
+        ("contracts", "INTEGER"),
+        ("premium", "DOUBLE"),
+        ("is_older", "BOOLEAN"),
+    )
+    rows = tuple(
+        (
+            _optional_date(row.get("source_date")),
+            _optional_str(row.get("ingest_id")),
+            _optional_str(row.get("parser_version")),
+            _optional_str(row.get("view")),
+            _optional_str(row.get("symbol")),
+            _optional_str(row.get("traded_at")),
+            _optional_str(row.get("order_type")),
+            _optional_str(row.get("side")),
+            _optional_str(row.get("contract")),
+            _optional_str(row.get("contract_type")),
+            _optional_date(row.get("expiry")),
+            _optional_int(row.get("contracts")),
+            _optional_float(row.get("premium")),
+            _optional_bool(row.get("is_older")),
+        )
+        for row in _read_jsonl_files_recursive(root / "ticker_flow")
+    )
+    return _replace_table(
+        connection,
+        table_name="bulltard_ticker_flow",
+        schema=schema,
+        rows=rows,
         parquet_root=parquet_root,
     )
 
@@ -522,7 +759,12 @@ def _refresh_candidate_snapshots(
 ) -> StoreTableRefresh:
     schema = (
         ("source_date", "DATE"),
+        ("signal_date", "DATE"),
+        ("signal_time", "VARCHAR"),
+        ("snapshot_version", "VARCHAR"),
         ("feature_version", "VARCHAR"),
+        ("model_version", "VARCHAR"),
+        ("opportunity_version", "VARCHAR"),
         ("symbol", "VARCHAR"),
         ("bulltard_source", "VARCHAR"),
         ("ranked_side", "VARCHAR"),
@@ -547,11 +789,18 @@ def _refresh_candidate_snapshots(
         ("options_liquidity_status", "VARCHAR"),
         ("validation_status", "VARCHAR"),
         ("validation_reasons", "VARCHAR"),
+        ("created_at", "VARCHAR"),
+        ("code_revision", "VARCHAR"),
     )
     rows = tuple(
         (
             _optional_date(row.get("source_date")),
+            _optional_date(row.get("signal_date")) or _optional_date(row.get("source_date")),
+            _optional_str(row.get("signal_time")),
+            _optional_str(row.get("snapshot_version")),
             _optional_str(row.get("feature_version")),
+            _optional_str(row.get("model_version")),
+            _optional_str(row.get("opportunity_version")),
             _optional_str(row.get("symbol")),
             _optional_str(row.get("bulltard_source")),
             _optional_str(row.get("ranked_side")),
@@ -576,6 +825,8 @@ def _refresh_candidate_snapshots(
             _optional_str(row.get("options_liquidity_status")),
             _optional_str(row.get("validation_status")),
             ",".join(str(reason) for reason in row.get("validation_reasons", ())),
+            _optional_str(row.get("created_at")),
+            _optional_str(row.get("code_revision")),
         )
         for row in _read_jsonl_files(root)
     )
@@ -596,13 +847,23 @@ def _refresh_policy_snapshots(
 ) -> StoreTableRefresh:
     schema = (
         ("source_date", "DATE"),
+        ("signal_date", "DATE"),
+        ("signal_time", "VARCHAR"),
+        ("snapshot_version", "VARCHAR"),
         ("policy_version", "VARCHAR"),
+        ("regime_snapshot_version", "VARCHAR"),
+        ("market_signal_snapshot_version", "VARCHAR"),
+        ("candidate_snapshot_version", "VARCHAR"),
         ("regime", "VARCHAR"),
         ("regime_score", "INTEGER"),
         ("regime_confidence", "VARCHAR"),
         ("regime_price_date", "DATE"),
         ("regime_action_state", "VARCHAR"),
         ("regime_action_confidence", "VARCHAR"),
+        ("regime_action_reason", "VARCHAR"),
+        ("stretch_score", "INTEGER"),
+        ("washout_score", "INTEGER"),
+        ("pressure_confidence", "VARCHAR"),
         ("policy_state", "VARCHAR"),
         ("policy_confidence", "VARCHAR"),
         ("marginal_beta_target", "DOUBLE"),
@@ -618,18 +879,31 @@ def _refresh_policy_snapshots(
         ("avoid_candidate_count", "INTEGER"),
         ("stretch_pressure_score", "DOUBLE"),
         ("washout_pressure_score", "DOUBLE"),
+        ("rationale", "VARCHAR"),
         ("benchmark_proxy", "VARCHAR"),
+        ("created_at", "VARCHAR"),
+        ("code_revision", "VARCHAR"),
     )
     rows = tuple(
         (
             _optional_date(row.get("source_date")),
+            _optional_date(row.get("signal_date")) or _optional_date(row.get("source_date")),
+            _optional_str(row.get("signal_time")),
+            _optional_str(row.get("snapshot_version")),
             _optional_str(row.get("policy_version")),
+            _optional_str(row.get("regime_snapshot_version")),
+            _optional_str(row.get("market_signal_snapshot_version")),
+            _optional_str(row.get("candidate_snapshot_version")),
             _optional_str(row.get("regime")),
             _optional_int(row.get("regime_score")),
             _optional_str(row.get("regime_confidence")),
             _optional_date(row.get("regime_price_date")),
             _optional_str(row.get("regime_action_state")),
             _optional_str(row.get("regime_action_confidence")),
+            _optional_str(row.get("regime_action_reason")),
+            _optional_int(row.get("stretch_score")),
+            _optional_int(row.get("washout_score")),
+            _optional_str(row.get("pressure_confidence")),
             _optional_str(row.get("policy_state")),
             _optional_str(row.get("policy_confidence")),
             _optional_float(row.get("marginal_beta_target")),
@@ -645,7 +919,10 @@ def _refresh_policy_snapshots(
             _optional_int(row.get("avoid_candidate_count")),
             _optional_float(row.get("stretch_pressure_score")),
             _optional_float(row.get("washout_pressure_score")),
+            "\n".join(str(reason) for reason in row.get("rationale", ())),
             _optional_str(row.get("benchmark_proxy")),
+            _optional_str(row.get("created_at")),
+            _optional_str(row.get("code_revision")),
         )
         for row in _read_json_files(root)
     )
@@ -745,7 +1022,19 @@ def _read_json_files(root: Path) -> tuple[dict[str, Any], ...]:
     if not root.exists():
         return ()
     rows: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*.json")):
+    for path in sorted(root.rglob("*.json")):
+        try:
+            rows.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ResearchStoreError(f"Failed to read JSON snapshot: {path}") from exc
+    return tuple(rows)
+
+
+def _read_json_files_recursive(root: Path, *, pattern: str) -> tuple[dict[str, Any], ...]:
+    if not root.exists():
+        return ()
+    rows: list[dict[str, Any]] = []
+    for path in sorted(root.rglob(pattern)):
         try:
             rows.append(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError) as exc:
@@ -757,7 +1046,21 @@ def _read_jsonl_files(root: Path) -> tuple[dict[str, Any], ...]:
     if not root.exists():
         return ()
     rows: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*.jsonl")):
+    for path in sorted(root.rglob("*.jsonl")):
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    rows.append(json.loads(line))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ResearchStoreError(f"Failed to read JSONL observations: {path}") from exc
+    return tuple(rows)
+
+
+def _read_jsonl_files_recursive(root: Path) -> tuple[dict[str, Any], ...]:
+    if not root.exists():
+        return ()
+    rows: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*.jsonl")):
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
                 if line.strip():
@@ -789,6 +1092,21 @@ def _optional_int(value: object) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _optional_bool(value: object) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "t", "yes", "1"}:
+        return True
+    if text in {"false", "f", "no", "0"}:
+        return False
+    raise ResearchStoreError(f"Invalid boolean value: {value}")
 
 
 def _format_cell(value: object) -> str:

@@ -22,9 +22,17 @@ from marketlab.bulltard.validation import (
 )
 from marketlab.market_signals import (
     DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    MARKET_SIGNAL_SNAPSHOT_FILENAME,
     MarketSignal,
     MarketSignalError,
     load_market_signal_snapshot,
+)
+from marketlab.policy import (
+    DEFAULT_POLICY_SNAPSHOT_ROOT,
+    POLICY_SNAPSHOT_FILENAME,
+    PortfolioPolicyError,
+    PortfolioPolicySnapshot,
+    load_portfolio_policy_snapshot,
 )
 from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
@@ -36,10 +44,12 @@ from marketlab.prices import (
 )
 from marketlab.regime import (
     DEFAULT_REGIME_SNAPSHOT_ROOT,
+    REGIME_SNAPSHOT_FILENAME,
     RegimeError,
     RegimeSnapshot,
     load_regime_snapshot,
 )
+from marketlab.snapshots.models import SignalTime, snapshot_source_dates
 
 DEFAULT_CHART_REPORT_ROOT = Path("reports")
 REGIME_CHART_VERSION = "regime_chart_v0"
@@ -64,6 +74,7 @@ class RegimeChartResult:
     price_point_count: int
     regime_snapshot_count: int
     market_signal_count: int
+    policy_snapshot_count: int = 0
     chart_version: str = REGIME_CHART_VERSION
 
 
@@ -125,6 +136,9 @@ def render_regime_chart(
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     regime_snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
     market_signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+    policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
     output_path: Path | None = None,
 ) -> RegimeChartResult:
     """Render a regime chart from saved point-in-time snapshots."""
@@ -153,6 +167,8 @@ def render_regime_chart(
         start_date=start_date,
         end_date=end_date,
         snapshot_root=regime_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     if not snapshots:
         raise ChartError(f"No regime snapshots found from {start_date} to {end_date}")
@@ -161,8 +177,17 @@ def render_regime_chart(
         start_date=start_date,
         end_date=end_date,
         snapshot_root=market_signal_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     signals = tuple(signal for rows in signals_by_date.values() for signal in rows)
+    policies = _load_policy_snapshots_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        snapshot_root=policy_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
+    )
     resolved_output_path = output_path or _default_regime_chart_path(
         start_date=start_date,
         end_date=end_date,
@@ -173,9 +198,11 @@ def render_regime_chart(
         price_histories=price_histories,
         snapshots=snapshots,
         signals_by_date=signals_by_date,
+        policies=policies,
         price_root=price_root,
         regime_snapshot_root=regime_snapshot_root,
         market_signal_snapshot_root=market_signal_snapshot_root,
+        policy_snapshot_root=policy_snapshot_root,
     )
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_output_path.write_text(html, encoding="utf-8")
@@ -188,6 +215,7 @@ def render_regime_chart(
         price_point_count=sum(len(rows) for rows in price_histories.values()),
         regime_snapshot_count=len(snapshots),
         market_signal_count=len(signals),
+        policy_snapshot_count=len(policies),
     )
     logger.bind(
         start_date=start_date.isoformat(),
@@ -197,6 +225,7 @@ def render_regime_chart(
         price_point_count=result.price_point_count,
         regime_snapshot_count=result.regime_snapshot_count,
         market_signal_count=result.market_signal_count,
+        policy_snapshot_count=result.policy_snapshot_count,
     ).success("Rendered regime chart")
     return result
 
@@ -210,6 +239,8 @@ def render_opportunity_chart(
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     candidate_snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     observations_root: Path = DEFAULT_OBSERVATIONS_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
     output_path: Path | None = None,
 ) -> OpportunityChartResult:
     """Render a single-name opportunity chart from saved research artifacts."""
@@ -227,6 +258,8 @@ def render_opportunity_chart(
         source_date=source_date,
         symbol=normalized_symbol,
         snapshot_root=candidate_snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     chart_start_date = source_date - timedelta(days=lookback_days)
     chart_end_date = source_date + timedelta(days=forward_days)
@@ -321,9 +354,11 @@ def _render_regime_chart_html(
     price_histories: dict[str, tuple[DailyPriceObservation, ...]],
     snapshots: tuple[RegimeSnapshot, ...],
     signals_by_date: dict[date, tuple[MarketSignal, ...]],
+    policies: tuple[PortfolioPolicySnapshot, ...],
     price_root: Path,
     regime_snapshot_root: Path,
     market_signal_snapshot_root: Path,
+    policy_snapshot_root: Path,
 ) -> str:
     chart_svg = _render_regime_chart_svg(
         start_date=start_date,
@@ -331,6 +366,7 @@ def _render_regime_chart_html(
         price_histories=price_histories,
         snapshots=snapshots,
         signals_by_date=signals_by_date,
+        policies=policies,
     )
     latest_snapshot = snapshots[-1]
     latest_signals = signals_by_date.get(latest_snapshot.source_date, ())
@@ -340,6 +376,8 @@ def _render_regime_chart_html(
     escaped_price_root = escape(str(price_root))
     escaped_regime_root = escape(str(regime_snapshot_root))
     escaped_signal_root = escape(str(market_signal_snapshot_root))
+    escaped_policy_root = escape(str(policy_snapshot_root))
+    escaped_version_summary = escape(_regime_chart_version_summary(snapshots, policies))
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -429,7 +467,8 @@ def _render_regime_chart_html(
     Date range: {escaped_start} to {escaped_end}.
     Chart version: {REGIME_CHART_VERSION}.
     Sources: prices={escaped_price_root}, regimes={escaped_regime_root},
-    signals={escaped_signal_root}.
+    signals={escaped_signal_root}, policies={escaped_policy_root}.
+    Versions: {escaped_version_summary}.
   </p>
   <div class="chart-shell">
     {chart_svg}
@@ -692,6 +731,7 @@ def _render_regime_chart_svg(
     price_histories: dict[str, tuple[DailyPriceObservation, ...]],
     snapshots: tuple[RegimeSnapshot, ...],
     signals_by_date: dict[date, tuple[MarketSignal, ...]],
+    policies: tuple[PortfolioPolicySnapshot, ...],
 ) -> str:
     width = 1180
     left = 82
@@ -714,7 +754,12 @@ def _render_regime_chart_svg(
         height=160,
         title="Market signal family scores",
     )
-    height = signal_panel.bottom + 62
+    policy_panel = _Panel(
+        top=signal_panel.bottom + gap,
+        height=140,
+        title="Portfolio policy state",
+    )
+    height = policy_panel.bottom + 62
     plot_width = width - left - right
 
     x_min, x_max = _date_domain(
@@ -729,7 +774,7 @@ def _render_regime_chart_svg(
         _svg_defs(),
         _text(left, 24, f"{start_date.isoformat()} to {end_date.isoformat()}", css_class="title"),
     ]
-    for panel in (price_panel, pressure_panel, component_panel, signal_panel):
+    for panel in (price_panel, pressure_panel, component_panel, signal_panel, policy_panel):
         parts.append(_panel_background(left=left, width=plot_width, panel=panel))
         parts.append(_panel_title(left=left, panel=panel))
         parts.extend(_x_axis_labels(x_min=x_min, x_max=x_max, x_scale=x_scale, panel=panel))
@@ -741,7 +786,7 @@ def _render_regime_chart_svg(
             x_min=x_min,
             x_max=x_max,
             y=price_panel.top,
-            height=signal_panel.bottom - price_panel.top,
+            height=policy_panel.bottom - price_panel.top,
         )
     )
     parts.extend(
@@ -749,6 +794,15 @@ def _render_regime_chart_svg(
             price_histories=price_histories,
             x_scale=x_scale,
             panel=price_panel,
+            left=left,
+            plot_width=plot_width,
+        )
+    )
+    parts.extend(
+        _draw_policy_panel(
+            policies=policies,
+            x_scale=x_scale,
+            panel=policy_panel,
             left=left,
             plot_width=plot_width,
         )
@@ -980,6 +1034,60 @@ def _draw_signal_panel(
     return parts
 
 
+def _draw_policy_panel(
+    *,
+    policies: tuple[PortfolioPolicySnapshot, ...],
+    x_scale: Callable[[date], float],
+    panel: _Panel,
+    left: int,
+    plot_width: int,
+) -> list[str]:
+    y_scale = _y_scale(lower=-1.0, upper=1.0, panel=panel)
+    parts = _y_axis_labels(
+        values=(-1.0, 0.0, 1.0),
+        formatter=_format_policy_axis,
+        y_scale=y_scale,
+        left=left,
+        plot_width=plot_width,
+        panel=panel,
+    )
+    series = tuple(
+        (policy.source_date, float(_policy_state_value(policy.policy_state)))
+        for policy in policies
+        if _policy_state_value(policy.policy_state) is not None
+    )
+    path = _line_path(series, x_scale=x_scale, y_scale=y_scale)
+    if path:
+        parts.append(
+            f'<path d="{path}" fill="none" stroke="#172026" stroke-width="2">'
+            "<title>portfolio policy state</title></path>"
+        )
+    if not policies:
+        parts.append(
+            _text(left + 8, panel.top + panel.height / 2, "No policy snapshots", css_class="axis")
+        )
+        return parts
+
+    radius = "3.4" if len(series) < 80 else "2.2"
+    for policy in policies:
+        value = _policy_state_value(policy.policy_state)
+        if value is None:
+            continue
+        x = x_scale(policy.source_date)
+        y = y_scale(float(value))
+        color = _policy_state_color(policy.policy_state)
+        title = (
+            f"{policy.source_date.isoformat()} {policy.policy_state}; "
+            f"target_beta={policy.marginal_beta_target:g}; "
+            f"cash={policy.cash_posture}; overlay={policy.overlay_stance}"
+        )
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{radius}" fill="{color}">'
+            f"<title>{escape(title)}</title></circle>"
+        )
+    return parts
+
+
 def _draw_opportunity_price_panel(
     *,
     price_histories: dict[str, tuple[DailyPriceObservation, ...]],
@@ -1205,17 +1313,24 @@ def _load_regime_snapshots_in_range(
     start_date: date,
     end_date: date,
     snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
 ) -> tuple[RegimeSnapshot, ...]:
     snapshots: list[RegimeSnapshot] = []
-    for path in sorted(snapshot_root.glob("*.json")):
-        try:
-            source_date = date.fromisoformat(path.stem)
-        except ValueError:
-            continue
+    for source_date in snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".json",
+        filename=REGIME_SNAPSHOT_FILENAME,
+    ):
         if not start_date <= source_date <= end_date:
             continue
         try:
-            snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+            snapshot = load_regime_snapshot(
+                source_date=source_date,
+                snapshot_root=snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
+            )
         except RegimeError as exc:
             raise ChartError(str(exc)) from exc
         if snapshot is not None:
@@ -1228,23 +1343,57 @@ def _load_market_signals_in_range(
     start_date: date,
     end_date: date,
     snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
 ) -> dict[date, tuple[MarketSignal, ...]]:
     signals_by_date: dict[date, tuple[MarketSignal, ...]] = {}
-    for path in sorted(snapshot_root.glob("*.jsonl")):
-        try:
-            source_date = date.fromisoformat(path.stem)
-        except ValueError:
-            continue
+    for source_date in snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".jsonl",
+        filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
+    ):
         if not start_date <= source_date <= end_date:
             continue
         try:
             signals_by_date[source_date] = load_market_signal_snapshot(
                 source_date=source_date,
                 snapshot_root=snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
             )
         except MarketSignalError as exc:
             raise ChartError(str(exc)) from exc
     return signals_by_date
+
+
+def _load_policy_snapshots_in_range(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+) -> tuple[PortfolioPolicySnapshot, ...]:
+    policies: list[PortfolioPolicySnapshot] = []
+    for source_date in snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".json",
+        filename=POLICY_SNAPSHOT_FILENAME,
+    ):
+        if not start_date <= source_date <= end_date:
+            continue
+        try:
+            policy = load_portfolio_policy_snapshot(
+                source_date=source_date,
+                snapshot_root=snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
+            )
+        except PortfolioPolicyError as exc:
+            raise ChartError(str(exc)) from exc
+        if policy is not None:
+            policies.append(policy)
+    return tuple(sorted(policies, key=lambda row: row.source_date))
 
 
 def _load_candidate_snapshot(
@@ -1252,11 +1401,15 @@ def _load_candidate_snapshot(
     source_date: date,
     symbol: str,
     snapshot_root: Path,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
 ) -> CandidateValidationSnapshot:
     try:
         snapshots = load_candidate_validation_snapshots(
             source_date=source_date,
             snapshot_root=snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
         )
     except CandidateValidationError as exc:
         raise ChartError(str(exc)) from exc
@@ -2046,6 +2199,55 @@ def _action_color(action_state: str) -> str:
     return "#7d8790"
 
 
+def _format_policy_axis(value: float) -> str:
+    if value < -0.5:
+        return "protect"
+    if value > 0.5:
+        return "redeploy"
+    return "maintain"
+
+
+def _policy_state_value(policy_state: str) -> int | None:
+    if policy_state == "protect":
+        return -1
+    if policy_state == "redeploy":
+        return 1
+    if policy_state == "maintain":
+        return 0
+    return None
+
+
+def _policy_state_color(policy_state: str) -> str:
+    if policy_state == "protect":
+        return "#c25a17"
+    if policy_state == "redeploy":
+        return "#087f8c"
+    return "#172026"
+
+
+def _regime_chart_version_summary(
+    snapshots: tuple[RegimeSnapshot, ...],
+    policies: tuple[PortfolioPolicySnapshot, ...],
+) -> str:
+    latest_snapshot = snapshots[-1]
+    parts = [
+        f"snapshot={latest_snapshot.snapshot_version}",
+        f"feature={latest_snapshot.feature_version}",
+        f"model={latest_snapshot.model_version}",
+        f"action={latest_snapshot.action_version}",
+        f"pressure={latest_snapshot.pressure_version}",
+    ]
+    if policies:
+        latest_policy = policies[-1]
+        parts.extend(
+            (
+                f"policy_snapshot={latest_policy.snapshot_version}",
+                f"policy={latest_policy.policy_version}",
+            )
+        )
+    return "; ".join(parts)
+
+
 def _legend(*, width: int, y: int) -> str:
     items = (
         ("#1b6ca8", "SPY / trend"),
@@ -2053,6 +2255,7 @@ def _legend(*, width: int, y: int) -> str:
         ("#c25a17", "stretch / volatility"),
         ("#087f8c", "washout / redeploy"),
         ("#7d8790", "no_change shading"),
+        ("#172026", "policy state"),
     )
     x = 82
     parts = []

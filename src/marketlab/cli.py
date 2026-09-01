@@ -18,6 +18,7 @@ from marketlab.bulltard.candidates import (
 from marketlab.bulltard.daily import (
     CandidatePriceRefreshResult,
     DailyWorkflowError,
+    DailyWorkflowResult,
     run_daily_workflow,
 )
 from marketlab.bulltard.daily import (
@@ -40,6 +41,7 @@ from marketlab.bulltard.outcomes import (
 )
 from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
 from marketlab.bulltard.validation import (
+    CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
     DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     DEFAULT_MIN_DOLLAR_VOLUME,
     CandidateValidationError,
@@ -101,6 +103,7 @@ from marketlab.regime import (
     compute_regime_snapshot,
     refresh_regime_prices,
 )
+from marketlab.snapshots.models import SignalTime, snapshot_source_dates
 from marketlab.store import (
     DEFAULT_RESEARCH_DB_PATH,
     ResearchStoreError,
@@ -170,6 +173,7 @@ app.add_typer(chart_app, name="chart")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
 DEFAULT_OUTCOME_HORIZONS_VALUE = "1,5,20,40,65,126"
+DEFAULT_BULLTARD_INBOX_ROOT = Path("data/inbox/bulltard")
 
 
 def _version_callback(value: bool) -> None:
@@ -197,6 +201,452 @@ def root(
 ) -> None:
     """Run MarketLab research workflows."""
     configure_logging(log_level.value)
+
+
+@app.command("daily")
+def daily_run(
+    source_date_value: str | None = typer.Option(
+        None,
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Daily research date. Defaults to the local current date.",
+    ),
+    recap_path: Path | None = typer.Option(
+        None,
+        "--recap",
+        dir_okay=False,
+        readable=True,
+        help=(
+            "Optional Bulltard recap file. Defaults to "
+            "data/inbox/bulltard/recap-DATE.html when present."
+        ),
+    ),
+    run_bulltard_flag: bool = typer.Option(
+        True,
+        "--bulltard/--no-bulltard",
+        help="Capture and validate Bulltard candidates when a recap file is available.",
+    ),
+    require_recap: bool = typer.Option(
+        False,
+        "--require-recap",
+        help="Fail if Bulltard is enabled but no recap file is available.",
+    ),
+    refresh_prices_flag: bool = typer.Option(
+        True,
+        "--prices/--no-prices",
+        help="Refresh Yahoo prices before computing daily outputs.",
+    ),
+    refresh_market_series_flag: bool = typer.Option(
+        True,
+        "--market-series/--no-market-series",
+        help="Refresh FRED market series before computing the regime snapshot.",
+    ),
+    fetch_ticker_details: bool = typer.Option(
+        True,
+        "--ticker-details/--no-ticker-details",
+        help="Fetch Bulltard ticker detail pages for selected candidates.",
+    ),
+    top_ranked: int = typer.Option(
+        0,
+        "--top-ranked",
+        min=0,
+        help="Also fetch ticker details for the top N ranked database names.",
+    ),
+    extra_tickers_value: str = typer.Option(
+        "",
+        "--ticker",
+        help="Comma-separated extra Bulltard ticker symbols to fetch details for.",
+    ),
+    limit: int = typer.Option(
+        12,
+        "--limit",
+        min=1,
+        help="Maximum number of candidates to validate and show.",
+    ),
+    min_dollar_volume: float = typer.Option(
+        DEFAULT_MIN_DOLLAR_VOLUME,
+        "--min-dollar-volume",
+        min=0.0,
+        help="Minimum daily dollar volume for the candidate liquidity gate.",
+    ),
+    compute_outcomes_flag: bool = typer.Option(
+        True,
+        "--outcomes/--no-outcomes",
+        help="Replay candidate outcomes after validation when Bulltard runs.",
+    ),
+    render_chart_flag: bool = typer.Option(
+        True,
+        "--chart/--no-chart",
+        help="Render the daily regime chart.",
+    ),
+    refresh_store_flag: bool = typer.Option(
+        True,
+        "--store/--no-store",
+        help="Refresh the local DuckDB research store.",
+    ),
+    strict_optional_stages: bool = typer.Option(
+        False,
+        "--strict",
+        help="Fail instead of warning when optional refresh/chart/store stages fail.",
+    ),
+    price_start_value: str | None = typer.Option(
+        None,
+        "--price-start",
+        metavar="YYYY-MM-DD",
+        help=(
+            "First price date for refreshes. "
+            f"Defaults to {DEFAULT_DAILY_PRICE_LOOKBACK_DAYS} days before --date."
+        ),
+    ),
+    price_end_value: str | None = typer.Option(
+        None,
+        "--price-end",
+        metavar="YYYY-MM-DD",
+        help="Last price date for refreshes. Defaults to --date.",
+    ),
+    market_series_start_value: str | None = typer.Option(
+        None,
+        "--market-series-start",
+        metavar="YYYY-MM-DD",
+        help=(
+            "First market series date for refresh. "
+            f"Defaults to {DEFAULT_DAILY_PRICE_LOOKBACK_DAYS} days before --date."
+        ),
+    ),
+    market_series_end_value: str | None = typer.Option(
+        None,
+        "--market-series-end",
+        metavar="YYYY-MM-DD",
+        help="Last market series date for refresh. Defaults to --date.",
+    ),
+    price_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--price-root",
+        file_okay=False,
+        help="Root directory containing daily price observations.",
+    ),
+    market_series_root: Path = typer.Option(
+        DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+        "--market-series-root",
+        file_okay=False,
+        help="Root directory containing scalar market series observations.",
+    ),
+    bulltard_observation_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--bulltard-root",
+        file_okay=False,
+        help="Root directory for structured Bulltard observations.",
+    ),
+    bulltard_debug_root: Path = typer.Option(
+        DEFAULT_DEBUG_ROOT,
+        "--bulltard-debug-root",
+        file_okay=False,
+        help="Root directory for Bulltard parser debug payloads.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory for market regime snapshots.",
+    ),
+    market_signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory for market signal snapshots.",
+    ),
+    candidate_snapshot_root: Path = typer.Option(
+        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+        "--candidate-root",
+        file_okay=False,
+        help="Root directory for Bulltard candidate validation snapshots.",
+    ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory for portfolio policy snapshots.",
+    ),
+    db_path: Path = typer.Option(
+        DEFAULT_RESEARCH_DB_PATH,
+        "--db",
+        dir_okay=False,
+        help="DuckDB research store path.",
+    ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit snapshot version. Defaults to DATE_SIGNALTIME.",
+    ),
+) -> None:
+    """Run the normal daily MarketLab research cycle."""
+
+    source_date = _parse_source_date(source_date_value) if source_date_value else date.today()
+    price_start = (
+        _parse_date_option(price_start_value, option_name="--price-start")
+        if price_start_value
+        else source_date - timedelta(days=DEFAULT_DAILY_PRICE_LOOKBACK_DAYS)
+    )
+    price_end = (
+        _parse_date_option(price_end_value, option_name="--price-end")
+        if price_end_value
+        else source_date
+    )
+    market_series_start = (
+        _parse_date_option(market_series_start_value, option_name="--market-series-start")
+        if market_series_start_value
+        else source_date - timedelta(days=DEFAULT_DAILY_PRICE_LOOKBACK_DAYS)
+    )
+    market_series_end = (
+        _parse_date_option(market_series_end_value, option_name="--market-series-end")
+        if market_series_end_value
+        else source_date
+    )
+    resolved_recap_path = recap_path or _default_recap_path(source_date)
+
+    typer.echo(f"daily_date={source_date.isoformat()}")
+    typer.echo(f"signal_time={signal_time}")
+    typer.echo(f"snapshot_version={snapshot_version or ''}")
+    typer.echo("")
+
+    if refresh_prices_flag:
+        typer.echo("[regime-source-refresh]")
+        try:
+            price_refresh_result = refresh_regime_prices(
+                start_date=price_start,
+                end_date=price_end,
+                price_root=price_root,
+            )
+        except RegimeError as exc:
+            _handle_optional_daily_error(
+                "regime_price_refresh",
+                exc,
+                strict=strict_optional_stages,
+            )
+        else:
+            typer.echo(f"regime_price_success_count={len(price_refresh_result.price_results)}")
+            typer.echo(f"regime_price_failure_count={len(price_refresh_result.price_failures)}")
+        typer.echo("")
+
+    if refresh_market_series_flag:
+        typer.echo("[market-series-refresh]")
+        try:
+            market_series_results = fetch_and_write_fred_series(
+                series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
+                start_date=market_series_start,
+                end_date=market_series_end,
+                output_root=market_series_root,
+            )
+        except MarketSeriesError as exc:
+            _handle_optional_daily_error(
+                "market_series_refresh",
+                exc,
+                strict=strict_optional_stages,
+            )
+        else:
+            typer.echo(f"market_series_success_count={len(market_series_results)}")
+        typer.echo("")
+
+    typer.echo("[regime]")
+    try:
+        regime_result = compute_regime_snapshot(
+            source_date=source_date,
+            price_root=price_root,
+            market_series_root=market_series_root,
+            snapshot_root=regime_snapshot_root,
+            signal_snapshot_root=market_signal_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            write_snapshot=True,
+        )
+    except RegimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if regime_result.snapshot_path is not None:
+        typer.echo(f"regime_snapshot_path={regime_result.snapshot_path}")
+    if regime_result.signal_snapshot_path is not None:
+        typer.echo(f"market_signal_snapshot_path={regime_result.signal_snapshot_path}")
+    typer.echo(f"regime={regime_result.snapshot.regime}")
+    typer.echo(f"action_state={regime_result.snapshot.action_state}")
+    typer.echo(f"regime_confidence={regime_result.snapshot.confidence}")
+    typer.echo("")
+
+    bulltard_ran = False
+    if run_bulltard_flag:
+        typer.echo("[bulltard]")
+        if not resolved_recap_path.is_file():
+            if recap_path is not None or require_recap:
+                raise typer.BadParameter(
+                    f"Bulltard recap file not found: {resolved_recap_path}",
+                    param_hint="--recap",
+                )
+            typer.echo("bulltard_status=skipped_missing_recap")
+            typer.echo(f"expected_recap_path={resolved_recap_path}")
+            typer.echo("")
+        else:
+            bulltard_ran = True
+            try:
+                bulltard_result = run_daily_workflow(
+                    source_date=source_date,
+                    recap_path=resolved_recap_path,
+                    output_root=bulltard_observation_root,
+                    debug_root=bulltard_debug_root,
+                    fetch_ticker_details=fetch_ticker_details,
+                    top_ranked=top_ranked,
+                    extra_tickers=_parse_extra_tickers(extra_tickers_value),
+                    limit=limit,
+                )
+            except DailyWorkflowError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            _echo_bulltard_daily_capture_summary(bulltard_result)
+            typer.echo("")
+
+            if refresh_prices_flag:
+                try:
+                    candidate_price_result = refresh_candidate_price_set(
+                        source_date=source_date,
+                        start_date=price_start,
+                        end_date=price_end,
+                        observations_root=bulltard_observation_root,
+                        price_root=price_root,
+                        limit=limit,
+                    )
+                except DailyWorkflowError as exc:
+                    _handle_optional_daily_error(
+                        "candidate_price_refresh",
+                        exc,
+                        strict=strict_optional_stages,
+                    )
+                else:
+                    typer.echo(
+                        f"candidate_price_success_count={len(candidate_price_result.price_results)}"
+                    )
+                    typer.echo(
+                        f"candidate_price_failure_count={len(candidate_price_result.price_failures)}"
+                    )
+                    typer.echo("")
+
+            try:
+                validation_result = validate_bulltard_candidates(
+                    source_date=source_date,
+                    observations_root=bulltard_observation_root,
+                    price_root=price_root,
+                    snapshot_root=candidate_snapshot_root,
+                    limit=limit,
+                    min_dollar_volume=min_dollar_volume,
+                    signal_time=signal_time,
+                    snapshot_version=snapshot_version,
+                    write_snapshot=True,
+                )
+            except CandidateValidationError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            if validation_result.snapshot_path is not None:
+                typer.echo(f"candidate_validation_snapshot_path={validation_result.snapshot_path}")
+            typer.echo(f"candidate_validation_count={len(validation_result.snapshots)}")
+            typer.echo(
+                _format_validation_summary(
+                    validation_result.summary,
+                    prefix="candidate_validation_summary",
+                )
+            )
+            typer.echo("")
+            typer.echo(validation_result.table)
+            typer.echo("")
+
+            if compute_outcomes_flag:
+                outcome_start = _default_outcome_start(
+                    snapshot_root=candidate_snapshot_root,
+                    fallback=source_date,
+                )
+                try:
+                    outcome_result = compute_bulltard_outcomes(
+                        start_date=outcome_start,
+                        end_date=source_date,
+                        snapshot_root=candidate_snapshot_root,
+                        price_root=price_root,
+                        horizons=_parse_horizons(DEFAULT_OUTCOME_HORIZONS_VALUE),
+                    )
+                except CandidateOutcomeError as exc:
+                    _handle_optional_daily_error(
+                        "candidate_outcomes",
+                        exc,
+                        strict=strict_optional_stages,
+                    )
+                else:
+                    typer.echo(f"candidate_outcome_count={len(outcome_result.outcomes)}")
+                    typer.echo(
+                        "candidate_available_outcome_count="
+                        f"{_available_candidate_outcome_count(outcome_result)}"
+                    )
+                    typer.echo("")
+
+    typer.echo("[report]")
+    try:
+        report_result = compute_daily_policy_report(
+            source_date=source_date,
+            regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
+            candidate_snapshot_root=candidate_snapshot_root,
+            policy_snapshot_root=policy_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            write_snapshot=True,
+        )
+    except PortfolioPolicyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    _echo_daily_policy_report_result(report_result)
+    typer.echo("")
+
+    if render_chart_flag:
+        typer.echo("[chart]")
+        try:
+            chart_result = render_regime_chart(
+                start_date=source_date,
+                end_date=source_date,
+                symbol="SPY",
+                comparison_symbol="QQQ",
+                price_root=price_root,
+                regime_snapshot_root=regime_snapshot_root,
+                market_signal_snapshot_root=market_signal_snapshot_root,
+                policy_snapshot_root=policy_snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
+                output_path=None,
+            )
+        except ChartError as exc:
+            _handle_optional_daily_error("regime_chart", exc, strict=strict_optional_stages)
+        else:
+            typer.echo(f"chart_path={chart_result.output_path}")
+            typer.echo(f"policy_snapshot_count={chart_result.policy_snapshot_count}")
+        typer.echo("")
+
+    if refresh_store_flag:
+        typer.echo("[store]")
+        try:
+            store_result = refresh_research_store(
+                db_path=db_path,
+                price_root=price_root,
+                market_series_root=market_series_root,
+                regime_snapshot_root=regime_snapshot_root,
+                market_signal_snapshot_root=market_signal_snapshot_root,
+                candidate_snapshot_root=candidate_snapshot_root,
+                policy_snapshot_root=policy_snapshot_root,
+                bulltard_observation_root=bulltard_observation_root,
+            )
+        except ResearchStoreError as exc:
+            _handle_optional_daily_error("store_refresh", exc, strict=strict_optional_stages)
+        else:
+            typer.echo(f"research_db_path={store_result.db_path}")
+            typer.echo(f"research_store_schema={store_result.schema_version}")
+            typer.echo(f"research_store_table_count={len(store_result.table_refreshes)}")
+        typer.echo("")
+
+    typer.echo("daily_status=complete")
+    typer.echo(f"bulltard_ran={str(bulltard_ran).lower()}")
 
 
 @prices_app.command("fetch", no_args_is_help=True)
@@ -446,7 +896,7 @@ def regime_snapshot(
         None,
         "--price-end",
         metavar="YYYY-MM-DD",
-        help="Last price date for --fetch-prices. Defaults to today.",
+        help="Last price date for --fetch-prices. Defaults to --date.",
     ),
     market_series_start_value: str | None = typer.Option(
         None,
@@ -461,7 +911,7 @@ def regime_snapshot(
         None,
         "--market-series-end",
         metavar="YYYY-MM-DD",
-        help="Last market series date for --fetch-market-series. Defaults to today.",
+        help="Last market series date for --fetch-market-series. Defaults to --date.",
     ),
     price_root: Path = typer.Option(
         DEFAULT_PRICE_OBSERVATIONS_ROOT,
@@ -487,6 +937,16 @@ def regime_snapshot(
         file_okay=False,
         help="Root directory for market signal snapshots.",
     ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for the snapshot.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit snapshot version. Defaults to DATE_SIGNALTIME.",
+    ),
     write_snapshot: bool = typer.Option(
         True,
         "--write/--no-write",
@@ -505,7 +965,7 @@ def regime_snapshot(
         price_end = (
             _parse_date_option(price_end_value, option_name="--price-end")
             if price_end_value
-            else date.today()
+            else source_date
         )
         try:
             price_refresh_result = refresh_regime_prices(
@@ -527,7 +987,7 @@ def regime_snapshot(
         market_series_end = (
             _parse_date_option(market_series_end_value, option_name="--market-series-end")
             if market_series_end_value
-            else date.today()
+            else source_date
         )
         try:
             market_series_results = fetch_and_write_fred_series(
@@ -548,6 +1008,8 @@ def regime_snapshot(
             market_series_root=market_series_root,
             snapshot_root=snapshot_root,
             signal_snapshot_root=signal_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
     except RegimeError as exc:
@@ -610,6 +1072,16 @@ def regime_backfill(
         file_okay=False,
         help="Root directory for market signal snapshots.",
     ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for written snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit snapshot version. Defaults to DATE_SIGNALTIME for each date.",
+    ),
     write_snapshot: bool = typer.Option(
         True,
         "--write/--no-write",
@@ -654,6 +1126,8 @@ def regime_backfill(
             market_series_root=market_series_root,
             snapshot_root=snapshot_root,
             signal_snapshot_root=signal_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
     except RegimeError as exc:
@@ -920,6 +1394,12 @@ def store_refresh(
         file_okay=False,
         help="Root directory containing portfolio policy snapshots.",
     ),
+    bulltard_observation_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--bulltard-root",
+        file_okay=False,
+        help="Root directory containing Bulltard source observations.",
+    ),
     parquet_root: Path | None = typer.Option(
         None,
         "--parquet-root",
@@ -938,6 +1418,7 @@ def store_refresh(
             market_signal_snapshot_root=market_signal_snapshot_root,
             candidate_snapshot_root=candidate_snapshot_root,
             policy_snapshot_root=policy_snapshot_root,
+            bulltard_observation_root=bulltard_observation_root,
             parquet_root=parquet_root,
         )
     except ResearchStoreError as exc:
@@ -1010,6 +1491,12 @@ def policy_snapshot(
         file_okay=False,
         help="Root directory containing market regime snapshots.",
     ),
+    market_signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
         "--candidate-root",
@@ -1021,6 +1508,16 @@ def policy_snapshot(
         "--policy-root",
         file_okay=False,
         help="Root directory for portfolio policy snapshots.",
+    ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for upstream snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit upstream snapshot version. Defaults to DATE_SIGNALTIME.",
     ),
     write_snapshot: bool = typer.Option(
         True,
@@ -1035,8 +1532,11 @@ def policy_snapshot(
         result = compute_portfolio_policy_snapshot(
             source_date=source_date,
             regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
             candidate_snapshot_root=candidate_snapshot_root,
             policy_snapshot_root=policy_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
     except PortfolioPolicyError as exc:
@@ -1065,6 +1565,12 @@ def policy_backfill(
         file_okay=False,
         help="Root directory containing market regime snapshots.",
     ),
+    market_signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
         "--candidate-root",
@@ -1076,6 +1582,16 @@ def policy_backfill(
         "--policy-root",
         file_okay=False,
         help="Root directory for portfolio policy snapshots.",
+    ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for upstream snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit upstream snapshot version. Defaults to DATE_SIGNALTIME for each date.",
     ),
     write_snapshot: bool = typer.Option(
         True,
@@ -1092,8 +1608,11 @@ def policy_backfill(
             start_date=start_date,
             end_date=end_date,
             regime_snapshot_root=regime_snapshot_root,
+            market_signal_snapshot_root=market_signal_snapshot_root,
             candidate_snapshot_root=candidate_snapshot_root,
             policy_snapshot_root=policy_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
     except PortfolioPolicyError as exc:
@@ -1184,6 +1703,16 @@ def report_daily(
         file_okay=False,
         help="Root directory for portfolio policy snapshots.",
     ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for upstream snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit upstream snapshot version. Defaults to DATE_SIGNALTIME.",
+    ),
     write_snapshot: bool = typer.Option(
         True,
         "--write/--no-write",
@@ -1200,6 +1729,8 @@ def report_daily(
             market_signal_snapshot_root=market_signal_snapshot_root,
             candidate_snapshot_root=candidate_snapshot_root,
             policy_snapshot_root=policy_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
     except PortfolioPolicyError as exc:
@@ -1250,6 +1781,22 @@ def chart_regime(
         file_okay=False,
         help="Root directory containing market signal snapshots.",
     ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory containing portfolio policy snapshots.",
+    ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for snapshots used in the chart.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit snapshot version to render. Defaults to DATE_SIGNALTIME.",
+    ),
     output_path: Path | None = typer.Option(
         None,
         "--output",
@@ -1270,6 +1817,9 @@ def chart_regime(
             price_root=price_root,
             regime_snapshot_root=regime_snapshot_root,
             market_signal_snapshot_root=market_signal_snapshot_root,
+            policy_snapshot_root=policy_snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             output_path=output_path,
         )
     except ChartError as exc:
@@ -1321,6 +1871,16 @@ def chart_opportunity(
         file_okay=False,
         help="Root directory containing Bulltard observations.",
     ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for the candidate snapshot.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit candidate snapshot version. Defaults to DATE_SIGNALTIME.",
+    ),
     output_path: Path | None = typer.Option(
         None,
         "--output",
@@ -1340,6 +1900,8 @@ def chart_opportunity(
             price_root=price_root,
             candidate_snapshot_root=candidate_snapshot_root,
             observations_root=observations_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             output_path=output_path,
         )
     except ChartError as exc:
@@ -1579,6 +2141,16 @@ def validate_candidates(
         min=0.0,
         help="Minimum daily dollar volume for the basic liquidity gate.",
     ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for candidate validation snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit snapshot version. Defaults to DATE_SIGNALTIME.",
+    ),
     write_snapshot: bool = typer.Option(
         True,
         "--write/--no-write",
@@ -1596,6 +2168,8 @@ def validate_candidates(
             snapshot_root=snapshot_root,
             limit=limit,
             min_dollar_volume=min_dollar_volume,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
         )
     except CandidateValidationError as exc:
@@ -1840,7 +2414,7 @@ def daily(
         None,
         "--price-end",
         metavar="YYYY-MM-DD",
-        help="Last price date for --fetch-prices. Defaults to today.",
+        help="Last price date for --fetch-prices. Defaults to --date.",
     ),
     price_root: Path = typer.Option(
         DEFAULT_PRICE_OBSERVATIONS_ROOT,
@@ -1859,6 +2433,16 @@ def daily(
         "--min-dollar-volume",
         min=0.0,
         help="Minimum daily dollar volume for the basic liquidity gate.",
+    ),
+    signal_time: SignalTime = typer.Option(
+        SignalTime.EOD,
+        "--signal-time",
+        help="Signal timing label for candidate validation snapshots.",
+    ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Explicit candidate validation snapshot version. Defaults to DATE_SIGNALTIME.",
     ),
     compute_outcomes_flag: bool = typer.Option(
         False,
@@ -1935,7 +2519,7 @@ def daily(
         price_end = (
             _parse_date_option(price_end_value, option_name="--price-end")
             if price_end_value
-            else date.today()
+            else source_date
         )
         try:
             price_refresh_result = refresh_candidate_price_set(
@@ -1960,6 +2544,8 @@ def daily(
                 snapshot_root=snapshot_root,
                 limit=limit,
                 min_dollar_volume=min_dollar_volume,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
                 write_snapshot=True,
             )
         except CandidateValidationError as exc:
@@ -2052,14 +2638,50 @@ def _parse_extra_tickers(value: str) -> tuple[str, ...]:
     return tuple(symbol.strip() for symbol in value.split(",") if symbol.strip())
 
 
+def _default_recap_path(source_date: date) -> Path:
+    return DEFAULT_BULLTARD_INBOX_ROOT / f"recap-{source_date.isoformat()}.html"
+
+
+def _handle_optional_daily_error(
+    stage: str,
+    exc: Exception,
+    *,
+    strict: bool,
+) -> None:
+    if strict:
+        raise typer.BadParameter(f"{stage}: {exc}") from exc
+    typer.echo(f"{stage}_warning={exc}")
+
+
+def _echo_bulltard_daily_capture_summary(result: DailyWorkflowResult) -> None:
+    typer.echo(f"ranked_observation_path={result.ranked_result.observation_path}")
+    typer.echo(f"ranked_row_count={result.ranked_result.row_count}")
+    if result.trades_of_interest_result is None:
+        typer.echo("trades_of_interest_row_count=0")
+        typer.echo("trades_of_interest_symbols=")
+    else:
+        typer.echo(f"trades_of_interest_path={result.trades_of_interest_result.observation_path}")
+        typer.echo(f"trades_of_interest_row_count={result.trades_of_interest_result.row_count}")
+        typer.echo(
+            f"trades_of_interest_symbols={','.join(result.trades_of_interest_result.symbols)}"
+        )
+    typer.echo(f"ticker_detail_success_count={len(result.ticker_results)}")
+    typer.echo(f"ticker_detail_failure_count={len(result.ticker_failures)}")
+    if result.ticker_failures:
+        typer.echo(
+            "ticker_detail_failures="
+            + ",".join(f"{failure.symbol}:{failure.error}" for failure in result.ticker_failures)
+        )
+    typer.echo("")
+    typer.echo(result.candidate_table)
+
+
 def _default_outcome_start(*, snapshot_root: Path, fallback: date) -> date:
-    snapshot_dates = []
-    for pattern in ("*.jsonl", "*.json"):
-        for path in snapshot_root.glob(pattern):
-            try:
-                snapshot_dates.append(date.fromisoformat(path.stem))
-            except ValueError:
-                continue
+    snapshot_dates = snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".jsonl",
+        filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
+    )
     return min(snapshot_dates, default=fallback)
 
 
@@ -2258,6 +2880,7 @@ def _echo_regime_chart_result(result: RegimeChartResult) -> None:
     typer.echo(f"chart_price_point_count={result.price_point_count}")
     typer.echo(f"regime_snapshot_count={result.regime_snapshot_count}")
     typer.echo(f"market_signal_count={result.market_signal_count}")
+    typer.echo(f"policy_snapshot_count={result.policy_snapshot_count}")
 
 
 def _echo_opportunity_chart_result(result: OpportunityChartResult) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
@@ -14,6 +14,8 @@ from urllib.parse import urlencode
 
 import httpx
 from loguru import logger
+
+from marketlab.snapshots.models import utc_timestamp
 
 DEFAULT_PRICE_OBSERVATIONS_ROOT = Path("data/observations/prices/daily")
 HTTP_TIMEOUT_SECONDS = 30.0
@@ -45,6 +47,12 @@ class DailyPriceObservation:
     close: float
     volume: int
     adjusted_close: float | None = None
+    availability_date: date | None = None
+    retrieved_at: str | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.availability_date is None:
+            object.__setattr__(self, "availability_date", self.observed_date)
 
     @property
     def dollar_volume(self) -> float:
@@ -66,6 +74,10 @@ class DailyPriceObservation:
             "close": self.close,
             "volume": self.volume,
             "adjusted_close": self.adjusted_close,
+            "availability_date": self.availability_date.isoformat()
+            if self.availability_date
+            else None,
+            "retrieved_at": self.retrieved_at,
         }
 
 
@@ -160,6 +172,8 @@ def fetch_stooq_daily_prices(
         )
         if not rows:
             raise PriceDataError(f"No daily price rows returned for {normalized_symbol}")
+        retrieved_at = utc_timestamp()
+        rows = tuple(replace(row, retrieved_at=retrieved_at) for row in rows)
         logger.bind(
             symbol=normalized_symbol,
             source_symbol=source_symbol,
@@ -255,6 +269,8 @@ def fetch_yahoo_daily_prices(
     )
     if not rows:
         raise PriceDataError(f"No Yahoo daily price rows returned for {normalized_symbol}")
+    retrieved_at = utc_timestamp()
+    rows = tuple(replace(row, retrieved_at=retrieved_at) for row in rows)
     logger.bind(
         symbol=normalized_symbol,
         row_count=len(rows),
@@ -414,8 +430,9 @@ def write_price_observations(
     rows: tuple[DailyPriceObservation, ...],
     *,
     output_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    overwrite: bool = False,
 ) -> Path:
-    """Write daily price observations, merging with existing rows by date."""
+    """Write daily price observations, merging without silent corrections."""
 
     if not rows:
         raise PriceDataError("Cannot write an empty price observation set")
@@ -429,6 +446,14 @@ def write_price_observations(
     }
     merged_rows = dict(existing_rows)
     for row in rows:
+        existing_row = merged_rows.get(row.observed_date)
+        if existing_row is not None and not overwrite:
+            if existing_row != row:
+                raise PriceDataError(
+                    "Refusing to overwrite existing daily price observation with different "
+                    f"content: {output_path} {row.observed_date.isoformat()}"
+                )
+            continue
         merged_rows[row.observed_date] = row
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -522,6 +547,9 @@ def _price_from_dict(row: dict[str, Any]) -> DailyPriceObservation:
         close=float(row["close"]),
         volume=int(row["volume"]),
         adjusted_close=_optional_float(row.get("adjusted_close")),
+        availability_date=_optional_date(row.get("availability_date"))
+        or date.fromisoformat(str(row["date"])),
+        retrieved_at=_optional_str(row.get("retrieved_at")),
     )
 
 
@@ -551,6 +579,18 @@ def _optional_float(value: object) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _optional_date(value: object) -> date | None:
+    if value is None or value == "":
+        return None
+    return date.fromisoformat(str(value))
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _frame_value(row: dict[Any, Any], *names: str) -> Any:

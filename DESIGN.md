@@ -138,7 +138,7 @@ The two engines answer different questions and should not be blended prematurely
 | Market regime | Is the market stretched enough to scale down/protect, washed out enough to scale up/redeploy, or quiet enough to do nothing? | Trend, VIX/VVIX/volatility term structure, breadth, credit/liquidity, sentiment/positioning | Primary near-term engine |
 | Single-name opportunity | Which large, liquid stocks have multi-month asymmetric opportunities worth using the tactical risk budget on? | Bulltard signals, price/relative strength, fundamentals, catalysts, options liquidity | Secondary until regime evidence is credible |
 
-Portfolio policy should wait until the market-regime engine has a more credible evidence base than simple index trend. The single-name engine can continue collecting candidates in parallel, but it should not drive aggregate market exposure.
+Portfolio policy may exist as a bounded v0 research proxy, but it should remain provisional until the market-regime engine has a more credible evidence base than simple index trend and measured replay. The single-name engine can continue collecting candidates in parallel, but it should not drive aggregate market exposure.
 
 ## Engine Interaction
 
@@ -634,7 +634,7 @@ Build the simplest version that can teach us something, then add sophistication 
 
 - Which independent fundamental/estimate-revision data sources are practical and point-in-time enough for v0?
 
-| Recommended immediate next step: make the v0 policy loop visually inspectable. Generate reproducible charts and compact reports that show SPY/QQQ price, regime/action/policy states, stretch/washout pressure, candidate markers, and forward outcome evidence from versioned snapshots. |
+| Recommended immediate next step: finish the remaining research-boundary hardening path. Prioritize immutable source-observation history, policy hysteresis/cooldowns, and the first real opportunity lifecycle/gating model. |
 |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 # 14. Implementation Infrastructure
@@ -695,12 +695,15 @@ Cloud object storage should be introduced only after a concrete requirement appe
 
 Visualization is a core research instrument. The objective is not to create a decorative dashboard; it is to make regime changes, component disagreements, single-name candidate lifecycles, subscription signals, historical analogs, and forward outcomes visually inspectable while preserving exact as-of semantics.
 
-## Recommended v0 visualization stack
+## Visualization stack
+
+The current v0 implementation uses self-contained HTML/SVG emitted by CLI commands because it is easy to diff, test, and archive locally. Plotly, Matplotlib, and notebooks remain useful expansion options when interactive exploration or publication-quality static figures become the bottleneck.
 
 | **Need**                          | **Tool**                                             | **Role**                                                                                            |
 |-----------------------------------|------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
-| Interactive exploration           | Plotly                                               | Zoom, hover, synchronized time axes, regime shading, event markers, and local HTML output.          |
-| Canonical/static research figures | Matplotlib                                           | Stable plots for experiment artifacts, versioned reports, tests, and publication-quality snapshots. |
+| Current reproducible reports      | Self-contained HTML/SVG                              | CLI-generated artifacts for daily inspection, tests, and local archiving.                           |
+| Interactive exploration           | Plotly                                               | Later zoom, hover, synchronized time axes, regime shading, event markers, and local HTML output.    |
+| Canonical/static research figures | Matplotlib                                           | Later experiment artifacts and publication-quality snapshots.                                      |
 | Exploratory workspace             | Jupyter notebook                                     | Fast iteration on signals, event studies, factor decomposition, and visual diagnostics.             |
 | Optional later UI                 | Local lightweight app (e.g. Streamlit or equivalent) | Useful only after the core charts and research questions stabilize; not required for v0.            |
 
@@ -759,6 +762,10 @@ Useful cohort views include: Bulltard signals by type; repeated-flow episodes; c
 
 Visualization should be reproducible from the CLI rather than existing only inside a notebook. Example commands:
 
+- marketlab daily
+
+- marketlab daily --date 2026-08-24
+
 - marketlab chart regime --symbol SPY --start 2024-01-01 --model regime_v3
 
 - marketlab chart components --date 2026-08-24
@@ -800,7 +807,9 @@ Treat this document as the architectural source of truth unless a later design v
 - Never execute trades. The system produces research, exposure guidance, and portfolio-policy recommendations only.
 - Add tests around the behavior being used now. Broaden tests for snapshot timing, look-ahead prevention, point-in-time universe membership, option-liquidity gating, candidate lifecycle transitions, feature calculation, model versioning, and persistence as those components enter the active research loop.
 
-## Suggested first repository skeleton
+## Historical first repository skeleton
+
+This skeleton is retained as design history. The current implementation uses a flatter package layout while v0 contracts are still moving; move to this deeper layout only when the module boundaries become stable enough to justify it.
 
 ```text
 marketlab/
@@ -841,7 +850,7 @@ marketlab/
 
 - Keep the two-engine split explicit in code and documentation: `regime` owns aggregate market context, while `bulltard` and later `opportunity` own single-name candidate evidence.
 
-- Keep the market-signal snapshot layer as the evidence boundary for regime and policy. The regime score should consume named market signal observations rather than embedding every feature directly in one scoring function.
+- Keep hardening the market-signal snapshot layer as the evidence boundary for regime and policy. The current v0 consumes saved/generated signal rows; next steps are moving signal production into a dedicated module, adding calibrated signal families, and replay-testing policy decisions by signal version.
 
 - Continue Market Signal Expansion with volatility structure and sentiment/positioning only where source access is practical and measured outcome replay improves:
   - VIX level, VIX change, realized-vs-implied volatility, and VIX term structure where data is practical.
@@ -856,9 +865,9 @@ marketlab/
 
 - Leave Bulltard work focused on candidate generation and measured single-name outcomes. The portfolio policy consumes candidate context, but Bulltard must not drive aggregate market exposure.
 
-- Choose the first canonical regime/policy visualization: SPY/QQQ price + regime/action/policy shading + continuous stretch/washout pressure + component panels.
+- Extend the first canonical regime/policy visualization: keep SPY/QQQ price, regime/action shading, stretch/washout pressure, component panels, and policy state visible; add real current portfolio beta/cash once portfolio accounting exists.
 
-- Choose the first canonical single-name visualization: price/relative strength + Bulltard events/lifecycle markers + opportunity-family scores + option-liquidity panel.
+- Extend the first canonical single-name visualization after the opportunity engine exists: add lifecycle markers, opportunity-family scores, and option-liquidity panels beyond the current candidate-validation view.
 
 - Keep JSON/JSONL snapshots as the durable local source of truth and DuckDB/Parquet as query/export layers. Ensure generated data paths remain gitignored except tiny test fixtures.
 

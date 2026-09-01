@@ -144,11 +144,18 @@ def test_ingest_planned_view_writes_ranked_trade_observations(tmp_path: Path) ->
 
     assert result.row_count == 3
     assert result.observation_path == output_root / "ranked_option_trades" / "2026-08-25.jsonl"
+    assert result.metadata_path == output_root / "ranked_option_trades" / "2026-08-25.meta.json"
     rows = [
         json.loads(line)
         for line in result.observation_path.read_text(encoding="utf-8").splitlines()
     ]
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["view"] == "ranked-option-trades"
+    assert metadata["row_count"] == 3
+    assert metadata["final_url"] == "https://app.jamesbulltard.com/ranked_option_trades"
     assert rows[0]["symbol"] == "INTC"
+    assert rows[0]["ingest_id"] == metadata["ingest_id"]
+    assert rows[0]["parser_version"] == metadata["parser_version"]
     assert rows[0]["side"] == "bullish"
     assert rows[0]["premium"] == 74508194.5
     assert rows[2]["symbol"] == "AKAM"
@@ -240,11 +247,17 @@ def test_ingest_ticker_page_writes_ticker_flow_observations(tmp_path: Path) -> N
     assert result.row_count == 4
     assert result.fetched_page.symbol == "INTC"
     assert result.observation_path == output_root / "ticker_flow" / "INTC" / "2026-08-25.jsonl"
+    assert result.metadata_path == output_root / "ticker_flow" / "INTC" / "2026-08-25.meta.json"
     rows = [
         json.loads(line)
         for line in result.observation_path.read_text(encoding="utf-8").splitlines()
     ]
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["view"] == "ticker-flow-history"
+    assert metadata["symbol"] == "INTC"
+    assert metadata["row_count"] == 4
     assert rows[0]["symbol"] == "INTC"
+    assert rows[0]["ingest_id"] == metadata["ingest_id"]
     assert rows[0]["order_type"] == "Calls Bought"
     assert rows[0]["premium"] == 808000.0
     assert rows[1]["is_older"] is True
@@ -264,11 +277,17 @@ def test_ingest_trades_of_interest_writes_recap_observations(tmp_path: Path) -> 
     assert result.row_count == 2
     assert result.symbols == ("META", "XAR")
     assert result.observation_path == output_root / "trades_of_interest" / "2026-08-26.jsonl"
+    assert result.metadata_path == output_root / "trades_of_interest" / "2026-08-26.meta.json"
     rows = [
         json.loads(line)
         for line in result.observation_path.read_text(encoding="utf-8").splitlines()
     ]
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["view"] == "trades-of-interest"
+    assert metadata["row_count"] == 2
+    assert metadata["final_url"] is None
     assert rows[0]["symbol"] == "META"
+    assert rows[0]["ingest_id"] == metadata["ingest_id"]
     assert rows[0]["rank"] == 1
     assert rows[0]["note"].startswith("$640 calls")
     assert rows[1]["symbol"] == "XAR"

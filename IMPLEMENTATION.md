@@ -27,8 +27,9 @@ The market regime engine is now the primary implementation focus. Bulltard is on
 Implemented shared foundation:
 
 - Python package skeleton with `uv`, Typer CLI, Loguru logging, tests, and a local `bin/marketlab` symlink.
-- Shared snapshot identity model using `{source, view, date}`.
+- Shared snapshot identity helpers for signal date/time, snapshot version, canonical versioned paths, feature/model/policy versions, code revision, and immutable writes.
 - Daily price observation fetch from Yahoo Finance through `yfinance` into local JSONL.
+- Daily price observations carry availability/retrieval metadata and refuse conflicting same-date rewrites by default.
 - Local daily OHLCV CSV import into the same price observation format.
 
 Implemented single-name / Bulltard foundation:
@@ -37,6 +38,7 @@ Implemented single-name / Bulltard foundation:
 - Bulltard ranked option trades ingest from the live app route.
 - Trades Of Interest parsing from the recap email.
 - Ticker-detail fetch and parser for flow history pages.
+- Bulltard ingest metadata sidecars with retrieval context, final URL, parser version, and row count.
 - Candidate review that prioritizes recap interest over raw ranked rows.
 - Daily Bulltard orchestration that captures ranked rows, recap interest, ticker details, candidate prices, validation snapshots, and outcome summaries.
 - Bulltard candidate validation snapshots using price, volume, trend, drawdown, and relative-strength features.
@@ -75,12 +77,27 @@ Implemented portfolio policy and local store foundation:
 - `report daily` renders the human-facing daily posture report with regime, market-signal, policy, and candidate context.
 - `policy backfill` writes policy snapshots over saved regime dates.
 - `policy outcomes` compares policy snapshots against a fixed 50/50 SPY/QQQ beta-scaled benchmark proxy.
-- `store refresh` rebuilds a local DuckDB research store from JSON/JSONL source observations and snapshots, with optional Parquet exports.
+- `store refresh` rebuilds a local DuckDB research store from JSON/JSONL source observations, Bulltard ingest rows, and snapshots, with optional Parquet exports.
+
+Implemented reproducibility cleanup:
+
+- Regime, market-signal, candidate-validation, and policy snapshot payloads include signal date/time, snapshot version, and code/timestamp provenance on write.
+- Regime, market-signal, candidate-validation, and policy snapshots now write to canonical nested paths by date, signal time, snapshot version, and artifact version.
+- Legacy flat snapshot loaders remain in place for v0 migration compatibility.
+- Snapshot-producing and chart/report CLI commands accept `--signal-time` and `--snapshot-version` selectors.
+- Regime snapshots are derived from saved market-signal snapshots when present; otherwise the workflow generates the signal snapshot first and consumes the persisted/reloaded rows.
+- Policy snapshots use a complete saved market-signal boundary to recompute regime action posture before mapping portfolio policy.
+- Market-signal rows carry structured `details` JSON for numeric regime/pressure reconstruction without parsing display text.
+- Snapshot and observation writers refuse to silently overwrite different historical content.
+- Historical source-date workflows default fetched prices/market series to the requested source date unless an explicit later end date is provided.
+- The regime chart now includes policy snapshots in a dedicated portfolio-policy panel.
 
 Not yet implemented:
 
 - VIX term structure, fear/greed or sentiment/positioning observations.
 - Stronger breadth, sentiment/positioning, VIX term structure, and richer credit/liquidity calibration.
+- Migration tooling to move old flat snapshot files into the canonical nested layout and optionally retire read fallback.
+- Dedicated market-signal producer module/CLI; current v0 signal generation still lives inside the regime workflow.
 - Long-history threshold calibration and real portfolio accounting beyond the v0 beta-scaled proxy.
 
 Verified live on `2026-08-26`:
@@ -93,6 +110,17 @@ Verified live on `2026-08-26`:
 Generated observations are written under `data/observations/`. Debug HTML under `data/debug/` is only parser evidence and is not part of the product surface.
 
 ## Current Useful Commands
+
+Normal daily operation should use the top-level command:
+
+```bash
+./bin/marketlab daily
+./bin/marketlab daily --date 2026-08-31
+```
+
+It looks for `data/inbox/bulltard/recap-YYYY-MM-DD.html` and includes Bulltard capture when
+that file exists. The commands below are lower-level debugging, backfill, and focused research
+surfaces.
 
 ```bash
 ./bin/marketlab --help
@@ -278,7 +306,7 @@ First useful M3 outputs:
 Known limitations:
 
 - This is a useful foundation, not a credible final market model.
-- Volatility is currently represented by VIX level plus SPY realized volatility, not VIX term structure or vol-of-vol.
+- Volatility is currently represented by VIX, VVIX where available, and SPY realized volatility, not VIX term structure.
 - Breadth and credit/liquidity are ETF proxies, not full market breadth or financing-condition datasets.
 - Sentiment/positioning is not implemented.
 - The current composite has not been calibrated across enough history to support portfolio policy.
@@ -528,7 +556,7 @@ Goal: make the research loop easy to inspect without turning the project into a 
 
 Scope:
 
-- Generate the first regime chart from reproducible CLI inputs. Completed with `chart regime`, which writes a self-contained HTML/SVG chart from saved price, regime, and market-signal snapshots.
+- Generate the first regime chart from reproducible CLI inputs. Completed with `chart regime`, which writes a self-contained HTML/SVG chart from saved price, regime, market-signal, and policy snapshots.
 - Generate the first single-name opportunity chart with Bulltard event markers. Completed with `chart opportunity`, which writes a self-contained HTML/SVG chart from saved candidate snapshots, ticker-flow observations, price observations, and clearly separated forward-outcome rows.
 - Keep notebooks exploratory; make important charts reproducible from commands.
 - Include forward evaluation layers only when clearly separated from point-in-time inputs.
@@ -546,6 +574,7 @@ The default output paths are `reports/regime-START-END.html` and
 Known limitations:
 
 - These are static HTML/SVG reports, not an interactive dashboard.
+- The regime chart includes policy state and target beta/cash/overlay context, but not real current portfolio beta or cash balances.
 - The opportunity chart shows the validation snapshot and Bulltard flow rows available for one saved candidate date; it does not model a full opportunity lifecycle yet.
 - Forward outcomes stay in a separate table and show `waiting` until enough future local price rows exist.
 

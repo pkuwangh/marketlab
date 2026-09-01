@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -23,9 +23,22 @@ from marketlab.prices import (
     PriceDataError,
     load_price_history,
 )
+from marketlab.snapshots.models import (
+    SignalTime,
+    current_code_revision,
+    default_snapshot_version,
+    resolve_snapshot_path,
+    signal_time_value,
+    utc_timestamp,
+    versioned_snapshot_path,
+    write_immutable_payload,
+)
 
 DEFAULT_CANDIDATE_SNAPSHOT_ROOT = Path("data/snapshots/bulltard/candidates")
 FEATURE_VERSION = "bulltard_candidate_validation_v0"
+CANDIDATE_VALIDATION_MODEL_VERSION = "bulltard_candidate_validation_rules_v0"
+OPPORTUNITY_VERSION = "candidate_validation_only_v0"
+CANDIDATE_VALIDATION_SNAPSHOT_FILENAME = "candidate-validation.jsonl"
 DEFAULT_MIN_DOLLAR_VOLUME = 50_000_000.0
 BENCHMARK_SYMBOLS = ("SPY", "QQQ")
 
@@ -64,13 +77,34 @@ class CandidateValidationSnapshot:
     options_liquidity_status: str
     validation_status: str
     validation_reasons: tuple[str, ...]
+    signal_time: str = SignalTime.EOD.value
+    snapshot_version: str | None = None
+    model_version: str = CANDIDATE_VALIDATION_MODEL_VERSION
+    opportunity_version: str = OPPORTUNITY_VERSION
+    created_at: str | None = field(default=None, compare=False)
+    code_revision: str | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        signal_time = signal_time_value(self.signal_time)
+        object.__setattr__(self, "signal_time", signal_time)
+        if not self.snapshot_version:
+            object.__setattr__(
+                self,
+                "snapshot_version",
+                default_snapshot_version(self.source_date, signal_time=signal_time),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "source": "marketlab",
             "snapshot_type": "bulltard-candidate-validation",
             "source_date": self.source_date.isoformat(),
+            "signal_date": self.source_date.isoformat(),
+            "signal_time": self.signal_time,
+            "snapshot_version": self.snapshot_version,
             "feature_version": self.feature_version,
+            "model_version": self.model_version,
+            "opportunity_version": self.opportunity_version,
             "symbol": self.symbol,
             "bulltard_source": self.bulltard_source,
             "ranked_side": self.ranked_side,
@@ -95,6 +129,8 @@ class CandidateValidationSnapshot:
             "options_liquidity_status": self.options_liquidity_status,
             "validation_status": self.validation_status,
             "validation_reasons": list(self.validation_reasons),
+            "created_at": self.created_at,
+            "code_revision": self.code_revision,
         }
 
 
@@ -145,6 +181,8 @@ def validate_bulltard_candidates(
     snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     limit: int = 12,
     min_dollar_volume: float = DEFAULT_MIN_DOLLAR_VOLUME,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> CandidateValidationResult:
     """Validate Bulltard candidates with point-in-time price features."""
@@ -162,11 +200,20 @@ def validate_bulltard_candidates(
         symbols=tuple(review.symbol for review in reviews) + BENCHMARK_SYMBOLS,
         price_root=price_root,
     )
+    signal_time_text = signal_time_value(signal_time)
+    snapshot_version_text = snapshot_version or default_snapshot_version(
+        source_date,
+        signal_time=signal_time_text,
+    )
     snapshots = tuple(
-        _validate_review(
-            review=review,
-            histories=histories,
-            min_dollar_volume=min_dollar_volume,
+        replace(
+            _validate_review(
+                review=review,
+                histories=histories,
+                min_dollar_volume=min_dollar_volume,
+            ),
+            signal_time=signal_time_text,
+            snapshot_version=snapshot_version_text,
         )
         for review in reviews
     )
@@ -176,6 +223,8 @@ def validate_bulltard_candidates(
             snapshots,
             snapshot_root=snapshot_root,
             source_date=source_date,
+            signal_time=signal_time_text,
+            snapshot_version=snapshot_version_text,
         )
         if write_snapshot
         else None
@@ -219,19 +268,78 @@ def write_candidate_validation_snapshots(
     *,
     snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     source_date: date,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+    overwrite: bool = False,
 ) -> Path:
     """Write one date's candidate validation snapshots."""
 
-    path = snapshot_root / f"{source_date.isoformat()}.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if any(snapshot.source_date != source_date for snapshot in snapshots):
+        raise CandidateValidationError("Candidate validation snapshot must contain one source date")
+    if snapshots:
+        signal_time = snapshots[0].signal_time
+        if any(snapshot.signal_time != signal_time for snapshot in snapshots):
+            raise CandidateValidationError(
+                "Candidate validation snapshot must contain one signal time"
+            )
+        snapshot_version = snapshots[0].snapshot_version
+        if any(snapshot.snapshot_version != snapshot_version for snapshot in snapshots):
+            raise CandidateValidationError(
+                "Candidate validation snapshot must contain one snapshot version"
+            )
+        model_version = snapshots[0].model_version
+        if any(snapshot.model_version != model_version for snapshot in snapshots):
+            raise CandidateValidationError(
+                "Candidate validation snapshot must contain one model version"
+            )
+        opportunity_version = snapshots[0].opportunity_version
+        if any(snapshot.opportunity_version != opportunity_version for snapshot in snapshots):
+            raise CandidateValidationError(
+                "Candidate validation snapshot must contain one opportunity version"
+            )
+    else:
+        model_version = CANDIDATE_VALIDATION_MODEL_VERSION
+        opportunity_version = OPPORTUNITY_VERSION
+
+    try:
+        path = versioned_snapshot_path(
+            snapshot_root=snapshot_root,
+            source_date=source_date,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            artifact_version=_candidate_artifact_version(
+                model_version=model_version,
+                opportunity_version=opportunity_version,
+            ),
+            filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
+        )
+    except ValueError as exc:
+        raise CandidateValidationError(str(exc)) from exc
+    created_at = utc_timestamp()
+    code_revision = current_code_revision()
     payload = "".join(
-        json.dumps(snapshot.to_dict(), sort_keys=True) + "\n" for snapshot in snapshots
+        json.dumps(
+            _with_write_provenance(
+                snapshot.to_dict(),
+                created_at=created_at,
+                code_revision=code_revision,
+            ),
+            sort_keys=True,
+        )
+        + "\n"
+        for snapshot in snapshots
     )
-    path.write_text(payload, encoding="utf-8")
+    wrote = write_immutable_payload(
+        path=path,
+        payload=payload,
+        error_cls=CandidateValidationError,
+        overwrite=overwrite,
+    )
     logger.bind(
         source_date=source_date.isoformat(),
         row_count=len(snapshots),
         snapshot_path=str(path),
+        wrote=wrote,
     ).success("Wrote Bulltard candidate validation snapshots")
     return path
 
@@ -240,11 +348,32 @@ def load_candidate_validation_snapshots(
     *,
     source_date: date,
     snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+    model_version: str | None = None,
+    opportunity_version: str | None = None,
 ) -> tuple[CandidateValidationSnapshot, ...]:
     """Load one date's candidate validation snapshots."""
 
-    path = snapshot_root / f"{source_date.isoformat()}.jsonl"
-    if not path.is_file():
+    artifact_version = None
+    if model_version is not None or opportunity_version is not None:
+        artifact_version = _candidate_artifact_version(
+            model_version=model_version or CANDIDATE_VALIDATION_MODEL_VERSION,
+            opportunity_version=opportunity_version or OPPORTUNITY_VERSION,
+        )
+    try:
+        path = resolve_snapshot_path(
+            snapshot_root=snapshot_root,
+            source_date=source_date,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            artifact_version=artifact_version,
+            filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
+            legacy_suffix=".jsonl",
+        )
+    except ValueError as exc:
+        raise CandidateValidationError(str(exc)) from exc
+    if path is None:
         return ()
     try:
         return tuple(
@@ -420,7 +549,7 @@ def _empty_price_features() -> _PriceFeatures:
 
 def _asof_index(history: tuple[DailyPriceObservation, ...], source_date: date) -> int | None:
     for index in range(len(history) - 1, -1, -1):
-        if history[index].observed_date <= source_date:
+        if history[index].availability_date and history[index].availability_date <= source_date:
             return index
     return None
 
@@ -553,9 +682,16 @@ def _review_source(review: CandidateReview) -> str:
 
 
 def _snapshot_from_dict(row: dict[str, Any]) -> CandidateValidationSnapshot:
+    source_date = date.fromisoformat(str(row["source_date"]))
+    signal_time = str(row.get("signal_time", SignalTime.EOD.value))
     return CandidateValidationSnapshot(
-        source_date=date.fromisoformat(str(row["source_date"])),
+        source_date=source_date,
         feature_version=str(row["feature_version"]),
+        signal_time=signal_time,
+        snapshot_version=_optional_str(row.get("snapshot_version"))
+        or default_snapshot_version(source_date, signal_time=signal_time),
+        model_version=_optional_str(row.get("model_version")) or CANDIDATE_VALIDATION_MODEL_VERSION,
+        opportunity_version=_optional_str(row.get("opportunity_version")) or OPPORTUNITY_VERSION,
         symbol=str(row["symbol"]),
         bulltard_source=str(row["bulltard_source"]),
         ranked_side=str(row["ranked_side"]) if row["ranked_side"] is not None else None,
@@ -580,7 +716,13 @@ def _snapshot_from_dict(row: dict[str, Any]) -> CandidateValidationSnapshot:
         options_liquidity_status=str(row["options_liquidity_status"]),
         validation_status=str(row["validation_status"]),
         validation_reasons=tuple(str(reason) for reason in row["validation_reasons"]),
+        created_at=_optional_str(row.get("created_at")),
+        code_revision=_optional_str(row.get("code_revision")),
     )
+
+
+def _candidate_artifact_version(*, model_version: str, opportunity_version: str) -> str:
+    return f"{model_version}+{opportunity_version}"
 
 
 def _optional_float(value: object) -> float | None:
@@ -589,6 +731,26 @@ def _optional_float(value: object) -> float | None:
 
 def _optional_int(value: object) -> int | None:
     return int(value) if value is not None else None
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _with_write_provenance(
+    row: dict[str, Any],
+    *,
+    created_at: str,
+    code_revision: str | None,
+) -> dict[str, Any]:
+    enriched = dict(row)
+    if enriched.get("created_at") is None:
+        enriched["created_at"] = created_at
+    if enriched.get("code_revision") is None:
+        enriched["code_revision"] = code_revision
+    return enriched
 
 
 def _format_optional_float(value: float | None) -> str:

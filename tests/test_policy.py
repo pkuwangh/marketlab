@@ -22,6 +22,7 @@ def test_compute_policy_snapshot_maps_protective_regime_to_bounded_posture(
 ) -> None:
     source_date = date(2026, 8, 28)
     regime_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
     candidate_root = tmp_path / "candidates"
     policy_root = tmp_path / "policy"
     write_regime_snapshot(
@@ -50,12 +51,14 @@ def test_compute_policy_snapshot_maps_protective_regime_to_bounded_posture(
     result = compute_portfolio_policy_snapshot(
         source_date=source_date,
         regime_snapshot_root=regime_root,
+        market_signal_snapshot_root=signal_root,
         candidate_snapshot_root=candidate_root,
         policy_snapshot_root=policy_root,
     )
 
-    assert result.snapshot_path == policy_root / "2026-08-28.json"
+    assert result.snapshot_path == _policy_snapshot_path(policy_root, source_date)
     assert result.snapshot_path.is_file()
+    assert result.snapshot.snapshot_version == "2026-08-28_eod"
     assert result.snapshot.policy_state == "protect"
     assert result.snapshot.marginal_beta_target == 0.90
     assert result.snapshot.candidate_count == 3
@@ -94,6 +97,7 @@ def test_daily_policy_report_shows_policy_change_and_signal_context(tmp_path: Pa
     compute_portfolio_policy_snapshot(
         source_date=first_date,
         regime_snapshot_root=regime_root,
+        market_signal_snapshot_root=signal_root,
         policy_snapshot_root=policy_root,
     )
     write_market_signal_snapshot(
@@ -130,6 +134,87 @@ def test_daily_policy_report_shows_policy_change_and_signal_context(tmp_path: Pa
     assert "Portfolio posture" in result.report
     assert "vol_of_vol" in result.report
     assert "deploy dry powder in tranches" in result.report
+
+
+def test_compute_policy_snapshot_uses_full_market_signal_boundary_for_action(
+    tmp_path: Path,
+) -> None:
+    source_date = date(2026, 8, 28)
+    regime_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    policy_root = tmp_path / "policy"
+    write_regime_snapshot(
+        _regime_snapshot(
+            source_date=source_date,
+            action_state="no_change",
+            spy_return_20d=0.08,
+            spy_return_60d=0.15,
+            spy_ma50_distance=0.07,
+            qqq_return_20d=0.10,
+            qqq_ma50_distance=0.08,
+            vix_close=13.0,
+            components=(
+                RegimeComponentScore(
+                    name="trend",
+                    score=2,
+                    status="constructive",
+                    reason="fixture trend",
+                ),
+                RegimeComponentScore(
+                    name="volatility",
+                    score=1,
+                    status="calm",
+                    reason="fixture volatility",
+                ),
+                RegimeComponentScore(
+                    name="breadth",
+                    score=0,
+                    status="mixed",
+                    reason="fixture breadth",
+                ),
+                RegimeComponentScore(
+                    name="credit",
+                    score=1,
+                    status="risk_appetite",
+                    reason="fixture credit",
+                ),
+            ),
+        ),
+        snapshot_root=regime_root,
+    )
+    write_market_signal_snapshot(
+        (
+            _market_signal(source_date=source_date, family="trend", status="constructive", score=2),
+            _market_signal(source_date=source_date, family="volatility", status="calm", score=1),
+            _market_signal(source_date=source_date, family="breadth", status="mixed", score=0),
+            _market_signal(
+                source_date=source_date,
+                family="credit",
+                status="risk_appetite",
+                score=1,
+            ),
+            _market_signal(
+                source_date=source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="calm",
+                score=1,
+                value=85.0,
+            ),
+        ),
+        snapshot_root=signal_root,
+    )
+
+    result = compute_portfolio_policy_snapshot(
+        source_date=source_date,
+        regime_snapshot_root=regime_root,
+        market_signal_snapshot_root=signal_root,
+        policy_snapshot_root=policy_root,
+    )
+
+    assert result.snapshot.regime_action_state == "scale_down_protect"
+    assert result.snapshot.policy_state == "protect"
+    assert result.snapshot.market_signal_snapshot_version == "2026-08-28_eod"
 
 
 def test_policy_backfill_and_outcomes_compare_to_fixed_benchmark(tmp_path: Path) -> None:
@@ -198,11 +283,18 @@ def _regime_snapshot(
     source_date: date,
     regime: str = "risk_on",
     score: int = 4,
+    components: tuple[RegimeComponentScore, ...] | None = None,
     action_state: str = "no_change",
     action_confidence: str = "medium",
     action_reason: str = "No rare-action threshold crossed",
     stretch_pressure_score: float = 0.30,
     washout_pressure_score: float = 0.20,
+    spy_return_20d: float = 0.03,
+    spy_return_60d: float = 0.05,
+    spy_ma50_distance: float = 0.02,
+    qqq_return_20d: float = 0.04,
+    qqq_ma50_distance: float = 0.03,
+    vix_close: float = 14.0,
 ) -> RegimeSnapshot:
     return RegimeSnapshot(
         source_date=source_date,
@@ -212,7 +304,8 @@ def _regime_snapshot(
         regime=regime,
         score=score,
         confidence="medium",
-        components=(
+        components=components
+        or (
             RegimeComponentScore(
                 name="trend",
                 score=2,
@@ -221,18 +314,18 @@ def _regime_snapshot(
             ),
         ),
         missing_symbols=(),
-        spy_return_20d=0.03,
-        spy_return_60d=0.05,
-        spy_ma50_distance=0.02,
+        spy_return_20d=spy_return_20d,
+        spy_return_60d=spy_return_60d,
+        spy_ma50_distance=spy_ma50_distance,
         spy_ma200_distance=0.08,
         spy_realized_vol_20d=0.12,
-        qqq_return_20d=0.04,
-        qqq_ma50_distance=0.03,
+        qqq_return_20d=qqq_return_20d,
+        qqq_ma50_distance=qqq_ma50_distance,
         qqq_ma200_distance=0.10,
         rsp_spy_relative_20d=0.0,
         iwm_spy_relative_20d=-0.01,
         hyg_tlt_relative_20d=0.0,
-        vix_close=14.0,
+        vix_close=vix_close,
         vvix_close=88.0,
         action_state=action_state,
         action_confidence=action_confidence,
@@ -240,6 +333,32 @@ def _regime_snapshot(
         pressure_confidence="medium",
         stretch_pressure_score=stretch_pressure_score,
         washout_pressure_score=washout_pressure_score,
+    )
+
+
+def _market_signal(
+    *,
+    source_date: date,
+    family: str,
+    status: str,
+    score: int,
+    name: str = "price_proxy",
+    value: float | str | None = "fixture",
+    unit: str = "text",
+) -> MarketSignal:
+    return MarketSignal(
+        source_date=source_date,
+        feature_version="fixture",
+        family=family,
+        name=name,
+        status=status,
+        score=score,
+        value=value,
+        unit=unit,
+        source="fixture",
+        observed_date=source_date,
+        availability_date=source_date,
+        reason="fixture signal",
     )
 
 
@@ -302,3 +421,15 @@ def _write_price_history(
         for index, close in enumerate(closes)
     )
     write_price_observations(rows, output_root=price_root)
+
+
+def _policy_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
+    source_date_value = source_date.isoformat()
+    return (
+        snapshot_root
+        / source_date_value
+        / "eod"
+        / f"{source_date_value}_eod"
+        / "portfolio_policy_v0"
+        / "portfolio-policy.json"
+    )
