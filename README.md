@@ -6,9 +6,12 @@ The implementation follows `DESIGN.md`: point-in-time observations, deterministi
 
 Use this README for current commands and `DESIGN.md` for architecture and research direction.
 
-## Current Baseline
+## Current Capabilities
 
-Milestones 1 through 7 are complete at v0 depth: the repo can capture the daily Bulltard candidate set, refresh independent price history, validate candidates, compute market regime, derive bounded portfolio policy, refresh a local DuckDB research store, replay forward outcomes, and render reproducible reports/charts.
+MarketLab can capture the daily Bulltard candidate set from Gmail, refresh independent market
+and price history, validate candidates, compute market regime, derive bounded portfolio policy,
+refresh a local DuckDB research store, replay forward outcomes, and render reproducible
+reports/charts.
 
 Implemented:
 
