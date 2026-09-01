@@ -101,15 +101,46 @@ for debugging, backfills, and focused research.
 
 ## Gmail Recap Fetch
 
-Gmail access is read-only and uses local OAuth credentials. Put a Google OAuth desktop-client
-JSON file at `secrets/google-oauth-client.json`, then authorize once:
+Gmail access is read-only and uses local OAuth credentials. This is a one-time setup.
+
+1. In Google Cloud Console, enable the Gmail API for a project.
+2. Create an OAuth Client ID with application type `Desktop app`.
+3. Download that JSON file into this repo as `secrets/google-oauth-client.json`.
+   This file is not your Gmail password; it only identifies the local MarketLab OAuth app.
+4. Authorize MarketLab once:
 
 ```bash
 ./bin/marketlab gmail auth --client-secret secrets/google-oauth-client.json
 ```
 
-After authorization, the token is stored at `secrets/gmail-token.json`. Both `secrets/` and
-`data/` are gitignored. To test only the email acquisition step:
+By default this opens a browser, asks Google for Gmail read-only access, receives the callback
+on `127.0.0.1`, and writes `secrets/gmail-token.json`. That token is what future runs use and
+refresh locally. Keep both files under `secrets/`; both `secrets/` and `data/` are gitignored.
+
+If the command runs on a machine without a browser, use a fixed callback port and open the
+printed `authorization_url` yourself:
+
+```bash
+./bin/marketlab gmail auth --no-browser --port 8765
+```
+
+If that machine is remote over SSH, forward the same port first, for example:
+
+```bash
+ssh -L 8765:127.0.0.1:8765 YOUR_REMOTE
+```
+
+The default `--port 0` chooses any free local port and is the easiest option on a normal local
+desktop. A fixed `--port` is mainly for SSH forwarding or firewall rules.
+
+After auth, the daily workflow can fetch the recap and create `data/inbox/bulltard/`
+automatically:
+
+```bash
+./bin/marketlab daily
+```
+
+To test only the email acquisition step:
 
 ```bash
 ./bin/marketlab gmail bulltard-recap --date 2026-09-01

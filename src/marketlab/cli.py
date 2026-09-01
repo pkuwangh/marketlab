@@ -152,7 +152,7 @@ market_series_app = typer.Typer(
     no_args_is_help=True,
 )
 gmail_app = typer.Typer(
-    help="Gmail recap acquisition utilities.",
+    help="Find Bulltard recap emails in Gmail and cache them for daily ingest.",
     no_args_is_help=True,
 )
 regime_app = typer.Typer(
@@ -225,33 +225,49 @@ def gmail_auth(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Google OAuth client secret JSON path.",
+        help=(
+            "Path to the Google OAuth Desktop app JSON downloaded from Google Cloud; "
+            "not your Gmail password."
+        ),
     ),
     token_path: Path = typer.Option(
         DEFAULT_GMAIL_TOKEN_PATH,
         "--token",
         dir_okay=False,
-        help="Local Gmail OAuth token path.",
+        help=(
+            "Local file this command creates for Gmail access and refresh tokens; "
+            "keep it under secrets/."
+        ),
     ),
     port: int = typer.Option(
         0,
         "--port",
         min=0,
-        help="Local OAuth callback port. Use 0 to choose an available port.",
+        help=(
+            "Local 127.0.0.1 OAuth callback port. 0 picks a free port; "
+            "set a fixed port for SSH forwarding."
+        ),
     ),
     open_browser: bool = typer.Option(
         True,
         "--browser/--no-browser",
-        help="Open the authorization URL in a browser.",
+        help=(
+            "Open the Google consent page automatically. Use --no-browser on SSH/headless machines."
+        ),
     ),
     timeout_seconds: int = typer.Option(
         300,
         "--timeout-seconds",
         min=1,
-        help="Seconds to wait for the OAuth browser callback.",
+        help="Seconds to wait for Google to redirect back to the local callback.",
     ),
 ) -> None:
-    """Authorize read-only Gmail access for recap acquisition."""
+    """Authorize read-only Gmail access and write the local token file.
+
+    Run this once after placing the Google OAuth desktop-client JSON at --client-secret.
+    Use --no-browser --port PORT on SSH/headless machines and open the printed URL from
+    a browser that can reach 127.0.0.1:PORT on the machine running MarketLab.
+    """
 
     try:
         result = run_gmail_oauth_flow(
@@ -284,7 +300,10 @@ def gmail_bulltard_recap(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Google OAuth client secret JSON path.",
+        help=(
+            "Path to the Google OAuth Desktop app JSON downloaded from Google Cloud; "
+            "used to refresh tokens when needed."
+        ),
     ),
     token_path: Path = typer.Option(
         DEFAULT_GMAIL_TOKEN_PATH,
@@ -292,24 +311,24 @@ def gmail_bulltard_recap(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Local Gmail OAuth token path.",
+        help="Existing local Gmail token created by marketlab gmail auth.",
     ),
     output_root: Path = typer.Option(
         DEFAULT_GMAIL_RECAP_CACHE_ROOT,
         "--output-root",
         file_okay=False,
-        help="Root directory for cached recap files.",
+        help="Root directory for cached recap files; created automatically when needed.",
     ),
     query: str | None = typer.Option(
         None,
         "--query",
-        help="Override the default Gmail search query.",
+        help="Override the default Gmail search query; default tries Bulltard/date terms.",
     ),
     max_results: int = typer.Option(
         10,
         "--max-results",
         min=1,
-        help="Maximum Gmail messages to inspect.",
+        help="Maximum matching Gmail messages to inspect for a valid recap.",
     ),
     overwrite: bool = typer.Option(
         False,
@@ -317,7 +336,7 @@ def gmail_bulltard_recap(
         help="Replace an existing cached recap for the same date.",
     ),
 ) -> None:
-    """Fetch the Bulltard recap email from Gmail and cache it locally."""
+    """Fetch the Bulltard recap email from Gmail and cache it for Bulltard ingest."""
 
     source_date = _parse_source_date(source_date_value)
     try:
@@ -491,13 +510,16 @@ def daily_run(
         DEFAULT_GMAIL_CLIENT_SECRET_PATH,
         "--gmail-client-secret",
         dir_okay=False,
-        help="Google OAuth client secret JSON path for automatic Gmail recap fetch.",
+        help=(
+            "Google OAuth Desktop app JSON path for automatic Gmail recap fetch; "
+            "not your Gmail password."
+        ),
     ),
     gmail_token_path: Path = typer.Option(
         DEFAULT_GMAIL_TOKEN_PATH,
         "--gmail-token",
         dir_okay=False,
-        help="Local Gmail OAuth token path for automatic Gmail recap fetch.",
+        help="Local Gmail token path created by marketlab gmail auth.",
     ),
     gmail_query: str | None = typer.Option(
         None,

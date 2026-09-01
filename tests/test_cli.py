@@ -763,7 +763,7 @@ def test_gmail_no_args_shows_help_without_traceback() -> None:
     result = CliRunner().invoke(app, ["gmail"])
 
     assert result.exit_code != 0
-    assert "Gmail recap acquisition utilities." in result.output
+    assert "Find Bulltard recap emails in Gmail" in result.output
     assert "auth" in result.output
     assert "bulltard-recap" in result.output
     assert "Traceback" not in result.output
@@ -775,7 +775,27 @@ def test_gmail_auth_no_args_shows_help_without_default_path_error() -> None:
     assert result.exit_code != 0
     assert "Authorize read-only Gmail access" in result.output
     assert "--client-secret" in result.output
+    assert "not your Gmail" in result.output
+    assert "password" in result.output
+    assert "Local 127.0.0.1" in result.output
+    assert "callback" in result.output
+    assert "port" in result.output
+    assert "--no-browser" in result.output
+    assert "SSH/headless" in result.output
     assert "Invalid value" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_gmail_bulltard_recap_no_args_shows_help_without_missing_date_error() -> None:
+    result = CliRunner().invoke(app, ["gmail", "bulltard-recap"])
+
+    assert result.exit_code != 0
+    assert "cache it for Bulltard ingest" in result.output
+    assert "--date" in result.output
+    assert "Existing local Gmail token" in result.output
+    assert "marketlab gmail" in result.output
+    assert "auth" in result.output
+    assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 
