@@ -472,11 +472,15 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         end_date: date,
         snapshot_root: Path,
         price_root: Path,
+        observations_root: Path,
+        regime_snapshot_root: Path | None,
         horizons: tuple[int, ...],
     ) -> CandidateOutcomeResult:
         assert events == ["regime_prices", "regime", "bulltard", "candidate_prices", "validate"]
         assert start_date == date(2026, 8, 31)
         assert end_date == date(2026, 8, 31)
+        assert observations_root == Path("data/observations/bulltard")
+        assert regime_snapshot_root == Path("data/snapshots/regime/market")
         assert horizons == (1, 5, 20, 40, 65, 126)
         events.append("outcomes")
         return CandidateOutcomeResult(
@@ -2862,10 +2866,14 @@ def test_bulltard_outcomes_outputs_summary_table(
         end_date: date,
         snapshot_root: Path,
         price_root: Path,
+        observations_root: Path,
+        regime_snapshot_root: Path | None,
         horizons: tuple[int, ...],
     ) -> CandidateOutcomeResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 8, 26)
+        assert observations_root == tmp_path / "observations" / "bulltard"
+        assert regime_snapshot_root == tmp_path / "regime"
         assert horizons == (20, 65)
         return CandidateOutcomeResult(
             start_date=start_date,
@@ -2914,6 +2922,10 @@ def test_bulltard_outcomes_outputs_summary_table(
             str(snapshot_root),
             "--price-root",
             str(price_root),
+            "--observations-root",
+            str(tmp_path / "observations" / "bulltard"),
+            "--regime-root",
+            str(tmp_path / "regime"),
             "--horizons",
             "20,65",
         ],
@@ -2938,6 +2950,8 @@ def test_bulltard_outcomes_defaults_to_short_and_swing_horizons(
         end_date: date,
         snapshot_root: Path,
         price_root: Path,
+        observations_root: Path,
+        regime_snapshot_root: Path | None,
         horizons: tuple[int, ...],
     ) -> CandidateOutcomeResult:
         assert horizons == (1, 5, 20, 40, 65, 126)
@@ -3095,6 +3109,8 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         end_date: date,
         snapshot_root: Path,
         price_root: Path,
+        observations_root: Path,
+        regime_snapshot_root: Path | None,
         horizons: tuple[int, ...],
     ) -> CandidateOutcomeResult:
         assert events == ["capture", "candidate_prices", "validate"]
@@ -3102,6 +3118,8 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
         assert end_date == date(2026, 8, 26)
         assert snapshot_root == snapshot_root_arg
         assert price_root == price_root_arg
+        assert observations_root == output_root
+        assert regime_snapshot_root is None
         assert horizons == (1, 5, 20)
         events.append("candidate_outcomes")
         return CandidateOutcomeResult(

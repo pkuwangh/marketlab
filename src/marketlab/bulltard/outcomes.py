@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 from loguru import logger
 
+from marketlab.bulltard.ingest import DEFAULT_OBSERVATIONS_ROOT
 from marketlab.bulltard.validation import (
     CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
     DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -21,9 +23,16 @@ from marketlab.prices import (
     PriceDataError,
     load_price_history,
 )
+from marketlab.regime import DEFAULT_REGIME_SNAPSHOT_ROOT, RegimeError, load_regime_snapshot
 from marketlab.snapshots.models import snapshot_source_dates
 
 DEFAULT_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
+FLOW_PATTERN_BY_ORDER_TYPE = {
+    "calls bought": "call_buying",
+    "puts sold": "put_selling",
+    "puts bought": "put_buying",
+    "calls sold": "call_selling",
+}
 
 
 class CandidateOutcomeError(ValueError):
@@ -44,6 +53,11 @@ class ForwardOutcome:
     return_value: float | None
     relative_strength_spy: float | None
     max_drawdown: float | None
+    max_runup: float | None = None
+    ranked_side: str | None = None
+    flow_patterns: tuple[str, ...] = ()
+    regime: str | None = None
+    regime_action_state: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +72,8 @@ class OutcomeSummaryRow:
     hit_rate: float | None
     avg_relative_strength_spy: float | None
     avg_max_drawdown: float | None
+    median_return: float | None = None
+    avg_max_runup: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +93,8 @@ def compute_bulltard_outcomes(
     end_date: date,
     snapshot_root: Path = DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    observations_root: Path = DEFAULT_OBSERVATIONS_ROOT,
+    regime_snapshot_root: Path | None = DEFAULT_REGIME_SNAPSHOT_ROOT,
     horizons: tuple[int, ...] = DEFAULT_OUTCOME_HORIZONS,
 ) -> CandidateOutcomeResult:
     """Compute forward outcomes for saved Bulltard candidate snapshots."""
@@ -98,12 +116,25 @@ def compute_bulltard_outcomes(
         symbols=tuple({snapshot.symbol for snapshot in snapshots} | {"SPY"}),
         price_root=price_root,
     )
+    flow_patterns = _load_flow_patterns(
+        snapshots=snapshots,
+        observations_root=observations_root,
+    )
+    regime_contexts = _load_regime_contexts(
+        source_dates=tuple({snapshot.source_date for snapshot in snapshots}),
+        snapshot_root=regime_snapshot_root,
+    )
     outcomes = tuple(
         outcome
         for snapshot in snapshots
         for outcome in _snapshot_outcomes(
             snapshot=snapshot,
             histories=histories,
+            flow_patterns=flow_patterns.get(
+                (snapshot.source_date, snapshot.symbol),
+                (),
+            ),
+            regime_context=regime_contexts.get(snapshot.source_date),
             horizons=horizons,
         )
     )
@@ -159,6 +190,8 @@ def summarize_outcomes(outcomes: tuple[ForwardOutcome, ...]) -> tuple[OutcomeSum
                         outcome.relative_strength_spy for outcome in available
                     ),
                     avg_max_drawdown=_average(outcome.max_drawdown for outcome in available),
+                    median_return=_median(outcome.return_value for outcome in available),
+                    avg_max_runup=_average(outcome.max_runup for outcome in available),
                 )
             )
     return tuple(rows)
@@ -178,9 +211,11 @@ def format_outcome_summary(rows: tuple[OutcomeSummaryRow, ...]) -> str:
             "signals",
             "available",
             "avg_return",
+            "med_return",
             "hit_rate",
             "avg_rs_spy",
             "avg_drawdown",
+            "avg_runup",
         ]
     ]
     for row in available_rows:
@@ -191,9 +226,11 @@ def format_outcome_summary(rows: tuple[OutcomeSummaryRow, ...]) -> str:
                 str(row.candidate_count),
                 str(row.available_count),
                 _format_percent(row.avg_return),
+                _format_percent(row.median_return),
                 _format_percent(row.hit_rate),
                 _format_percent(row.avg_relative_strength_spy),
                 _format_drawdown(row.avg_max_drawdown),
+                _format_percent(row.avg_max_runup),
             ]
         )
     return _format_table(table)
@@ -242,12 +279,15 @@ def _snapshot_outcomes(
     *,
     snapshot: CandidateValidationSnapshot,
     histories: dict[str, tuple[DailyPriceObservation, ...]],
+    flow_patterns: tuple[str, ...],
+    regime_context: tuple[str, str] | None,
     horizons: tuple[int, ...],
 ) -> tuple[ForwardOutcome, ...]:
     history = histories.get(snapshot.symbol, ())
     spy_history = histories.get("SPY", ())
     index = _exact_date_index(history, snapshot.price_date) if snapshot.price_date else None
     spy_index = _exact_date_index(spy_history, snapshot.price_date) if snapshot.price_date else None
+    regime, regime_action_state = regime_context if regime_context else (None, None)
     return tuple(
         _forward_outcome(
             snapshot=snapshot,
@@ -255,6 +295,9 @@ def _snapshot_outcomes(
             index=index,
             spy_history=spy_history,
             spy_index=spy_index,
+            flow_patterns=flow_patterns,
+            regime=regime,
+            regime_action_state=regime_action_state,
             horizon=horizon,
         )
         for horizon in horizons
@@ -268,6 +311,9 @@ def _forward_outcome(
     index: int | None,
     spy_history: tuple[DailyPriceObservation, ...],
     spy_index: int | None,
+    flow_patterns: tuple[str, ...],
+    regime: str | None,
+    regime_action_state: str | None,
     horizon: int,
 ) -> ForwardOutcome:
     return_value = _forward_return(history, index=index, horizon=horizon)
@@ -286,6 +332,11 @@ def _forward_outcome(
         return_value=return_value,
         relative_strength_spy=relative_strength_spy,
         max_drawdown=_forward_max_drawdown(history, index=index, horizon=horizon),
+        max_runup=_forward_max_runup(history, index=index, horizon=horizon),
+        ranked_side=snapshot.ranked_side,
+        flow_patterns=flow_patterns,
+        regime=regime,
+        regime_action_state=regime_action_state,
     )
 
 
@@ -336,6 +387,26 @@ def _forward_max_drawdown(
     return min(0.0, min(lows) / current_close - 1.0)
 
 
+def _forward_max_runup(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    horizon: int,
+) -> float | None:
+    if index is None:
+        return None
+    future_index = index + horizon
+    if future_index >= len(history):
+        return None
+    current_close = history[index].return_close
+    if current_close == 0:
+        return None
+    highs = [row.return_close for row in history[index + 1 : future_index + 1]]
+    if not highs:
+        return None
+    return max(0.0, max(highs) / current_close - 1.0)
+
+
 def _source_bucket(snapshot: CandidateValidationSnapshot) -> str:
     if snapshot.interest_rank is not None and snapshot.ranked_score is not None:
         return "ranked+interest"
@@ -345,12 +416,26 @@ def _source_bucket(snapshot: CandidateValidationSnapshot) -> str:
 
 
 def _cohorts(outcome: ForwardOutcome) -> tuple[str, ...]:
-    return (
+    cohorts = [
         "all",
         f"source:{outcome.source_bucket}",
         f"status:{outcome.validation_status}",
         f"detail:{outcome.detail_bucket}",
-    )
+    ]
+    if outcome.ranked_side:
+        cohorts.append(f"ranked_side:{outcome.ranked_side}")
+    for flow_pattern in outcome.flow_patterns:
+        cohorts.append(f"flow:{flow_pattern}")
+    if outcome.regime:
+        cohorts.append(f"regime:{outcome.regime}")
+        cohorts.append(f"status_regime:{outcome.validation_status}/{outcome.regime}")
+        for flow_pattern in outcome.flow_patterns:
+            cohorts.append(f"flow_regime:{flow_pattern}/{outcome.regime}")
+        if outcome.ranked_side:
+            cohorts.append(f"ranked_side_regime:{outcome.ranked_side}/{outcome.regime}")
+    if outcome.regime_action_state:
+        cohorts.append(f"action:{outcome.regime_action_state}")
+    return tuple(cohorts)
 
 
 def _average(values) -> float | None:
@@ -358,6 +443,16 @@ def _average(values) -> float | None:
     if not clean:
         return None
     return sum(clean) / len(clean)
+
+
+def _median(values) -> float | None:
+    clean = sorted(value for value in values if value is not None)
+    if not clean:
+        return None
+    midpoint = len(clean) // 2
+    if len(clean) % 2:
+        return clean[midpoint]
+    return (clean[midpoint - 1] + clean[midpoint]) / 2
 
 
 def _format_percent(value: float | None) -> str:
@@ -380,3 +475,60 @@ def _format_table(rows: list[list[str]]) -> str:
         if row_index == 0:
             lines.append("  ".join("-" * width for width in widths))
     return "\n".join(lines)
+
+
+def _load_flow_patterns(
+    *,
+    snapshots: tuple[CandidateValidationSnapshot, ...],
+    observations_root: Path,
+) -> dict[tuple[date, str], tuple[str, ...]]:
+    patterns: dict[tuple[date, str], tuple[str, ...]] = {}
+    candidate_keys = {(snapshot.source_date, snapshot.symbol) for snapshot in snapshots}
+    for source_date, symbol in sorted(candidate_keys):
+        path = observations_root / "ticker_flow" / symbol / f"{source_date.isoformat()}.jsonl"
+        if not path.is_file():
+            continue
+        patterns[(source_date, symbol)] = _flow_patterns_from_rows(_read_jsonl(path))
+    return patterns
+
+
+def _flow_patterns_from_rows(rows: tuple[dict, ...]) -> tuple[str, ...]:
+    patterns = {
+        FLOW_PATTERN_BY_ORDER_TYPE[normalized]
+        for row in rows
+        if (normalized := str(row.get("order_type", "")).strip().lower())
+        in FLOW_PATTERN_BY_ORDER_TYPE
+    }
+    return tuple(sorted(patterns))
+
+
+def _load_regime_contexts(
+    *,
+    source_dates: tuple[date, ...],
+    snapshot_root: Path | None,
+) -> dict[date, tuple[str, str]]:
+    if snapshot_root is None:
+        return {}
+
+    contexts: dict[date, tuple[str, str]] = {}
+    for source_date in sorted(set(source_dates)):
+        try:
+            snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+        except RegimeError as exc:
+            raise CandidateOutcomeError(str(exc)) from exc
+        if snapshot is not None:
+            contexts[source_date] = (snapshot.regime, snapshot.action_state)
+    return contexts
+
+
+def _read_jsonl(path: Path) -> tuple[dict, ...]:
+    try:
+        return tuple(
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    except OSError as exc:
+        raise CandidateOutcomeError(f"Failed to read observations file: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise CandidateOutcomeError(f"Invalid JSONL observations file: {path}") from exc

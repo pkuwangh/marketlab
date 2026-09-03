@@ -783,6 +783,8 @@ def daily_run(
                         end_date=source_date,
                         snapshot_root=candidate_snapshot_root,
                         price_root=price_root,
+                        observations_root=bulltard_observation_root,
+                        regime_snapshot_root=regime_snapshot_root,
                         horizons=_parse_horizons(DEFAULT_OUTCOME_HORIZONS_VALUE),
                     )
                 except CandidateOutcomeError as exc:
@@ -2485,6 +2487,18 @@ def outcomes(
         file_okay=False,
         help="Root directory containing daily price observations.",
     ),
+    observations_root: Path = typer.Option(
+        DEFAULT_OBSERVATIONS_ROOT,
+        "--observations-root",
+        file_okay=False,
+        help="Root directory containing structured Bulltard observations for flow cohorts.",
+    ),
+    regime_snapshot_root: Path = typer.Option(
+        DEFAULT_REGIME_SNAPSHOT_ROOT,
+        "--regime-root",
+        file_okay=False,
+        help="Root directory containing market regime snapshots for regime cohorts.",
+    ),
     horizons_value: str = typer.Option(
         DEFAULT_OUTCOME_HORIZONS_VALUE,
         "--horizons",
@@ -2501,6 +2515,8 @@ def outcomes(
             end_date=end_date,
             snapshot_root=snapshot_root,
             price_root=price_root,
+            observations_root=observations_root,
+            regime_snapshot_root=regime_snapshot_root,
             horizons=_parse_horizons(horizons_value),
         )
     except CandidateOutcomeError as exc:
@@ -2794,6 +2810,8 @@ def daily(
                 end_date=outcome_end,
                 snapshot_root=snapshot_root,
                 price_root=price_root,
+                observations_root=output_root,
+                regime_snapshot_root=None,
                 horizons=_parse_horizons(horizons_value),
             )
         except CandidateOutcomeError as exc:

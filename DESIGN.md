@@ -250,6 +250,42 @@ Because these inputs use different units, the regime engine should not combine t
 | Sentiment / positioning | Fear/greed, put/call, surveys, flows, CTA/positioning proxies, social sentiment    | Are investors euphoric, fearful, crowded, or under-positioned?                  |
 | External overlay        | Discretionary market commentary, app-level statistics, recurring option-flow patterns | Does outside research confirm or contradict the independent regime model? |
 
+## Market-Regime Hypotheses To Study
+
+These are research candidates, not trusted rules. Each one must be written as a dated
+point-in-time signal, replayed against forward SPY/QQQ returns and drawdowns, and either kept,
+reweighted, or retired.
+
+- Volatility interaction:
+  - `VIX high + VVIX high`: panic is still expanding; avoid treating the first selloff as a durable bottom.
+  - `VIX high + VVIX falling/contained`: headline fear is elevated, but volatility-of-volatility may be stabilizing; candidate re-risk signal if credit/liquidity is not broken and breadth stops deteriorating.
+  - `VIX low + VVIX low + stretched trend`: complacency plus price extension; candidate scale-down/protect signal.
+  - `VIX low + VVIX rising`: quiet index tape with rising vol-of-vol; candidate early-warning signal.
+
+- Breadth and participation:
+  - Current proxies are `RSP/SPY` and `IWM/SPY`, which ask whether equal-weight large caps and small caps are confirming the cap-weighted index.
+  - Stronger candidates include percentage of stocks above 50d/200d moving averages, new highs minus new lows, advance/decline lines, and McClellan-style breadth/volume summation.
+  - Breadth should affect confidence and stretch/washout pressure more than the headline directional label. A narrow uptrend is not automatically bearish, but it should reduce confidence and raise de-risk pressure.
+
+- Sentiment and positioning:
+  - NAAIM Exposure Index: active manager equity exposure; useful for testing whether professional managers are crowded long, de-risked, or rapidly changing exposure.
+  - AAII Sentiment Survey: individual-investor bullish/neutral/bearish expectations; useful mainly as a contrarian input at extremes.
+  - AAII Asset Allocation Survey: individual-investor stock/bond/cash positioning; useful because actual allocation can diverge from stated sentiment.
+  - CNN Fear & Greed Index: broad composite sentiment/risk-appetite gauge. Treat it carefully because it already includes inputs similar to momentum, breadth, put/call, junk-bond demand, VIX, and stock/bond relative performance.
+  - Put/call ratios, fund-flow data, CTA positioning, and dealer/gamma positioning are candidates only if the source has clear historical availability and licensing.
+
+- Policy-modeling theory:
+  - Keep the current hard-threshold policy as the baseline comparator because it is simple, inspectable, and hard to overfit accidentally.
+  - Study smoother alternatives only if the threshold model proves too jumpy or leaves obvious forward-return/drawdown separation unused.
+  - A better model does not have to be a separate forecast layer. It could be a small scored-state model, percentile-bucket lookup, or regularized utility score that directly maps evidence to `maintain`, `protect`, or `redeploy`.
+  - Any replacement must reduce operational ambiguity: fewer arbitrary knobs, clearer state transitions, lower churn, and better walk-forward outcomes after realistic friction.
+  - If a model needs many hand-tuned parameters to beat the threshold baseline, reject it.
+
+- Admission standard:
+  - Do not add a signal just because it is famous. Add it only when source availability, update lag, history length, and licensing are clear enough for replay.
+  - Prefer raw component series over opaque composite scores when possible, because raw series make double-counting and threshold drift easier to audit.
+  - Every new family must be tested both alone and in combination with current regime state, especially during disagreement regimes such as strong trend with weakening breadth or high VIX with improving VVIX.
+
 ## Regime output
 
 Avoid a binary BUY/SELL output. A useful daily snapshot should look more like:
@@ -446,6 +482,21 @@ Bulltard is the primary candidate generator in v0. Candidates may be created fro
 - Explicit catalysts, technical setups, risk reversals, or institutional-sized option structures.
 
 Later, independent scanners may generate candidates too, but they should enter the same validation/lifecycle pipeline rather than create a parallel ad-hoc process.
+
+## Current v0 candidate strategy
+
+The current implementation is a conservative research funnel:
+
+- Capture Bulltard evidence with provenance from the recap, ranked option-trades view, Trades Of Interest section, and selected ticker-detail pages.
+- Rank source attention before validation: Trades Of Interest names are reviewed first, then ranked option-trade names using score, premium, and available detail rows.
+- Validate every candidate against independent market data instead of trusting the subscription signal. The v0 checks are underlying dollar-volume liquidity, recent absolute return, relative strength versus SPY/QQQ, 50-day trend position, and recent drawdown.
+- Classify candidates as `confirm`, `watch`, or `avoid`. `confirm` means price action and liquidity are aligned enough for research; `watch` means the evidence is incomplete or mixed; `avoid` means missing data, thin trading, or weak trend/relative strength fails basic gates.
+- Apply market-regime context after validation. Regime changes the attention and risk budget for a candidate, not the independent candidate label itself: protective regimes reduce or defer single-name risk, redeploy regimes make confirmed names more actionable for research, and neutral regimes keep them on a normal research/watch path.
+- Store validation snapshots and later replay forward outcomes so the system can learn whether Bulltard evidence, independent validation, and regime context actually improve candidate quality.
+- Treat each candidate/date pair as a point-in-time episode. The first learning target is 40- and 65-trading-day outcome quality, roughly the 60-90 calendar-day window the strategy cares about.
+- Compare cohorts before inventing a score: put selling versus call buying, bullish versus bearish ranked side, Trades Of Interest versus ranked-only, repeated/detail-backed flow versus no-detail names, `confirm` versus `watch`, and each of those under the market regime active at signal time.
+
+This is not yet a buy/no-buy opportunity engine. It is the data collection and triage layer that should make the later lifecycle, thesis, invalidation, options-liquidity, and instrument-selection work testable.
 
 ## Opportunity feature families
 

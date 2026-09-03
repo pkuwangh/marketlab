@@ -8,48 +8,34 @@ Use this README for current commands and `DESIGN.md` for architecture and resear
 
 ## Current Capabilities
 
-MarketLab can capture the daily Bulltard candidate set from Gmail, refresh independent market
-and price history, validate candidates, compute market regime, derive bounded portfolio policy,
-refresh a local DuckDB research store, replay forward outcomes, and render reproducible
-reports/charts.
+MarketLab is organized around two alpha-research pillars. The primary pillar is market regime:
+decide when marginal SPY/QQQ risk should be maintained, protected, or redeployed. The secondary
+pillar is Bulltard-driven single-name research: use subscription flow as candidate generation,
+then independently validate and measure it.
 
-Implemented:
+- Market regime and portfolio posture, primary pillar:
+  - Refreshes SPY/QQQ, VIX/VVIX, RSP/IWM, HYG/TLT, and FRED credit/liquidity/rates observations.
+  - Computes daily regime, stretch/washout pressure, and rare action states: `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
+  - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
+  - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
+  - Renders the daily policy report and regime chart from saved point-in-time snapshots.
 
-- Python package skeleton with `uv`, Typer CLI, Loguru logging, and focused tests.
-- Repo-local `bin/marketlab` command shim.
-- Snapshot identity model.
-- Snapshot identity fields on regime, market-signal, candidate-validation, and policy snapshot payloads.
-- Canonical versioned snapshot paths by date, signal time, snapshot version, and artifact version, with legacy flat-file loaders retained for migration.
-- Bulltard recap source URL extraction against local text or HTML recap artifacts.
-- Bulltard ranked option trades ingest.
-- Bulltard ingest metadata sidecars that link parsed rows to retrieval context and parser version.
-- Trades Of Interest parsing from the recap.
-- Ticker detail retrieval and flow-history parsing.
-- Candidate review table that combines ranked rows, recap interest, and any fetched ticker-flow detail.
-- Top-level `daily` workflow for market refresh, Gmail recap acquisition, Bulltard capture,
-  validation, reporting, charting, and store refresh. A Bulltard-only daily command remains
-  available for focused debugging.
-- Daily OHLCV price fetch from Yahoo Finance through `yfinance` into local observations.
-- Price and scalar market-series observations with availability/retrieval metadata and non-overwrite guards for same-date corrections.
-- Local daily OHLCV CSV import into the same price observation format.
-- Bulltard candidate validation against independent price, volume, trend, drawdown, and relative-strength features.
-- Bulltard outcome replay summaries from saved validation snapshots.
-- Market regime snapshots from SPY/QQQ trend, SPY volatility/VIX, RSP/IWM participation, and HYG/TLT risk appetite.
-- Market regime outcome replay summaries against forward SPY/QQQ returns and drawdowns.
-- Expanded market-signal snapshots including VVIX and FRED-backed credit/liquidity/rates rows when available.
-- Market regime and policy computation consume saved market-signal snapshots as the v0 evidence boundary when available; generated signal rows carry structured numeric details for replay.
-- Normalized stretch/washout pressure scores and rare action states.
-- Portfolio policy snapshots that map regime action states into bounded marginal beta, cash, overlay, and single-name risk posture.
-- Daily policy reports that combine regime state, market signals, policy posture, and Bulltard candidate context.
-- Local DuckDB research store refresh from JSON/JSONL source observations, Bulltard ingest rows, and snapshots, with optional Parquet exports.
-- Self-contained HTML/SVG regime chart generation from saved price, regime, market-signal, and policy snapshots.
-- Self-contained HTML/SVG opportunity chart generation for one saved Bulltard candidate.
+- Bulltard and single-name candidates, secondary pillar:
+  - Fetches the daily Bulltard recap from Gmail and uses the original signed link to capture targeted app views.
+  - Parses ranked option trades, Trades Of Interest, and ticker-flow detail.
+  - Treats Bulltard names as a research funnel, not trade recommendations: `confirm` means independent price/liquidity/relative-strength evidence is aligned, `watch` means evidence is incomplete or mixed, and `avoid` means the name fails basic independent checks.
+  - Builds candidate review and validation snapshots with independent price, volume, trend, drawdown, and relative-strength features.
+  - Replays candidate outcomes over 1, 5, 20, 40, 65, and 126 trading-day horizons, with cohort views for source, validation status, ranked side, ticker-flow subtype, and market regime when available.
+  - Renders a reproducible opportunity chart for one saved candidate.
+
+- Research record for iteration:
+  - Preserves point-in-time observations and snapshots with source-date, signal-time, version, and provenance fields.
+  - Rebuilds a local DuckDB query store from JSON/JSONL source artifacts for analysis and outcome review.
 
 Current limitations:
 
-- Legacy flat snapshot files are still supported for read compatibility; there is no migration command yet to move old files into the canonical layout.
-- Portfolio policy remains a hard-threshold v0 mapper, not a fully calibrated policy with hysteresis/cooldowns.
-- Candidate validation is not yet the full opportunity engine: options-liquidity, fundamental viability, instrument suitability, lifecycle episodes, thesis, and invalidation are still future work.
+- Portfolio policy is a provisional rule layer: it maps regime states into beta/cash/overlay posture, but the thresholds and position bands still need longer-history calibration and anti-churn rules.
+- Bulltard candidate handling currently stops at research triage. Real options-liquidity, fundamental viability, instrument suitability, lifecycle episodes, thesis, and invalidation modeling are still future work before a candidate can become a complete opportunity.
 - Market-signal production still uses hard-coded v0 feature thresholds; richer calibrated signal families are future work.
 
 ## Development
@@ -404,8 +390,14 @@ Validation snapshots are written under `data/snapshots/bulltard/candidates/`.
 Replay forward outcomes after enough future price rows exist:
 
 ```bash
-./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26
+./bin/marketlab bulltard outcomes --start 2026-08-01 --end 2026-08-26 --horizons 40,65
 ```
+
+This is the candidate-learning loop. Each saved Bulltard validation row is treated as a
+point-in-time candidate episode, then grouped into cohorts such as Trades Of Interest versus
+ranked-only, `confirm` versus `watch`, ranked bullish/bearish side, detailed ticker-flow subtype
+such as put selling or call buying, and same-day market regime when a regime snapshot exists.
+The 40- and 65-trading-day horizons approximate the 60-90 calendar-day window.
 
 If you need a manual fallback, pass a local recap artifact or a small text file containing the
 recap's database/app link to the lower-level Bulltard commands. Gmail may wrap the useful Substack
