@@ -21,6 +21,7 @@ from marketlab.market_series import (
 from marketlab.market_signals import (
     DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     MARKET_SIGNAL_FEATURE_VERSION,
+    MARKET_SIGNAL_MODEL_VERSION,
     MARKET_SIGNAL_SNAPSHOT_FILENAME,
     MarketSignal,
     MarketSignalError,
@@ -299,6 +300,7 @@ class RegimeBackfillResult:
     source_dates: tuple[date, ...]
     snapshot_paths: tuple[Path, ...]
     signal_snapshot_paths: tuple[Path, ...]
+    skipped_snapshot_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -692,6 +694,7 @@ def compute_regime_backfill(
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
     write_snapshot: bool = True,
+    skip_existing: bool = True,
 ) -> RegimeBackfillResult:
     """Compute market regime snapshots for each SPY observation date in a range."""
 
@@ -716,11 +719,36 @@ def compute_regime_backfill(
         end_date=end_date.isoformat(),
         source_date_count=len(source_dates),
         write_snapshot=write_snapshot,
+        skip_existing=skip_existing,
     ).info("Starting market regime backfill")
 
     snapshot_paths: list[Path] = []
     signal_snapshot_paths: list[Path] = []
+    skipped_snapshot_paths: list[Path] = []
     for source_date in source_dates:
+        if write_snapshot and skip_existing:
+            existing_snapshot_path = _existing_regime_snapshot_path(
+                source_date=source_date,
+                snapshot_root=snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
+            )
+            if existing_snapshot_path is not None:
+                snapshot_paths.append(existing_snapshot_path)
+                skipped_snapshot_paths.append(existing_snapshot_path)
+                existing_signal_path = _existing_market_signal_snapshot_path(
+                    source_date=source_date,
+                    signal_snapshot_root=signal_snapshot_root,
+                    signal_time=signal_time,
+                    snapshot_version=snapshot_version,
+                )
+                if existing_signal_path is not None:
+                    signal_snapshot_paths.append(existing_signal_path)
+                logger.bind(
+                    source_date=source_date.isoformat(),
+                    snapshot_path=str(existing_snapshot_path),
+                ).info("Skipping existing market regime snapshot during backfill")
+                continue
         result = _compute_regime_snapshot_from_histories(
             source_date=source_date,
             histories=histories,
@@ -741,6 +769,7 @@ def compute_regime_backfill(
         source_date_count=len(source_dates),
         snapshot_count=len(snapshot_paths),
         signal_snapshot_count=len(signal_snapshot_paths),
+        skipped_snapshot_count=len(skipped_snapshot_paths),
     ).success("Completed market regime backfill")
     return RegimeBackfillResult(
         start_date=start_date,
@@ -748,6 +777,7 @@ def compute_regime_backfill(
         source_dates=source_dates,
         snapshot_paths=tuple(snapshot_paths),
         signal_snapshot_paths=tuple(signal_snapshot_paths),
+        skipped_snapshot_paths=tuple(skipped_snapshot_paths),
     )
 
 
@@ -3013,6 +3043,48 @@ def _resolve_market_signal_snapshot_path(
         )
     except ValueError as exc:
         raise RegimeError(str(exc)) from exc
+
+
+def _existing_regime_snapshot_path(
+    *,
+    source_date: date,
+    snapshot_root: Path,
+    signal_time: SignalTime | str,
+    snapshot_version: str | None,
+) -> Path | None:
+    try:
+        path = versioned_snapshot_path(
+            snapshot_root=snapshot_root,
+            source_date=source_date,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            artifact_version=REGIME_MODEL_VERSION,
+            filename=REGIME_SNAPSHOT_FILENAME,
+        )
+    except ValueError as exc:
+        raise RegimeError(str(exc)) from exc
+    return path if path.is_file() else None
+
+
+def _existing_market_signal_snapshot_path(
+    *,
+    source_date: date,
+    signal_snapshot_root: Path,
+    signal_time: SignalTime | str,
+    snapshot_version: str | None,
+) -> Path | None:
+    try:
+        path = versioned_snapshot_path(
+            snapshot_root=signal_snapshot_root,
+            source_date=source_date,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+            artifact_version=MARKET_SIGNAL_MODEL_VERSION,
+            filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
+        )
+    except ValueError as exc:
+        raise RegimeError(str(exc)) from exc
+    return path if path.is_file() else None
 
 
 def _regime_snapshot_outcomes(

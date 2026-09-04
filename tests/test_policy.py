@@ -220,6 +220,8 @@ def test_compute_policy_snapshot_uses_full_market_signal_boundary_for_action(
 def test_policy_backfill_and_outcomes_compare_to_fixed_benchmark(tmp_path: Path) -> None:
     start_date = date(2026, 1, 1)
     regime_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    candidate_root = tmp_path / "candidates"
     policy_root = tmp_path / "policy"
     price_root = tmp_path / "prices"
     write_regime_snapshot(
@@ -255,6 +257,8 @@ def test_policy_backfill_and_outcomes_compare_to_fixed_benchmark(tmp_path: Path)
         start_date=start_date,
         end_date=start_date + timedelta(days=1),
         regime_snapshot_root=regime_root,
+        market_signal_snapshot_root=signal_root,
+        candidate_snapshot_root=candidate_root,
         policy_snapshot_root=policy_root,
     )
     outcome = compute_portfolio_policy_outcomes(

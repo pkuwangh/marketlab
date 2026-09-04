@@ -205,7 +205,11 @@ def fetch_and_write_stooq_daily_prices(
             api_key=api_key,
             client=client,
         )
-        observation_path = write_price_observations(rows, output_root=output_root)
+        observation_path = write_price_observations(
+            rows,
+            output_root=output_root,
+            overwrite=True,
+        )
         results.append(
             PriceFetchResult(
                 symbol=rows[0].symbol,
@@ -297,7 +301,11 @@ def fetch_and_write_yahoo_daily_prices(
             end_date=end_date,
             downloader=downloader,
         )
-        observation_path = write_price_observations(rows, output_root=output_root)
+        observation_path = write_price_observations(
+            rows,
+            output_root=output_root,
+            overwrite=True,
+        )
         results.append(
             PriceFetchResult(
                 symbol=rows[0].symbol,
@@ -432,7 +440,7 @@ def write_price_observations(
     output_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     overwrite: bool = False,
 ) -> Path:
-    """Write daily price observations, merging without silent corrections."""
+    """Write daily price observations, merging by date."""
 
     if not rows:
         raise PriceDataError("Cannot write an empty price observation set")
@@ -440,7 +448,7 @@ def write_price_observations(
     if any(row.symbol != symbol for row in rows):
         raise PriceDataError("Price observation set must contain one symbol")
 
-    output_path = output_root / f"{symbol}.jsonl"
+    output_path = price_observation_path(symbol=symbol, price_root=output_root)
     existing_rows = {
         row.observed_date: row for row in load_price_history(symbol=symbol, price_root=output_root)
     }
@@ -479,20 +487,22 @@ def load_price_history(
     """Load one symbol's daily price observations."""
 
     normalized_symbol = normalize_symbol(symbol)
-    path = price_root / f"{normalized_symbol}.jsonl"
-    if not path.is_file():
+    paths = _price_observation_read_paths(symbol=normalized_symbol, price_root=price_root)
+    existing_paths = tuple(path for path in paths if path.is_file())
+    if not existing_paths:
         return ()
     try:
-        rows = tuple(
-            _price_from_dict(json.loads(line))
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        )
+        rows_by_date = {}
+        for path in existing_paths:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    row = _price_from_dict(json.loads(line))
+                    rows_by_date[row.observed_date] = row
     except OSError as exc:
         raise PriceDataError(f"Failed to read price observations: {path}") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         raise PriceDataError(f"Invalid price observations file: {path}") from exc
-    return tuple(sorted(rows, key=lambda price: price.observed_date))
+    return tuple(sorted(rows_by_date.values(), key=lambda price: price.observed_date))
 
 
 def dedupe_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
@@ -517,6 +527,33 @@ def normalize_symbol(symbol: str) -> str:
     if any(character.isspace() or character == "/" for character in normalized):
         raise PriceDataError(f"Invalid ticker symbol: {symbol}")
     return normalized
+
+
+def price_observation_path(*, symbol: str, price_root: Path) -> Path:
+    """Return the canonical daily price observation file path for one symbol."""
+
+    return price_root / f"{price_observation_stem(symbol)}.jsonl"
+
+
+def price_observation_stem(symbol: str) -> str:
+    """Return a filesystem-safe price observation stem while preserving stored symbols."""
+
+    normalized = normalize_symbol(symbol)
+    if normalized.startswith("^"):
+        stripped = normalized[1:]
+        if not stripped:
+            raise PriceDataError(f"Invalid ticker symbol: {symbol}")
+        return f"INDEX_{stripped}"
+    return normalized
+
+
+def _price_observation_read_paths(*, symbol: str, price_root: Path) -> tuple[Path, ...]:
+    normalized = normalize_symbol(symbol)
+    canonical_path = price_observation_path(symbol=normalized, price_root=price_root)
+    legacy_path = price_root / f"{normalized}.jsonl"
+    if legacy_path == canonical_path:
+        return (canonical_path,)
+    return (legacy_path, canonical_path)
 
 
 def to_stooq_symbol(symbol: str) -> str:

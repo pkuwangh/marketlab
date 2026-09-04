@@ -1304,6 +1304,14 @@ def regime_backfill(
         "--write/--no-write",
         help="Write market regime and signal snapshots.",
     ),
+    skip_existing: bool = typer.Option(
+        True,
+        "--skip-existing/--recompute-existing",
+        help=(
+            "Skip existing same-version regime snapshots during backfill. "
+            "Use --recompute-existing to intentionally recompute and surface conflicts."
+        ),
+    ),
 ) -> None:
     """Backfill daily market regime and signal snapshots."""
 
@@ -1346,6 +1354,7 @@ def regime_backfill(
             signal_time=signal_time,
             snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
+            skip_existing=skip_existing,
         )
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -3007,6 +3016,7 @@ def _echo_regime_backfill_result(result: RegimeBackfillResult) -> None:
     )
     typer.echo(f"regime_snapshot_count={len(result.snapshot_paths)}")
     typer.echo(f"market_signal_snapshot_count={len(result.signal_snapshot_paths)}")
+    typer.echo(f"regime_backfill_skipped_existing_count={len(result.skipped_snapshot_paths)}")
     if result.snapshot_paths:
         typer.echo(f"first_regime_snapshot_path={result.snapshot_paths[0]}")
         typer.echo(f"last_regime_snapshot_path={result.snapshot_paths[-1]}")

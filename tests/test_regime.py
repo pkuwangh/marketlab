@@ -301,6 +301,61 @@ def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
     assert loaded.stretch_pressure_score is not None
 
 
+def test_compute_regime_backfill_skips_existing_same_version_snapshot(
+    tmp_path: Path,
+) -> None:
+    source_date = date(2026, 8, 15)
+    start = source_date - timedelta(days=229)
+    price_root = tmp_path / "prices"
+    snapshot_root = tmp_path / "snapshots"
+    signal_snapshot_root = tmp_path / "signals"
+    for symbol, base, step in (
+        ("SPY", 100.0, 0.50),
+        ("QQQ", 120.0, 0.60),
+        ("RSP", 100.0, 0.45),
+        ("IWM", 90.0, 0.40),
+        ("HYG", 80.0, 0.10),
+        ("TLT", 100.0, -0.05),
+        ("^VIX", 16.0, 0.0),
+        ("^VVIX", 85.0, 0.0),
+    ):
+        _write_price_history(
+            price_root,
+            symbol=symbol,
+            start=start,
+            closes=[base + index * step for index in range(230)],
+        )
+
+    first = compute_regime_backfill(
+        start_date=source_date,
+        end_date=source_date,
+        price_root=price_root,
+        market_series_root=tmp_path / "market-series",
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start,
+        closes=[200.0 + index * 0.50 for index in range(230)],
+        overwrite=True,
+    )
+
+    second = compute_regime_backfill(
+        start_date=source_date,
+        end_date=source_date,
+        price_root=price_root,
+        market_series_root=tmp_path / "market-series",
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
+    )
+
+    assert second.snapshot_paths == first.snapshot_paths
+    assert second.signal_snapshot_paths == first.signal_snapshot_paths
+    assert second.skipped_snapshot_paths == first.snapshot_paths
+
+
 def test_derive_regime_action_state_flags_stretched_market() -> None:
     snapshot = _snapshot(
         source_date=date(2026, 1, 1),
@@ -705,6 +760,8 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
     )
     assert calls == list(result.requested_symbols)
     assert len(result.price_results) == 8
+    assert result.price_results[-2].observation_path.name == "INDEX_VIX.jsonl"
+    assert result.price_results[-1].observation_path.name == "INDEX_VVIX.jsonl"
     assert result.price_failures == ()
 
 
@@ -1075,6 +1132,7 @@ def _write_price_history(
     symbol: str,
     start: date,
     closes: list[float],
+    overwrite: bool = False,
 ) -> None:
     rows = tuple(
         DailyPriceObservation(
@@ -1091,7 +1149,7 @@ def _write_price_history(
         )
         for index, close in enumerate(closes)
     )
-    write_price_observations(rows, output_root=price_root)
+    write_price_observations(rows, output_root=price_root, overwrite=overwrite)
 
 
 def _write_market_series_value(

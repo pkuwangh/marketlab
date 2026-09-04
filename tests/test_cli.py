@@ -2262,6 +2262,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         signal_time,
         snapshot_version: str | None,
         write_snapshot: bool,
+        skip_existing: bool,
     ) -> RegimeBackfillResult:
         assert events == ["prices", "market-series"]
         assert start_date == date(2026, 8, 28)
@@ -2273,6 +2274,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         assert signal_time == "eod"
         assert snapshot_version is None
         assert write_snapshot is True
+        assert skip_existing is True
         events.append("backfill")
         return RegimeBackfillResult(
             start_date=start_date,
@@ -2332,6 +2334,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
     assert "regime_backfill_last_date=2026-08-29" in result.output
     assert "regime_snapshot_count=2" in result.output
     assert "market_signal_snapshot_count=2" in result.output
+    assert "regime_backfill_skipped_existing_count=0" in result.output
     assert str(snapshot_root / "2026-08-29.json") in result.output
     assert str(signal_snapshot_root / "2026-08-29.jsonl") in result.output
 

@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from marketlab.prices import (
     load_price_history,
     parse_stooq_daily_csv,
     parse_yahoo_daily_frame,
+    price_observation_path,
     to_stooq_symbol,
     write_price_observations,
 )
@@ -99,6 +101,29 @@ def test_write_price_observations_refuses_same_date_correction(tmp_path: Path) -
 
     with pytest.raises(PriceDataError, match="Refusing to overwrite"):
         write_price_observations((corrected,), output_root=output_root)
+
+
+def test_index_price_observations_use_safe_filename_and_load_legacy_path(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "prices"
+    vix_row = _price_row(close=18.0, symbol="^VIX")
+
+    path = write_price_observations((vix_row,), output_root=output_root)
+
+    assert path == output_root / "INDEX_VIX.jsonl"
+    assert price_observation_path(symbol="^VIX", price_root=output_root) == path
+    assert not (output_root / "^VIX.jsonl").exists()
+    assert load_price_history(symbol="^VIX", price_root=output_root)[0].symbol == "^VIX"
+
+    legacy_row = _price_row(close=90.0, symbol="^VVIX")
+    legacy_path = output_root / "^VVIX.jsonl"
+    legacy_path.write_text(json.dumps(legacy_row.to_dict(), sort_keys=True) + "\n")
+
+    legacy_rows = load_price_history(symbol="^VVIX", price_root=output_root)
+    assert len(legacy_rows) == 1
+    assert legacy_rows[0].symbol == "^VVIX"
+    assert legacy_rows[0].close == 90.0
 
 
 def test_parse_yahoo_daily_frame_reads_adjusted_close() -> None:
@@ -212,6 +237,62 @@ def test_fetch_and_write_yahoo_daily_prices_uses_downloader(tmp_path: Path) -> N
     assert rows[0].adjusted_close == 103.5
 
 
+def test_fetch_and_write_yahoo_daily_prices_replaces_overlapping_vendor_rows(
+    tmp_path: Path,
+) -> None:
+    frames = [
+        pd.DataFrame(
+            {
+                "Open": [100.0],
+                "High": [105.0],
+                "Low": [99.0],
+                "Close": [104.0],
+                "Adj Close": [103.5],
+                "Volume": [1_000_000],
+            },
+            index=pd.to_datetime(["2026-08-24"]),
+        ),
+        pd.DataFrame(
+            {
+                "Open": [100.0],
+                "High": [106.0],
+                "Low": [99.0],
+                "Close": [105.0],
+                "Adj Close": [104.5],
+                "Volume": [1_100_000],
+            },
+            index=pd.to_datetime(["2026-08-24"]),
+        ),
+    ]
+    for frame in frames:
+        frame.index.name = "Date"
+
+    def downloader(ticker, **kwargs):  # noqa: ANN001, ARG001
+        return frames.pop(0)
+
+    output_root = tmp_path / "prices"
+    fetch_and_write_yahoo_daily_prices(
+        symbols=("SPY",),
+        start_date=date(2026, 8, 24),
+        end_date=date(2026, 8, 24),
+        output_root=output_root,
+        downloader=downloader,
+    )
+    fetch_and_write_yahoo_daily_prices(
+        symbols=("SPY",),
+        start_date=date(2026, 8, 24),
+        end_date=date(2026, 8, 24),
+        output_root=output_root,
+        downloader=downloader,
+    )
+
+    rows = load_price_history(symbol="SPY", price_root=output_root)
+    assert len(rows) == 1
+    assert rows[0].close == 105.0
+    assert rows[0].adjusted_close == 104.5
+    assert rows[0].volume == 1_100_000
+
+
 def test_to_stooq_symbol_adds_us_suffix_only_when_needed() -> None:
     assert to_stooq_symbol("META") == "meta.us"
     assert to_stooq_symbol("BRK.B") == "brk.b.us"
@@ -219,11 +300,11 @@ def test_to_stooq_symbol_adds_us_suffix_only_when_needed() -> None:
     assert to_stooq_symbol("^SPX") == "^spx"
 
 
-def _price_row(*, close: float) -> DailyPriceObservation:
+def _price_row(*, close: float, symbol: str = "META") -> DailyPriceObservation:
     return DailyPriceObservation(
         source="fixture",
-        source_symbol="META",
-        symbol="META",
+        source_symbol=symbol,
+        symbol=symbol,
         observed_date=date(2026, 8, 24),
         open=100.0,
         high=105.0,

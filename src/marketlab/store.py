@@ -287,7 +287,7 @@ def _refresh_daily_prices(
         ("return_close", "DOUBLE"),
     )
     rows = []
-    for row in _read_jsonl_files(root):
+    for row in _dedupe_daily_price_rows(_read_jsonl_files(root)):
         close = _optional_float(row.get("close"))
         adjusted_close = _optional_float(row.get("adjusted_close"))
         volume = _optional_int(row.get("volume"))
@@ -1068,6 +1068,31 @@ def _read_jsonl_files_recursive(root: Path) -> tuple[dict[str, Any], ...]:
         except (OSError, json.JSONDecodeError) as exc:
             raise ResearchStoreError(f"Failed to read JSONL observations: {path}") from exc
     return tuple(rows)
+
+
+def _dedupe_daily_price_rows(rows: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    keyed_rows: dict[tuple[str, date], dict[str, Any]] = {}
+    unkeyed_rows: list[dict[str, Any]] = []
+    for row in rows:
+        symbol = _optional_str(row.get("symbol"))
+        observed_date = _optional_date(row.get("date"))
+        if symbol is None or observed_date is None:
+            unkeyed_rows.append(row)
+            continue
+        key = (symbol, observed_date)
+        existing_row = keyed_rows.get(key)
+        if existing_row is None or _daily_price_row_rank(row) >= _daily_price_row_rank(
+            existing_row
+        ):
+            keyed_rows[key] = row
+    return tuple(unkeyed_rows + list(keyed_rows.values()))
+
+
+def _daily_price_row_rank(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        _optional_str(row.get("retrieved_at")) or "",
+        _optional_str(row.get("source")) or "",
+    )
 
 
 def _optional_str(value: object) -> str | None:

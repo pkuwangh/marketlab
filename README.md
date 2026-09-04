@@ -1,5 +1,19 @@
 # MarketLab
 
+- [MarketLab](#marketlab)
+  - [Current Capabilities](#current-capabilities)
+  - [Development](#development)
+  - [Local Bin](#local-bin)
+  - [Normal Daily Use](#normal-daily-use)
+  - [Gmail Recap Fetch](#gmail-recap-fetch)
+  - [Bulltard Debug Utilities](#bulltard-debug-utilities)
+  - [Market Regime](#market-regime)
+  - [Portfolio Policy](#portfolio-policy)
+  - [Visualization](#visualization)
+  - [Local Research Store](#local-research-store)
+  - [Candidate Validation](#candidate-validation)
+  - [Reset Local Research Data](#reset-local-research-data)
+
 MarketLab is a local-first research system for market-regime analysis and large-cap opportunity tracking.
 
 The implementation follows `DESIGN.md`: point-in-time observations, deterministic calculations, bounded agent outputs, and reproducible reports.
@@ -38,35 +52,6 @@ Current limitations:
 - Bulltard candidate handling currently stops at research triage. Real options-liquidity, fundamental viability, instrument suitability, lifecycle episodes, thesis, and invalidation modeling are still future work before a candidate can become a complete opportunity.
 - Market-signal production still uses hard-coded v0 feature thresholds; richer calibrated signal families are future work.
 
-## Development
-
-```bash
-python -m pytest -q
-```
-
-or, with `uv`:
-
-```bash
-uv run pytest -q
-```
-
-Format, lint, and autofix:
-
-```bash
-uv run ruff format
-uv run ruff check --fix
-```
-
-## Local Bin
-
-Repo-local command shims live in `bin/`. The `marketlab` executable is linked there:
-
-```bash
-./bin/marketlab --help
-```
-
-The link points into `.venv/bin/`, so run `uv sync` or `uv run ...` first on a fresh checkout.
-
 ## Normal Daily Use
 
 The routine operating path is one command:
@@ -89,6 +74,82 @@ For a specific date:
 
 The lower-level `regime`, `bulltard`, `policy`, `chart`, and `store` commands remain available
 for debugging, backfills, and focused research.
+
+## Market Regime Pillar
+
+### Market Regime Signals
+
+Compute the market regime directly:
+
+```bash
+./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
+```
+
+`--fetch-prices` refreshes the local Yahoo price cache before computing the immutable regime
+snapshot. Overlapping Yahoo/Stooq refreshes replace existing rows for the same symbol/date because
+vendors can revise adjusted prices; saved regime, policy, and candidate snapshots remain the frozen
+research record. Index symbols keep their source symbol in each row, but use filesystem-safe cache
+names such as `INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
+
+The v0 score uses:
+
+- SPY/QQQ trend and moving-average posture.
+- SPY realized volatility and VIX.
+- RSP/SPY and IWM/SPY participation.
+- HYG/TLT risk appetite.
+
+Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
+
+```bash
+./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
+```
+
+Backfill market-regime and market-signal snapshots over local price dates:
+
+```bash
+./bin/marketlab regime backfill \
+  --start 2025-01-02 \
+  --end 2026-08-28
+```
+
+Backfill skips existing same-version snapshots by default, so repeated runs fill missing dates
+without rewriting frozen historical records. Use `--recompute-existing` only when you intentionally
+want to recompute saved dates and surface any immutable snapshot conflicts.
+
+Replay rare action states or normalized pressure buckets:
+
+```bash
+./bin/marketlab regime action-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+./bin/marketlab regime pressure-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+```
+
+### Portfolio Policy
+
+Create a policy snapshot from a saved regime snapshot and any saved Bulltard candidate validation snapshot:
+
+```bash
+./bin/marketlab policy snapshot --date 2026-08-28
+```
+
+Render the daily human-facing report:
+
+```bash
+./bin/marketlab report daily --date 2026-08-28
+```
+
+Backfill and replay policy snapshots against the fixed v0 benchmark proxy:
+
+```bash
+./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
+./bin/marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+```
+
+The v0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only maps the marginal tactical sleeve:
+
+- `maintain`: target roughly neutral tactical beta and make no forced change.
+- `protect`: reduce marginal beta, preserve or raise cash, and consider covered calls.
+- `redeploy`: add exposure in tranches after washout conditions, including possible 60-90 DTE calls/call spreads or bounded put underwriting.
+
 
 ## Gmail Recap Fetch
 
@@ -229,72 +290,6 @@ The default price window starts 550 calendar days before `--date` and ends today
 replays saved validation snapshots from the earliest saved snapshot through `--date` by default.
 Use `--outcome-start` and `--outcome-end` to override that replay window.
 
-## Market Regime
-
-Compute the market regime directly:
-
-```bash
-./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
-```
-
-Market regime is intentionally separate from Bulltard. Bulltard may generate single-name
-candidates, but it is not the basis for the overall market-regime score.
-
-The v0 score uses:
-
-- SPY/QQQ trend and moving-average posture.
-- SPY realized volatility and VIX.
-- RSP/SPY and IWM/SPY participation.
-- HYG/TLT risk appetite.
-
-Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
-
-```bash
-./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
-```
-
-Backfill market-regime and market-signal snapshots over local price dates:
-
-```bash
-./bin/marketlab regime backfill \
-  --start 2025-01-02 \
-  --end 2026-08-28
-```
-
-Replay rare action states or normalized pressure buckets:
-
-```bash
-./bin/marketlab regime action-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
-./bin/marketlab regime pressure-outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
-```
-
-## Portfolio Policy
-
-Create a policy snapshot from a saved regime snapshot and any saved Bulltard candidate validation snapshot:
-
-```bash
-./bin/marketlab policy snapshot --date 2026-08-28
-```
-
-Render the daily human-facing report:
-
-```bash
-./bin/marketlab report daily --date 2026-08-28
-```
-
-Backfill and replay policy snapshots against the fixed v0 benchmark proxy:
-
-```bash
-./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
-./bin/marketlab policy outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
-```
-
-The v0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only maps the marginal tactical sleeve:
-
-- `maintain`: target roughly neutral tactical beta and make no forced change.
-- `protect`: reduce marginal beta, preserve or raise cash, and consider covered calls.
-- `redeploy`: add exposure in tranches after washout conditions, including possible 60-90 DTE calls/call spreads or bounded put underwriting.
-
 ## Visualization
 
 Generate reproducible charts from saved snapshots and observations:
@@ -354,7 +349,10 @@ You can still fetch independent daily OHLCV history for arbitrary tickers:
   --end 2026-08-27
 ```
 
-This uses the actively maintained `yfinance` package. It stores raw `close` and `adjusted_close`; MarketLab uses adjusted close for return/outcome calculations when available.
+This uses the actively maintained `yfinance` package. It stores raw `close` and `adjusted_close`;
+MarketLab uses adjusted close for return/outcome calculations when available. Re-fetching an
+overlapping date range updates the local price cache; point-in-time snapshots preserve the exact
+derived signal used for research.
 
 The older Stooq path remains available as `prices fetch`, but it may require a Stooq API key:
 

@@ -51,6 +51,25 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
         ),
         output_root=price_root,
     )
+    _write_jsonl(
+        price_root / "SPY.legacy.jsonl",
+        [
+            {
+                "source": "fixture",
+                "source_symbol": "SPY",
+                "symbol": "SPY",
+                "date": "2026-08-28",
+                "availability_date": "2026-08-28",
+                "retrieved_at": "2026-08-28T22:00:00Z",
+                "open": 100.0,
+                "high": 102.0,
+                "low": 99.0,
+                "close": 101.5,
+                "volume": 1_100_000,
+                "adjusted_close": 101.5,
+            }
+        ],
+    )
     write_market_series_observations(
         (
             MarketSeriesObservation(
@@ -289,6 +308,12 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
     )
     assert query_result.rows == ((source_date, "risk_on", "no_change", 0.4),)
     assert "risk_on" in format_query_result(query_result)
+
+    price_query = query_research_store(
+        db_path=db_path,
+        query="select close, adjusted_close, volume from daily_prices where symbol = 'SPY'",
+    )
+    assert price_query.rows == ((101.5, 101.5, 1_100_000),)
 
     summary = summarize_research_store(db_path=db_path)
     assert ("regime_snapshots", 1) in summary.rows
