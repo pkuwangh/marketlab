@@ -110,6 +110,11 @@ def refresh_research_store(
                 root=regime_snapshot_root,
                 parquet_root=parquet_root,
             ),
+            _refresh_regime_pressure_modules(
+                connection,
+                root=regime_snapshot_root,
+                parquet_root=parquet_root,
+            ),
             _refresh_market_signals(
                 connection,
                 root=market_signal_snapshot_root,
@@ -501,6 +506,48 @@ def _refresh_regime_pressure_features(
     return _replace_table(
         connection,
         table_name="regime_pressure_features",
+        schema=schema,
+        rows=tuple(rows),
+        parquet_root=parquet_root,
+    )
+
+
+def _refresh_regime_pressure_modules(
+    connection,
+    *,
+    root: Path,
+    parquet_root: Path | None,
+) -> StoreTableRefresh:
+    schema = (
+        ("source_date", "DATE"),
+        ("pressure_version", "VARCHAR"),
+        ("family", "VARCHAR"),
+        ("module", "VARCHAR"),
+        ("stretch_score", "DOUBLE"),
+        ("washout_score", "DOUBLE"),
+        ("feature_count", "INTEGER"),
+        ("feature_names", "VARCHAR"),
+        ("reason", "VARCHAR"),
+    )
+    rows = []
+    for row in _read_json_files(root):
+        for module in row.get("pressure_modules", ()):
+            rows.append(
+                (
+                    _optional_date(module.get("source_date")),
+                    _optional_str(module.get("pressure_version")),
+                    _optional_str(module.get("family")),
+                    _optional_str(module.get("name")),
+                    _optional_float(module.get("stretch_score")),
+                    _optional_float(module.get("washout_score")),
+                    _optional_int(module.get("feature_count")),
+                    ",".join(str(name) for name in module.get("feature_names", ())),
+                    _optional_str(module.get("reason")),
+                )
+            )
+    return _replace_table(
+        connection,
+        table_name="regime_pressure_modules",
         schema=schema,
         rows=tuple(rows),
         parquet_root=parquet_root,

@@ -1,4 +1,3 @@
-import json
 from datetime import date
 from pathlib import Path
 
@@ -35,17 +34,6 @@ def test_write_and_load_market_signal_snapshot(tmp_path: Path) -> None:
     assert path == _market_signal_snapshot_path(tmp_path, date(2026, 8, 28))
     assert loaded == (signal,)
 
-    legacy_root = tmp_path / "legacy"
-    legacy_root.mkdir()
-    (legacy_root / "2026-08-28.jsonl").write_text(
-        json.dumps(signal.to_dict()) + "\n",
-        encoding="utf-8",
-    )
-    assert load_market_signal_snapshot(
-        source_date=date(2026, 8, 28),
-        snapshot_root=legacy_root,
-    ) == (signal,)
-
 
 def test_write_market_signal_snapshot_rejects_mixed_dates(tmp_path: Path) -> None:
     first = _signal(source_date=date(2026, 8, 28))
@@ -53,6 +41,22 @@ def test_write_market_signal_snapshot_rejects_mixed_dates(tmp_path: Path) -> Non
 
     with pytest.raises(MarketSignalError, match="one source date"):
         write_market_signal_snapshot((first, second), snapshot_root=tmp_path)
+
+
+def test_write_market_signal_snapshot_replaces_changed_artifact_by_default(
+    tmp_path: Path,
+) -> None:
+    source_date = date(2026, 8, 28)
+    first = _signal(source_date=source_date, value="first")
+    second = _signal(source_date=source_date, value="second")
+
+    path = write_market_signal_snapshot((first,), snapshot_root=tmp_path)
+    rewritten_path = write_market_signal_snapshot((second,), snapshot_root=tmp_path)
+
+    assert rewritten_path == path
+    assert load_market_signal_snapshot(source_date=source_date, snapshot_root=tmp_path) == (
+        second,
+    )
 
 
 def test_format_market_signals_outputs_compact_table() -> None:
@@ -103,20 +107,109 @@ def test_format_market_signals_formats_percent_levels_and_points() -> None:
     assert "+0.42pp" in table
 
 
-def _signal(*, source_date: date) -> MarketSignal:
+def test_format_market_signals_shows_volatility_index_changes() -> None:
+    signal = _signal(
+        source_date=date(2026, 8, 28),
+        family="volatility",
+        name="vol_of_vol",
+        score=1,
+        value=84.4,
+        unit="index",
+        details={"vvix_return_5d": 0.12, "vvix_return_20d": -0.04},
+    )
+
+    table = format_market_signals((signal,))
+
+    assert "value" in table
+    assert "current" not in table
+    assert "recent" not in table
+    assert "context" not in table
+    assert "now: VVIX 84.40; VVIX: 5d +12.0%, 20d -4.0%" in table
+
+
+def test_format_market_signals_shows_paired_trend_values() -> None:
+    signal = _signal(
+        source_date=date(2026, 8, 28),
+        details={
+            "spy_return_20d": -0.004,
+            "qqq_return_20d": -0.006,
+            "spy_return_60d": 0.064,
+            "qqq_return_60d": 0.052,
+            "spy_ma50_distance": 0.018,
+            "qqq_ma50_distance": 0.011,
+            "spy_ma200_distance": 0.085,
+            "qqq_ma200_distance": 0.095,
+        },
+    )
+
+    table = format_market_signals((signal,))
+
+    assert (
+        "SPY/QQQ: 20,60d -0.4/-0.6%, +6.4/+5.2%; "
+        "MA50,200 +1.8/+1.1%, +8.5/+9.5%"
+    ) in table
+
+
+def test_format_market_signals_groups_rows_by_family_order() -> None:
+    source_date = date(2026, 8, 28)
+    table = format_market_signals(
+        (
+            _signal(source_date=source_date, family="credit", name="credit_spread", score=1),
+            _signal(source_date=source_date, family="volatility", name="vol_of_vol", score=1),
+            _signal(source_date=source_date, family="trend", name="price_proxy", score=2),
+            _signal(source_date=source_date, family="volatility", name="price_proxy", score=1),
+        )
+    )
+
+    assert _row_index(table, "trend", "price_proxy") < _row_index(
+        table,
+        "volatility",
+        "price_proxy",
+    )
+    assert _row_index(table, "volatility", "price_proxy") < _row_index(
+        table,
+        "volatility",
+        "vol_of_vol",
+    )
+    assert _row_index(table, "volatility", "vol_of_vol") < _row_index(
+        table,
+        "credit",
+        "credit_spread",
+    )
+
+
+def _row_index(table: str, family: str, name: str) -> int:
+    for index, line in enumerate(table.splitlines()):
+        columns = line.split()
+        if len(columns) >= 2 and columns[0] == family and columns[1] == name:
+            return index
+    raise AssertionError(f"Missing market signal row: {family}/{name}")
+
+
+def _signal(
+    *,
+    source_date: date,
+    family: str = "trend",
+    name: str = "price_proxy",
+    score: int = 2,
+    value: float | str = "SPY/QQQ fixture",
+    unit: str = "text",
+    details: dict[str, object] | None = None,
+) -> MarketSignal:
     return MarketSignal(
         source_date=source_date,
         feature_version="fixture",
-        family="trend",
-        name="price_proxy",
+        family=family,
+        name=name,
         status="constructive",
-        score=2,
-        value="SPY/QQQ fixture",
-        unit="text",
+        score=score,
+        value=value,
+        unit=unit,
         source="fixture",
         observed_date=source_date,
         availability_date=source_date,
         reason="fixture signal",
+        details=details or {},
     )
 
 
@@ -127,6 +220,6 @@ def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path
         / source_date_value
         / "eod"
         / f"{source_date_value}_eod"
-        / "market_signals_model_v0"
+        / "market_signals_model_v1"
         / "market-signals.jsonl"
     )

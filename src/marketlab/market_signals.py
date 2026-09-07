@@ -1,4 +1,4 @@
-"""Point-in-time market signal snapshots."""
+"""Point-in-time market signal artifacts."""
 
 from __future__ import annotations
 
@@ -21,14 +21,29 @@ from marketlab.snapshots.models import (
     write_immutable_payload,
 )
 
-DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT = Path("data/snapshots/market/signals")
+DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT = Path("data/derived/market/signals")
 MARKET_SIGNAL_FEATURE_VERSION = "market_signals_v0"
-MARKET_SIGNAL_MODEL_VERSION = "market_signals_model_v0"
+MARKET_SIGNAL_MODEL_VERSION = "market_signals_model_v1"
 MARKET_SIGNAL_SNAPSHOT_FILENAME = "market-signals.jsonl"
+MARKET_SIGNAL_FAMILY_ORDER = {
+    "trend": 0,
+    "volatility": 1,
+    "breadth": 2,
+    "credit": 3,
+    "liquidity": 4,
+    "rates": 5,
+}
+MARKET_SIGNAL_NAME_ORDER = {
+    "price_proxy": 0,
+    "vol_of_vol": 1,
+    "credit_spread": 1,
+    "financial_conditions": 1,
+    "yield_curve": 1,
+}
 
 
 class MarketSignalError(ValueError):
-    """Raised when market signal snapshots cannot be read or written."""
+    """Raised when market signal artifacts cannot be read or written."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,24 +111,24 @@ def write_market_signal_snapshot(
     signals: tuple[MarketSignal, ...],
     *,
     snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> Path:
-    """Write one date's market signal rows."""
+    """Write one date's replaceable market signal rows."""
 
     if not signals:
-        raise MarketSignalError("Cannot write an empty market signal snapshot")
+        raise MarketSignalError("Cannot write an empty market signal artifact")
     source_date = signals[0].source_date
     if any(signal.source_date != source_date for signal in signals):
-        raise MarketSignalError("Market signal snapshot must contain one source date")
+        raise MarketSignalError("Market signal artifact must contain one source date")
     signal_time = signals[0].signal_time
     if any(signal.signal_time != signal_time for signal in signals):
-        raise MarketSignalError("Market signal snapshot must contain one signal time")
+        raise MarketSignalError("Market signal artifact must contain one signal time")
     snapshot_version = signals[0].snapshot_version
     if any(signal.snapshot_version != snapshot_version for signal in signals):
-        raise MarketSignalError("Market signal snapshot must contain one snapshot version")
+        raise MarketSignalError("Market signal artifact must contain one snapshot version")
     model_version = signals[0].model_version
     if any(signal.model_version != model_version for signal in signals):
-        raise MarketSignalError("Market signal snapshot must contain one model version")
+        raise MarketSignalError("Market signal artifact must contain one model version")
 
     try:
         path = versioned_snapshot_path(
@@ -151,7 +166,7 @@ def write_market_signal_snapshot(
         row_count=len(signals),
         snapshot_path=str(path),
         wrote=wrote,
-    ).success("Wrote market signal snapshot")
+    ).success("Wrote market signal artifact")
     return path
 
 
@@ -188,9 +203,9 @@ def load_market_signal_snapshot(
             if line.strip()
         )
     except OSError as exc:
-        raise MarketSignalError(f"Failed to read market signal snapshot: {path}") from exc
+        raise MarketSignalError(f"Failed to read market signal artifact: {path}") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise MarketSignalError(f"Invalid market signal snapshot file: {path}") from exc
+        raise MarketSignalError(f"Invalid market signal artifact file: {path}") from exc
 
 
 def format_market_signals(signals: tuple[MarketSignal, ...]) -> str:
@@ -200,20 +215,256 @@ def format_market_signals(signals: tuple[MarketSignal, ...]) -> str:
         return "No market signal rows found."
 
     rows = [["family", "signal", "score", "status", "value", "source", "observed", "reason"]]
-    for signal in signals:
+    for signal in sorted(signals, key=_market_signal_sort_key):
         rows.append(
             [
                 signal.family,
                 signal.name,
                 _format_score(signal.score),
                 signal.status,
-                _format_value(signal.value, signal.unit),
+                _format_signal_value(signal),
                 signal.source,
                 signal.observed_date.isoformat() if signal.observed_date else "-",
                 signal.reason,
             ]
         )
     return _format_table(rows)
+
+
+def _market_signal_sort_key(signal: MarketSignal) -> tuple[int, str, int, str]:
+    return (
+        MARKET_SIGNAL_FAMILY_ORDER.get(signal.family, 99),
+        signal.family,
+        MARKET_SIGNAL_NAME_ORDER.get(signal.name, 99),
+        signal.name,
+    )
+
+
+def _format_signal_value(signal: MarketSignal) -> str:
+    if signal.family == "trend" and signal.name == "price_proxy":
+        gain = _format_signal_value_values(
+            (
+                _format_detail_pair(
+                    signal.details,
+                    left_key="spy_return_20d",
+                    right_key="qqq_return_20d",
+                    unit="percent",
+                    compact_percent=True,
+                ),
+                _format_detail_pair(
+                    signal.details,
+                    left_key="spy_return_60d",
+                    right_key="qqq_return_60d",
+                    unit="percent",
+                    compact_percent=True,
+                ),
+            ),
+        )
+        moving_average_distance = _format_signal_value_values(
+            (
+                _format_detail_pair(
+                    signal.details,
+                    left_key="spy_ma50_distance",
+                    right_key="qqq_ma50_distance",
+                    unit="percent",
+                    compact_percent=True,
+                ),
+                _format_detail_pair(
+                    signal.details,
+                    left_key="spy_ma200_distance",
+                    right_key="qqq_ma200_distance",
+                    unit="percent",
+                    compact_percent=True,
+                ),
+            ),
+        )
+        value = _format_signal_value_sections(
+            (
+                ("SPY/QQQ: 20,60d", gain),
+                ("MA50,200", moving_average_distance),
+            ),
+            label_separator=" ",
+        )
+        return value or _format_value(signal.value, signal.unit)
+
+    if signal.family == "volatility" and signal.name == "price_proxy":
+        value = _format_signal_value_sections(
+            (
+                (
+                    "now",
+                    _format_detail_values(
+                        signal.details,
+                        (
+                            ("VIX", "vix_close", "index"),
+                            ("SPY rv20", "spy_realized_vol_20d", "percent"),
+                        ),
+                    ),
+                ),
+                (
+                    "VIX",
+                    _format_detail_values(
+                        signal.details,
+                        (
+                            ("5d", "vix_return_5d", "percent"),
+                            ("20d", "vix_return_20d", "percent"),
+                        ),
+                    ),
+                ),
+            )
+        )
+        return value or _format_value(signal.value, signal.unit)
+
+    if signal.family == "volatility" and signal.name == "vol_of_vol":
+        current = _format_detail_values(signal.details, (("VVIX", "vvix_close", "index"),))
+        if current == "-":
+            current = _format_prefixed_value("VVIX", signal.value, signal.unit)
+        value = _format_signal_value_sections(
+            (
+                ("now", current),
+                (
+                    "VVIX",
+                    _format_detail_values(
+                        signal.details,
+                        (
+                            ("5d", "vvix_return_5d", "percent"),
+                            ("20d", "vvix_return_20d", "percent"),
+                        ),
+                    ),
+                ),
+            )
+        )
+        return value or _format_value(signal.value, signal.unit)
+
+    if signal.family == "breadth" and signal.name == "price_proxy":
+        value = _format_signal_value_sections(
+            (
+                (
+                    "5d",
+                    _format_detail_values(
+                        signal.details,
+                        (
+                            ("RSP/SPY", "rsp_spy_relative_5d", "percent"),
+                            ("IWM/SPY", "iwm_spy_relative_5d", "percent"),
+                        ),
+                    ),
+                ),
+                (
+                    "20d",
+                    _format_detail_values(
+                        signal.details,
+                        (
+                            ("RSP/SPY", "rsp_spy_relative_20d", "percent"),
+                            ("IWM/SPY", "iwm_spy_relative_20d", "percent"),
+                        ),
+                    ),
+                ),
+            )
+        )
+        return value or _format_value(signal.value, signal.unit)
+
+    if signal.family == "credit" and signal.name == "price_proxy":
+        value = _format_signal_value_sections(
+            (
+                (
+                    "5d",
+                    _format_detail_values(
+                        signal.details,
+                        (("HYG/TLT", "hyg_tlt_relative_5d", "percent"),),
+                    ),
+                ),
+                (
+                    "20d",
+                    _format_detail_values(
+                        signal.details,
+                        (("HYG/TLT", "hyg_tlt_relative_20d", "percent"),),
+                    ),
+                ),
+            )
+        )
+        return value or _format_value(signal.value, signal.unit)
+
+    return _format_value(signal.value, signal.unit)
+
+
+def _format_signal_value_sections(
+    sections: tuple[tuple[str, str], ...],
+    *,
+    separator: str = "; ",
+    label_separator: str = ": ",
+) -> str:
+    values = tuple(
+        f"{label}{label_separator}{value}" for label, value in sections if value != "-"
+    )
+    return separator.join(values)
+
+
+def _format_signal_value_values(values: tuple[str, ...]) -> str:
+    available = tuple(value for value in values if value != "-")
+    return ", ".join(available) if available else "-"
+
+
+def _format_detail_pair(
+    details: dict[str, Any],
+    *,
+    left_key: str,
+    right_key: str,
+    unit: str,
+    compact_percent: bool = False,
+) -> str:
+    left = _format_detail_scalar(details, key=left_key, unit=unit)
+    right = _format_detail_scalar(details, key=right_key, unit=unit)
+    if left is None and right is None:
+        return "-"
+    if compact_percent and unit == "percent":
+        return _format_compact_percent_pair(left=left, right=right)
+    return f"{left or '-'}/{right or '-'}"
+
+
+def _format_compact_percent_pair(*, left: str | None, right: str | None) -> str:
+    if left is None:
+        return f"-/{right or '-'}"
+    if right is None:
+        return f"{left}/-"
+    return f"{left.removesuffix('%')}/{right}"
+
+
+def _format_detail_scalar(details: dict[str, Any], *, key: str, unit: str) -> str | None:
+    value = details.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return _format_value(float(value), unit)
+
+
+def _format_prefixed_value(prefix: str, value: float | str | None, unit: str) -> str:
+    formatted = _format_value(value, unit)
+    if formatted == "-":
+        return formatted
+    return f"{prefix} {formatted}"
+
+
+def _format_detail_values(
+    details: dict[str, Any],
+    specs: tuple[tuple[str, str, str], ...],
+) -> str:
+    values = tuple(
+        formatted
+        for label, key, unit in specs
+        if (formatted := _format_detail_value(details, label=label, key=key, unit=unit))
+    )
+    return ", ".join(values) if values else "-"
+
+
+def _format_detail_value(
+    details: dict[str, Any],
+    *,
+    label: str,
+    key: str,
+    unit: str,
+) -> str | None:
+    formatted = _format_detail_scalar(details, key=key, unit=unit)
+    if formatted is None:
+        return None
+    return f"{label} {formatted}"
 
 
 def _signal_from_dict(row: dict[str, Any]) -> MarketSignal:

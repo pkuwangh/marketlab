@@ -166,7 +166,7 @@ Agent calls should have explicit inputs and structured outputs. For example, a B
 
 ## Execution model
 
-The current operating path is an explicitly invoked CLI workflow, not an automated trading service. Once ingestion and snapshot semantics are stable over repeated use, selected collection jobs may be scheduled. A typical deterministic run is: refresh market sources → compute shared features and market-signal snapshots → score SPY/QQQ regime → fetch the Bulltard recap from Gmail or a saved artifact → extract/validate single-name candidates → calculate portfolio posture/risk budget → persist → render report/chart outputs.
+The current operating path is an explicitly invoked CLI workflow, not an automated trading service. Once ingestion and snapshot semantics are stable over repeated use, selected collection jobs may be scheduled. A typical deterministic run is: refresh market sources → compute shared features and replaceable market-signal artifacts → score SPY/QQQ regime → fetch the Bulltard recap from Gmail or a saved artifact → extract/validate single-name candidates → calculate portfolio posture/risk budget → persist → render report/chart outputs.
 
 | Mode                 | Typical invocation                                      | Behavior                                                                                       |
 |----------------------|---------------------------------------------------------|------------------------------------------------------------------------------------------------|
@@ -898,7 +898,7 @@ marketlab/
 
 - Keep the two-engine split explicit in code and documentation: `regime` owns aggregate market context, while `bulltard` and later `opportunity` own single-name candidate evidence.
 
-- Keep hardening the market-signal snapshot layer as the evidence boundary for regime and policy. The current v0 consumes saved/generated signal rows; next steps are longer-history calibration, measured source expansion, and a standalone signal-production command only if the regime workflow becomes too coupled.
+- Keep hardening the market-signal artifact layer as the evidence boundary for regime and policy. The current model consumes generated signal rows; next steps are longer-history calibration, measured source expansion, and a standalone signal-production command only if the regime workflow becomes too coupled.
 
 - Continue Market Signal Expansion only where source access is practical and measured outcome replay improves:
   - VIX term structure and realized-vs-implied volatility where the data source is reliable.

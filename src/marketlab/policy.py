@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -34,7 +34,6 @@ from marketlab.regime import (
     REGIME_SNAPSHOT_FILENAME,
     RegimeError,
     RegimeSnapshot,
-    derive_regime_action_state,
     load_regime_snapshot,
 )
 from marketlab.snapshots.models import (
@@ -302,17 +301,6 @@ def compute_portfolio_policy_snapshot(
         signal_time=signal_time,
         snapshot_version=snapshot_version,
     )
-    market_signals = _load_market_signals(
-        source_date=source_date,
-        snapshot_root=market_signal_snapshot_root,
-        signal_time=signal_time,
-        snapshot_version=snapshot_version,
-    )
-    if _has_regime_component_boundary(market_signals):
-        regime_snapshot = _regime_snapshot_with_market_signal_action(
-            regime_snapshot=regime_snapshot,
-            signals=market_signals,
-        )
     candidate_snapshots = _load_candidate_snapshots(
         source_date=source_date,
         snapshot_root=candidate_snapshot_root,
@@ -910,43 +898,6 @@ def _policy_state_from_action(action_state: str) -> str:
     return "maintain"
 
 
-def _regime_snapshot_with_market_signal_action(
-    *,
-    regime_snapshot: RegimeSnapshot,
-    signals: tuple[MarketSignal, ...],
-) -> RegimeSnapshot:
-    action = derive_regime_action_state(snapshot=regime_snapshot, signals=signals)
-    return replace(
-        regime_snapshot,
-        action_version=action.action_version,
-        action_state=action.state,
-        stretch_score=action.stretch_score,
-        washout_score=action.washout_score,
-        action_confidence=action.confidence,
-        action_reason=action.reason,
-        market_signal_snapshot_version=_shared_market_signal_snapshot_version(signals),
-    )
-
-
-def _has_regime_component_boundary(signals: tuple[MarketSignal, ...]) -> bool:
-    return all(
-        _market_signal_by_name(signals, family=family, name="price_proxy") is not None
-        for family in ("trend", "volatility", "breadth", "credit")
-    )
-
-
-def _market_signal_by_name(
-    signals: tuple[MarketSignal, ...],
-    *,
-    family: str,
-    name: str,
-) -> MarketSignal | None:
-    for signal in signals:
-        if signal.family == family and signal.name == name:
-            return signal
-    return None
-
-
 def _policy_settings(policy_state: str) -> dict[str, Any]:
     if policy_state == "protect":
         return {
@@ -1053,15 +1004,6 @@ def _shared_candidate_snapshot_version(
         for candidate in candidates
         if getattr(candidate, "snapshot_version", None)
     }
-    if len(versions) == 1:
-        return versions.pop()
-    if len(versions) > 1:
-        return "mixed"
-    return None
-
-
-def _shared_market_signal_snapshot_version(signals: tuple[MarketSignal, ...]) -> str | None:
-    versions = {signal.snapshot_version for signal in signals if signal.snapshot_version}
     if len(versions) == 1:
         return versions.pop()
     if len(versions) > 1:

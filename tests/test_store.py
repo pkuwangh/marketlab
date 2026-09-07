@@ -12,6 +12,7 @@ from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import (
     RegimeComponentScore,
     RegimePressureFeature,
+    RegimePressureModule,
     RegimeSnapshot,
     write_regime_snapshot,
 )
@@ -133,6 +134,19 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
                     washout_score=0.0,
                     sample_count=100,
                     reason="fixture",
+                ),
+            ),
+            pressure_modules=(
+                RegimePressureModule(
+                    source_date=source_date,
+                    pressure_version="fixture_pressure",
+                    family="trend",
+                    name="trend_extension",
+                    stretch_score=0.4,
+                    washout_score=0.0,
+                    feature_count=1,
+                    feature_names=("spy_return_20d",),
+                    reason="fixture module",
                 ),
             ),
         ),
@@ -286,6 +300,7 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
     assert counts["regime_snapshots"] == 1
     assert counts["regime_components"] == 1
     assert counts["regime_pressure_features"] == 1
+    assert counts["regime_pressure_modules"] == 1
     assert counts["market_signals"] == 1
     assert counts["bulltard_ingest_runs"] == 1
     assert counts["bulltard_ranked_option_trades"] == 1

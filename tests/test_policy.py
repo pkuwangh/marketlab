@@ -136,7 +136,7 @@ def test_daily_policy_report_shows_policy_change_and_signal_context(tmp_path: Pa
     assert "deploy dry powder in tranches" in result.report
 
 
-def test_compute_policy_snapshot_uses_full_market_signal_boundary_for_action(
+def test_compute_policy_snapshot_uses_saved_regime_action_without_signal_override(
     tmp_path: Path,
 ) -> None:
     source_date = date(2026, 8, 28)
@@ -212,9 +212,9 @@ def test_compute_policy_snapshot_uses_full_market_signal_boundary_for_action(
         policy_snapshot_root=policy_root,
     )
 
-    assert result.snapshot.regime_action_state == "scale_down_protect"
-    assert result.snapshot.policy_state == "protect"
-    assert result.snapshot.market_signal_snapshot_version == "2026-08-28_eod"
+    assert result.snapshot.regime_action_state == "no_change"
+    assert result.snapshot.policy_state == "maintain"
+    assert result.snapshot.market_signal_snapshot_version is None
 
 
 def test_policy_backfill_and_outcomes_compare_to_fixed_benchmark(tmp_path: Path) -> None:

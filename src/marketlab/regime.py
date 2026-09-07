@@ -54,10 +54,10 @@ DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
 DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX", "^VVIX")
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
-REGIME_MODEL_VERSION = "market_regime_score_v0"
+REGIME_MODEL_VERSION = "market_regime_score_v1"
 REGIME_ACTION_VERSION = "regime_action_v0"
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
-REGIME_PRESSURE_VERSION = "regime_pressure_v0"
+REGIME_PRESSURE_VERSION = "regime_pressure_v1"
 REGIME_SNAPSHOT_FILENAME = "regime.json"
 PRESSURE_LOOKBACK_SAMPLES = 252
 MIN_PRESSURE_FEATURE_SAMPLES = 20
@@ -138,6 +138,34 @@ class RegimePressureFeature:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimePressureModule:
+    """One modular pressure read composed from normalized pressure features."""
+
+    source_date: date
+    pressure_version: str
+    family: str
+    name: str
+    stretch_score: float | None
+    washout_score: float | None
+    feature_count: int
+    feature_names: tuple[str, ...]
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_date": self.source_date.isoformat(),
+            "pressure_version": self.pressure_version,
+            "family": self.family,
+            "name": self.name,
+            "stretch_score": self.stretch_score,
+            "washout_score": self.washout_score,
+            "feature_count": self.feature_count,
+            "feature_names": list(self.feature_names),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RegimePressureSnapshot:
     """Normalized stretch/washout pressure for one regime date."""
 
@@ -147,6 +175,7 @@ class RegimePressureSnapshot:
     washout_pressure_score: float
     confidence: str
     features: tuple[RegimePressureFeature, ...]
+    modules: tuple[RegimePressureModule, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +215,7 @@ class RegimeSnapshot:
     washout_pressure_score: float | None = None
     pressure_confidence: str = "low"
     pressure_features: tuple[RegimePressureFeature, ...] = ()
+    pressure_modules: tuple[RegimePressureModule, ...] = ()
     signal_time: str = SignalTime.EOD.value
     snapshot_version: str | None = None
     market_signal_snapshot_version: str | None = None
@@ -243,6 +273,7 @@ class RegimeSnapshot:
             "washout_pressure_score": self.washout_pressure_score,
             "pressure_confidence": self.pressure_confidence,
             "pressure_features": [feature.to_dict() for feature in self.pressure_features],
+            "pressure_modules": [module.to_dict() for module in self.pressure_modules],
             "created_at": self.created_at,
             "code_revision": self.code_revision,
         }
@@ -490,6 +521,7 @@ class _SymbolFeatures:
     symbol: str
     price_date: date | None
     close: float | None
+    return_5d: float | None
     return_20d: float | None
     return_60d: float | None
     ma50_distance: float | None
@@ -509,6 +541,14 @@ class _PressureFeatureSpec:
 class _PressureFeatureSample:
     asof_date: date
     value: float
+
+
+@dataclass(frozen=True, slots=True)
+class _PressureModuleSpec:
+    family: str
+    name: str
+    feature_names: tuple[str, ...]
+    reason: str
 
 
 PRESSURE_FEATURE_SPECS = (
@@ -598,6 +638,51 @@ PRESSURE_FEATURE_SPECS = (
     ),
 )
 
+PRESSURE_MODULE_SPECS = (
+    _PressureModuleSpec(
+        family="trend",
+        name="trend_extension",
+        feature_names=(
+            "spy_return_20d",
+            "spy_return_60d",
+            "qqq_return_20d",
+            "spy_ma50_distance",
+            "qqq_ma50_distance",
+        ),
+        reason="Index momentum and extension pressure",
+    ),
+    _PressureModuleSpec(
+        family="volatility",
+        name="vol_complacency",
+        feature_names=("spy_realized_vol_20d", "vix_close", "vvix_close"),
+        reason="Volatility complacency and panic pressure",
+    ),
+    _PressureModuleSpec(
+        family="breadth",
+        name="breadth_fragility",
+        feature_names=("rsp_spy_relative_20d", "iwm_spy_relative_20d"),
+        reason="Participation weakness pressure",
+    ),
+    _PressureModuleSpec(
+        family="credit",
+        name="credit_risk_appetite",
+        feature_names=("hyg_tlt_relative_20d", "credit_spread"),
+        reason="Credit and risk-appetite pressure",
+    ),
+    _PressureModuleSpec(
+        family="liquidity",
+        name="liquidity_conditions",
+        feature_names=("financial_conditions",),
+        reason="Liquidity and financial-condition pressure",
+    ),
+    _PressureModuleSpec(
+        family="rates",
+        name="yield_curve_pressure",
+        feature_names=("yield_curve",),
+        reason="Treasury curve pressure",
+    ),
+)
+
 
 def refresh_regime_prices(
     *,
@@ -663,6 +748,7 @@ def compute_regime_snapshot(
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
     write_snapshot: bool = True,
+    overwrite_snapshot: bool = False,
 ) -> RegimeSnapshotResult:
     """Compute and optionally persist one market regime snapshot."""
 
@@ -680,6 +766,7 @@ def compute_regime_snapshot(
         signal_time=signal_time,
         snapshot_version=snapshot_version,
         write_snapshot=write_snapshot,
+        overwrite_snapshot=overwrite_snapshot,
     )
 
 
@@ -695,6 +782,7 @@ def compute_regime_backfill(
     snapshot_version: str | None = None,
     write_snapshot: bool = True,
     skip_existing: bool = True,
+    overwrite_snapshot: bool = False,
 ) -> RegimeBackfillResult:
     """Compute market regime snapshots for each SPY observation date in a range."""
 
@@ -714,19 +802,25 @@ def compute_regime_backfill(
         series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
         observations_root=market_series_root,
     )
+    pressure_feature_history = _pressure_feature_history_from_observations(
+        source_date=end_date,
+        histories=histories,
+        market_series_histories=market_series_histories,
+    )
     logger.bind(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         source_date_count=len(source_dates),
         write_snapshot=write_snapshot,
         skip_existing=skip_existing,
+        overwrite_snapshot=overwrite_snapshot,
     ).info("Starting market regime backfill")
 
     snapshot_paths: list[Path] = []
     signal_snapshot_paths: list[Path] = []
     skipped_snapshot_paths: list[Path] = []
     for source_date in source_dates:
-        if write_snapshot and skip_existing:
+        if write_snapshot and skip_existing and not overwrite_snapshot:
             existing_snapshot_path = _existing_regime_snapshot_path(
                 source_date=source_date,
                 snapshot_root=snapshot_root,
@@ -758,6 +852,8 @@ def compute_regime_backfill(
             signal_time=signal_time,
             snapshot_version=snapshot_version,
             write_snapshot=write_snapshot,
+            overwrite_snapshot=overwrite_snapshot,
+            pressure_feature_history=pressure_feature_history,
         )
         if result.snapshot_path is not None:
             snapshot_paths.append(result.snapshot_path)
@@ -770,6 +866,7 @@ def compute_regime_backfill(
         snapshot_count=len(snapshot_paths),
         signal_snapshot_count=len(signal_snapshot_paths),
         skipped_snapshot_count=len(skipped_snapshot_paths),
+        overwrite_snapshot=overwrite_snapshot,
     ).success("Completed market regime backfill")
     return RegimeBackfillResult(
         start_date=start_date,
@@ -791,6 +888,7 @@ def _compute_regime_snapshot_from_histories(
     signal_time: SignalTime | str,
     snapshot_version: str | None,
     write_snapshot: bool,
+    overwrite_snapshot: bool,
     pressure_feature_history: dict[str, tuple[_PressureFeatureSample, ...]] | None = None,
 ) -> RegimeSnapshotResult:
     signal_time_text = signal_time_value(signal_time)
@@ -798,57 +896,30 @@ def _compute_regime_snapshot_from_histories(
         source_date,
         signal_time=signal_time_text,
     )
-
-    signals = _load_action_signals(
-        source_date=source_date,
-        signal_snapshot_root=signal_snapshot_root,
-        signal_time=signal_time_text,
-        snapshot_version=snapshot_version_text,
-    )
-    signal_snapshot_path = _resolve_market_signal_snapshot_path(
-        source_date=source_date,
-        signal_snapshot_root=signal_snapshot_root,
-        signal_time=signal_time_text,
-        snapshot_version=snapshot_version_text,
-    )
-    if not signals:
-        market_series = {
-            series_id: _market_series_asof(history, source_date)
-            for series_id, history in market_series_histories.items()
-        }
-        features = {
-            symbol: _symbol_features(
-                symbol=symbol,
-                source_date=source_date,
-                history=histories[symbol],
-            )
-            for symbol in DEFAULT_REGIME_PRICE_SYMBOLS
-        }
-        signals = _market_signals_from_snapshot(
-            _regime_snapshot_from_observation_features(
-                source_date=source_date,
-                features=features,
-                market_series=market_series,
-                signal_time=signal_time_text,
-                snapshot_version=snapshot_version_text,
-            ),
+    market_series = {
+        series_id: _market_series_asof(history, source_date)
+        for series_id, history in market_series_histories.items()
+    }
+    features = {
+        symbol: _symbol_features(
+            symbol=symbol,
+            source_date=source_date,
+            history=histories[symbol],
+        )
+        for symbol in DEFAULT_REGIME_PRICE_SYMBOLS
+    }
+    signals = _market_signals_from_snapshot(
+        _regime_snapshot_from_observation_features(
+            source_date=source_date,
             features=features,
             market_series=market_series,
-        )
-        if write_snapshot:
-            try:
-                signal_snapshot_path = write_market_signal_snapshot(
-                    signals,
-                    snapshot_root=signal_snapshot_root,
-                )
-                signals = load_market_signal_snapshot(
-                    source_date=source_date,
-                    snapshot_root=signal_snapshot_root,
-                    signal_time=signal_time_text,
-                    snapshot_version=snapshot_version_text,
-                )
-            except MarketSignalError as exc:
-                raise RegimeError(str(exc)) from exc
+            signal_time=signal_time_text,
+            snapshot_version=snapshot_version_text,
+        ),
+        features=features,
+        market_series=market_series,
+    )
+    signal_snapshot_path = None
 
     snapshot = _regime_snapshot_from_market_signals(
         source_date=source_date,
@@ -859,20 +930,32 @@ def _compute_regime_snapshot_from_histories(
     pressure = derive_regime_pressure_snapshot(
         source_date=source_date,
         feature_history=pressure_feature_history
-        or _pressure_feature_history_from_signal_snapshots(
+        or _pressure_feature_history_from_observations(
             source_date=source_date,
-            signal_snapshot_root=signal_snapshot_root,
-            signal_time=signal_time_text,
-            snapshot_version=snapshot_version,
-            current_signals=signals,
+            histories=histories,
+            market_series_histories=market_series_histories,
         ),
     )
     snapshot = _snapshot_with_pressure(snapshot=snapshot, pressure=pressure)
     action = derive_regime_action_state(snapshot=snapshot, signals=signals)
     snapshot = _snapshot_with_action(snapshot=snapshot, action=action)
     snapshot_path = (
-        write_regime_snapshot(snapshot, snapshot_root=snapshot_root) if write_snapshot else None
+        write_regime_snapshot(
+            snapshot,
+            snapshot_root=snapshot_root,
+            overwrite=overwrite_snapshot,
+        )
+        if write_snapshot
+        else None
     )
+    if write_snapshot:
+        try:
+            signal_snapshot_path = write_market_signal_snapshot(
+                signals,
+                snapshot_root=signal_snapshot_root,
+            )
+        except MarketSignalError as exc:
+            raise RegimeError(str(exc)) from exc
     contradictions = _market_signal_contradictions(signals)
     table = format_regime_snapshot(snapshot)
     signal_table = format_market_signals(signals)
@@ -892,7 +975,7 @@ def _compute_regime_snapshot_from_histories(
         snapshot_path=str(snapshot_path) if snapshot_path else None,
         market_signal_count=len(signals),
         market_signal_contradiction_count=len(contradictions),
-        market_signal_snapshot_path=str(signal_snapshot_path) if signal_snapshot_path else None,
+        market_signal_artifact_path=str(signal_snapshot_path) if signal_snapshot_path else None,
     ).success("Computed market regime snapshot")
     return RegimeSnapshotResult(
         source_date=source_date,
@@ -1043,7 +1126,7 @@ def _regime_snapshot_from_market_signals(
     snapshot_version: str,
 ) -> RegimeSnapshot:
     if not signals:
-        raise RegimeError(f"No market signal snapshot found for {source_date}")
+        raise RegimeError(f"No market signal artifact found for {source_date}")
     _validate_market_signal_boundary(
         source_date=source_date,
         signals=signals,
@@ -1175,6 +1258,85 @@ def format_regime_snapshot(snapshot: RegimeSnapshot) -> str:
     return _format_table(rows)
 
 
+def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
+    """Format the final market regime read as a compact summary table."""
+
+    snapshot = result.snapshot
+    rows = [
+        ["signal", "value", "read"],
+        [
+            "regime",
+            f"{snapshot.regime} ({_format_score(snapshot.score)})",
+            f"{snapshot.confidence} confidence",
+        ],
+    ]
+    pressure = result.pressure
+    stretch_pressure_score = (
+        pressure.stretch_pressure_score
+        if pressure is not None
+        else snapshot.stretch_pressure_score
+    )
+    washout_pressure_score = (
+        pressure.washout_pressure_score
+        if pressure is not None
+        else snapshot.washout_pressure_score
+    )
+    pressure_confidence = (
+        pressure.confidence if pressure is not None else snapshot.pressure_confidence
+    )
+    rows.append(
+        [
+            "pressure",
+            (
+                f"stretch {_format_pressure_score(stretch_pressure_score)} / "
+                f"washout {_format_pressure_score(washout_pressure_score)}"
+            ),
+            f"{pressure_confidence} confidence",
+        ]
+    )
+    missing_inputs = _missing_market_input_labels(
+        snapshot=snapshot,
+        signals=result.signals,
+    )
+    rows.append(
+        [
+            "input_gaps",
+            ",".join(missing_inputs) if missing_inputs else "none",
+            "missing point-in-time observations",
+        ]
+    )
+    rows.append(
+        [
+            "contradictions",
+            ";".join(result.contradictions) if result.contradictions else "none",
+            "positive/negative signal clash",
+        ]
+    )
+    action = result.action or _action_state_from_snapshot(snapshot)
+    rows.append(
+        [
+            "action",
+            action.state,
+            f"{action.confidence} confidence; {action.reason}",
+        ]
+    )
+    return _format_table(rows)
+
+
+def _missing_market_input_labels(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> tuple[str, ...]:
+    missing = list(snapshot.missing_symbols)
+    missing.extend(
+        f"{signal.family}/{signal.name}"
+        for signal in signals
+        if signal.status == "missing"
+    )
+    return tuple(dict.fromkeys(missing))
+
+
 def _market_signals_from_snapshot(
     snapshot: RegimeSnapshot,
     *,
@@ -1189,13 +1351,21 @@ def _market_signals_from_snapshot(
             name="price_proxy",
             status=component.status,
             score=component.score,
-            value=_component_value(snapshot, component.name),
+            value=_component_value(
+                snapshot,
+                component.name,
+                features=features,
+            ),
             unit="text",
             source="yahoo_price_proxy",
             observed_date=snapshot.price_date,
             availability_date=snapshot.price_date,
             reason=component.reason,
-            details=_component_signal_details(snapshot=snapshot, component_name=component.name),
+            details=_component_signal_details(
+                snapshot=snapshot,
+                component_name=component.name,
+                features=features,
+            ),
         )
         for component in snapshot.components
     ]
@@ -1215,6 +1385,7 @@ def _component_signal_details(
     *,
     snapshot: RegimeSnapshot,
     component_name: str,
+    features: dict[str, _SymbolFeatures],
 ) -> dict[str, Any]:
     details: dict[str, Any] = {
         "price_date": snapshot.price_date.isoformat() if snapshot.price_date else None,
@@ -1228,26 +1399,54 @@ def _component_signal_details(
                 "spy_ma50_distance": snapshot.spy_ma50_distance,
                 "spy_ma200_distance": snapshot.spy_ma200_distance,
                 "qqq_return_20d": snapshot.qqq_return_20d,
+                "qqq_return_60d": features["QQQ"].return_60d,
                 "qqq_ma50_distance": snapshot.qqq_ma50_distance,
                 "qqq_ma200_distance": snapshot.qqq_ma200_distance,
             }
         )
     elif component_name == "volatility":
+        vix = features["^VIX"]
         details.update(
             {
                 "spy_realized_vol_20d": snapshot.spy_realized_vol_20d,
                 "vix_close": snapshot.vix_close,
+                "vix_return_5d": vix.return_5d,
+                "vix_return_20d": vix.return_20d,
             }
         )
     elif component_name == "breadth":
+        rsp = features["RSP"]
+        iwm = features["IWM"]
+        spy = features["SPY"]
         details.update(
             {
+                "rsp_spy_relative_5d": _relative_return_for_lookback(
+                    rsp,
+                    spy,
+                    field_name="return_5d",
+                ),
                 "rsp_spy_relative_20d": snapshot.rsp_spy_relative_20d,
+                "iwm_spy_relative_5d": _relative_return_for_lookback(
+                    iwm,
+                    spy,
+                    field_name="return_5d",
+                ),
                 "iwm_spy_relative_20d": snapshot.iwm_spy_relative_20d,
             }
         )
     elif component_name == "credit":
-        details["hyg_tlt_relative_20d"] = snapshot.hyg_tlt_relative_20d
+        hyg = features["HYG"]
+        tlt = features["TLT"]
+        details.update(
+            {
+                "hyg_tlt_relative_5d": _relative_return_for_lookback(
+                    hyg,
+                    tlt,
+                    field_name="return_5d",
+                ),
+                "hyg_tlt_relative_20d": snapshot.hyg_tlt_relative_20d,
+            }
+        )
     return details
 
 
@@ -1266,7 +1465,12 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
             observed_date=None,
             availability_date=None,
             reason="VVIX is unavailable",
-            details={"vvix_close": None, "missing_symbols": ["^VVIX"]},
+            details={
+                "vvix_close": None,
+                "vvix_return_5d": None,
+                "vvix_return_20d": None,
+                "missing_symbols": ["^VVIX"],
+            },
         )
     if features.close >= 120.0:
         status = "stressed"
@@ -1293,7 +1497,12 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
         observed_date=features.price_date,
         availability_date=features.price_date,
         reason=reason,
-        details={"vvix_close": features.close, "missing_symbols": []},
+        details={
+            "vvix_close": features.close,
+            "vvix_return_5d": features.return_5d,
+            "vvix_return_20d": features.return_20d,
+            "missing_symbols": [],
+        },
     )
 
 
@@ -1518,7 +1727,12 @@ def _signal_label(signal: MarketSignal) -> str:
     return f"{signal.family}/{signal.name}:{signal.status}"
 
 
-def _component_value(snapshot: RegimeSnapshot, component_name: str) -> str:
+def _component_value(
+    snapshot: RegimeSnapshot,
+    component_name: str,
+    *,
+    features: dict[str, _SymbolFeatures],
+) -> str:
     if component_name == "trend":
         return (
             f"SPY 20d {_format_percent(snapshot.spy_return_20d)}, "
@@ -1859,13 +2073,15 @@ def derive_regime_pressure_snapshot(
         )
         for spec in PRESSURE_FEATURE_SPECS
     )
+    modules = _pressure_modules(source_date=source_date, features=features)
     return RegimePressureSnapshot(
         source_date=source_date,
         pressure_version=REGIME_PRESSURE_VERSION,
-        stretch_pressure_score=_aggregate_pressure_score(features, field_name="stretch_score"),
-        washout_pressure_score=_aggregate_pressure_score(features, field_name="washout_score"),
+        stretch_pressure_score=_aggregate_pressure_score(modules, field_name="stretch_score"),
+        washout_pressure_score=_aggregate_pressure_score(modules, field_name="washout_score"),
         confidence=_pressure_confidence(features),
         features=features,
+        modules=modules,
     )
 
 
@@ -1915,6 +2131,55 @@ def _snapshot_with_pressure(
         washout_pressure_score=pressure.washout_pressure_score,
         pressure_confidence=pressure.confidence,
         pressure_features=pressure.features,
+        pressure_modules=pressure.modules,
+    )
+
+
+def _pressure_modules(
+    *,
+    source_date: date,
+    features: tuple[RegimePressureFeature, ...],
+) -> tuple[RegimePressureModule, ...]:
+    feature_by_name = {feature.name: feature for feature in features}
+    return tuple(
+        _pressure_module(
+            source_date=source_date,
+            spec=spec,
+            features=tuple(
+                feature_by_name[name] for name in spec.feature_names if name in feature_by_name
+            ),
+        )
+        for spec in PRESSURE_MODULE_SPECS
+    )
+
+
+def _pressure_module(
+    *,
+    source_date: date,
+    spec: _PressureModuleSpec,
+    features: tuple[RegimePressureFeature, ...],
+) -> RegimePressureModule:
+    stretch_scores = tuple(
+        feature.stretch_score for feature in features if feature.stretch_score is not None
+    )
+    washout_scores = tuple(
+        feature.washout_score for feature in features if feature.washout_score is not None
+    )
+    usable_names = tuple(
+        feature.name
+        for feature in features
+        if feature.stretch_score is not None or feature.washout_score is not None
+    )
+    return RegimePressureModule(
+        source_date=source_date,
+        pressure_version=REGIME_PRESSURE_VERSION,
+        family=spec.family,
+        name=spec.name,
+        stretch_score=_average(stretch_scores),
+        washout_score=_average(washout_scores),
+        feature_count=len(usable_names),
+        feature_names=usable_names,
+        reason=spec.reason if usable_names else "No usable module features",
     )
 
 
@@ -2001,15 +2266,15 @@ def _pressure_scores_from_normalized_score(
 
 
 def _aggregate_pressure_score(
-    features: tuple[RegimePressureFeature, ...],
+    pressure_rows: tuple[RegimePressureModule, ...],
     *,
     field_name: str,
 ) -> float:
     family_scores: dict[str, list[float]] = {}
-    for feature in features:
-        score = getattr(feature, field_name)
+    for row in pressure_rows:
+        score = getattr(row, field_name)
         if score is not None:
-            family_scores.setdefault(feature.family, []).append(score)
+            family_scores.setdefault(row.family, []).append(score)
     family_averages = [sum(scores) / len(scores) for scores in family_scores.values() if scores]
     if not family_averages:
         return 0.0
@@ -2084,25 +2349,6 @@ def _pressure_feature_history_from_snapshots(
             values=values,
         )
     return {name: tuple(samples) for name, samples in feature_samples.items()}
-
-
-def _pressure_feature_history_from_signal_snapshots(
-    *,
-    source_date: date,
-    signal_snapshot_root: Path,
-    signal_time: SignalTime | str,
-    snapshot_version: str | None = None,
-    current_signals: tuple[MarketSignal, ...] = (),
-) -> dict[str, tuple[_PressureFeatureSample, ...]]:
-    signals_by_date = _load_market_signals_by_source_date_through(
-        end_date=source_date,
-        signal_snapshot_root=signal_snapshot_root,
-        signal_time=signal_time,
-        snapshot_version=snapshot_version,
-    )
-    if current_signals:
-        signals_by_date[source_date] = current_signals
-    return _pressure_feature_history_from_signal_rows(signals_by_date=signals_by_date)
 
 
 def _pressure_feature_history_from_signal_rows(
@@ -2348,7 +2594,7 @@ def compute_market_signal_outcomes(
         signal_snapshot_root=signal_snapshot_root,
     )
     if not signals:
-        raise RegimeError(f"No market signal snapshots found from {start_date} to {end_date}")
+        raise RegimeError(f"No market signal artifacts found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     outcomes = tuple(
@@ -2401,16 +2647,7 @@ def compute_regime_action_outcomes(
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     snapshot_actions = tuple(
-        (
-            snapshot,
-            derive_regime_action_state(
-                snapshot=snapshot,
-                signals=_load_action_signals(
-                    source_date=snapshot.source_date,
-                    signal_snapshot_root=signal_snapshot_root,
-                ),
-            ),
-        )
+        (snapshot, _action_state_from_snapshot(snapshot))
         for snapshot in snapshots
     )
     actions = tuple(action for _snapshot, action in snapshot_actions)
@@ -2443,6 +2680,19 @@ def compute_regime_action_outcomes(
         summary_rows=summary_rows,
         frequency_table=frequency_table,
         table=table,
+    )
+
+
+def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
+    return RegimeActionState(
+        source_date=snapshot.source_date,
+        action_version=snapshot.action_version,
+        state=snapshot.action_state,
+        stretch_score=snapshot.stretch_score,
+        washout_score=snapshot.washout_score,
+        confidence=snapshot.action_confidence,
+        reason=snapshot.action_reason,
+        evidence=(),
     )
 
 
@@ -3006,45 +3256,6 @@ def _load_market_signals_by_source_date_through(
     return signals_by_date
 
 
-def _load_action_signals(
-    *,
-    source_date: date,
-    signal_snapshot_root: Path,
-    signal_time: SignalTime | str = SignalTime.EOD,
-    snapshot_version: str | None = None,
-) -> tuple[MarketSignal, ...]:
-    try:
-        return load_market_signal_snapshot(
-            source_date=source_date,
-            snapshot_root=signal_snapshot_root,
-            signal_time=signal_time,
-            snapshot_version=snapshot_version,
-        )
-    except MarketSignalError as exc:
-        raise RegimeError(str(exc)) from exc
-
-
-def _resolve_market_signal_snapshot_path(
-    *,
-    source_date: date,
-    signal_snapshot_root: Path,
-    signal_time: SignalTime | str,
-    snapshot_version: str | None,
-) -> Path | None:
-    try:
-        return resolve_snapshot_path(
-            snapshot_root=signal_snapshot_root,
-            source_date=source_date,
-            signal_time=signal_time,
-            snapshot_version=snapshot_version,
-            artifact_version=None,
-            filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
-            legacy_suffix=".jsonl",
-        )
-    except ValueError as exc:
-        raise RegimeError(str(exc)) from exc
-
-
 def _existing_regime_snapshot_path(
     *,
     source_date: date,
@@ -3254,6 +3465,7 @@ def _symbol_features(
         symbol=symbol,
         price_date=history[index].observed_date,
         close=history[index].return_close,
+        return_5d=_lookback_return(history, index=index, lookback=5),
         return_20d=_lookback_return(history, index=index, lookback=20),
         return_60d=_lookback_return(history, index=index, lookback=60),
         ma50_distance=_moving_average_distance(history, index=index, window=50),
@@ -3267,6 +3479,7 @@ def _empty_symbol_features(symbol: str) -> _SymbolFeatures:
         symbol=symbol,
         price_date=None,
         close=None,
+        return_5d=None,
         return_20d=None,
         return_60d=None,
         ma50_distance=None,
@@ -3483,9 +3696,20 @@ def _relative_return(
     left: _SymbolFeatures,
     right: _SymbolFeatures,
 ) -> float | None:
-    if left.return_20d is None or right.return_20d is None:
+    return _relative_return_for_lookback(left, right, field_name="return_20d")
+
+
+def _relative_return_for_lookback(
+    left: _SymbolFeatures,
+    right: _SymbolFeatures,
+    *,
+    field_name: str,
+) -> float | None:
+    left_return = getattr(left, field_name)
+    right_return = getattr(right, field_name)
+    if left_return is None or right_return is None:
         return None
-    return left.return_20d - right.return_20d
+    return left_return - right_return
 
 
 def _asof_index(history: tuple[DailyPriceObservation, ...], source_date: date) -> int | None:
@@ -3609,6 +3833,14 @@ def _lt(value: float | None, threshold: float) -> bool:
 def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
     source_date = date.fromisoformat(str(row["source_date"]))
     signal_time = str(row.get("signal_time", SignalTime.EOD.value))
+    pressure_features = tuple(
+        _pressure_feature_from_dict(feature) for feature in row.get("pressure_features", ())
+    )
+    pressure_modules = (
+        tuple(_pressure_module_from_dict(module) for module in row.get("pressure_modules", ()))
+        if "pressure_modules" in row
+        else _pressure_modules(source_date=source_date, features=pressure_features)
+    )
     return RegimeSnapshot(
         source_date=source_date,
         feature_version=str(row["feature_version"]),
@@ -3642,9 +3874,8 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         stretch_pressure_score=_optional_float(row.get("stretch_pressure_score")),
         washout_pressure_score=_optional_float(row.get("washout_pressure_score")),
         pressure_confidence=str(row.get("pressure_confidence", "low")),
-        pressure_features=tuple(
-            _pressure_feature_from_dict(feature) for feature in row.get("pressure_features", ())
-        ),
+        pressure_features=pressure_features,
+        pressure_modules=pressure_modules,
         signal_time=signal_time,
         snapshot_version=_optional_str(row.get("snapshot_version"))
         or default_snapshot_version(source_date, signal_time=signal_time),
@@ -3675,6 +3906,20 @@ def _pressure_feature_from_dict(row: dict[str, Any]) -> RegimePressureFeature:
         stretch_score=_optional_float(row.get("stretch_score")),
         washout_score=_optional_float(row.get("washout_score")),
         sample_count=int(row.get("sample_count", 0)),
+        reason=str(row.get("reason", "")),
+    )
+
+
+def _pressure_module_from_dict(row: dict[str, Any]) -> RegimePressureModule:
+    return RegimePressureModule(
+        source_date=date.fromisoformat(str(row["source_date"])),
+        pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),
+        family=str(row["family"]),
+        name=str(row["name"]),
+        stretch_score=_optional_float(row.get("stretch_score")),
+        washout_score=_optional_float(row.get("washout_score")),
+        feature_count=int(row.get("feature_count", 0)),
+        feature_names=tuple(str(name) for name in row.get("feature_names", ())),
         reason=str(row.get("reason", "")),
     )
 

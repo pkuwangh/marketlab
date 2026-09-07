@@ -160,12 +160,14 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         signal_time,
         snapshot_version: str | None,
         write_snapshot: bool,
+        overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["regime_prices", "market_series"]
         assert source_date == date(2026, 8, 31)
         assert signal_time == "eod"
         assert snapshot_version is None
         assert write_snapshot is True
+        assert overwrite_snapshot is True
         events.append("regime")
         snapshot = _regime_snapshot(source_date=source_date)
         return RegimeSnapshotResult(
@@ -350,8 +352,10 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         signal_time,
         snapshot_version: str | None,
         write_snapshot: bool,
+        overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["regime_prices"]
+        assert overwrite_snapshot is True
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -584,8 +588,10 @@ def test_daily_run_fetches_missing_default_recap_from_gmail(
         signal_time,
         snapshot_version: str | None,
         write_snapshot: bool,
+        overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert source_date == date(2026, 9, 1)
+        assert overwrite_snapshot is True
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -1031,7 +1037,7 @@ def test_regime_backfill_no_args_shows_help_without_missing_option_error() -> No
     result = CliRunner().invoke(app, ["regime", "backfill"])
 
     assert result.exit_code != 0
-    assert "Backfill daily market regime and signal snapshots" in result.output
+    assert "Backfill daily market regime snapshots and market signal artifacts" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
     assert "Missing option" not in result.output
@@ -2066,6 +2072,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         signal_time,
         snapshot_version: str | None,
         write_snapshot: bool,
+        overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["prices", "market-series"]
         assert source_date == date(2026, 8, 28)
@@ -2076,6 +2083,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         assert signal_time == "eod"
         assert snapshot_version is None
         assert write_snapshot is True
+        assert overwrite_snapshot is True
         events.append("snapshot")
         snapshot = _regime_snapshot(source_date=source_date)
         signal = MarketSignal(
@@ -2140,8 +2148,8 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             "snapshot",
             "--date",
             "2026-08-28",
-            "--fetch-prices",
-            "--fetch-market-series",
+            "--refresh-sources",
+            "--overwrite",
             "--price-start",
             "2025-01-01",
             "--price-end",
@@ -2169,27 +2177,35 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "market_series_success_count=1" in result.output
     assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
     assert (
-        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}" in result.output
-    )
-    assert "market_signal_count=1" in result.output
-    assert (
-        "market_signal_contradictions=positive=trend/price_proxy:constructive negative=fixture"
+        f"market_signal_artifact_path={signal_snapshot_root / '2026-08-28.jsonl'}"
         in result.output
     )
+    assert "market_signal_count=1" in result.output
     assert "trend   price_proxy  +2" in result.output
     assert "regime_date=2026-08-28" in result.output
-    assert "regime=risk_on" in result.output
-    assert "regime_score=5" in result.output
-    assert "action_state=no_change" in result.output
-    assert "stretch_score=1" in result.output
-    assert "washout_score=0" in result.output
-    assert "action_confidence=high" in result.output
+    assert "signal" in result.output
+    assert "value" in result.output
+    assert "risk_on (+5)" in result.output
+    assert "action" in result.output
+    assert "no_change" in result.output
     assert "pressure_feature_count=0" in result.output
-    assert "stretch_pressure_score=0.42" in result.output
-    assert "washout_pressure_score=0.08" in result.output
-    assert "pressure_confidence=medium" in result.output
+    assert "stretch 0.42 / washout 0.08" in result.output
+    assert "medium confidence" in result.output
+    assert "positive=trend/price_proxy:constructive negative=fixture" in result.output
     assert "trend   spy_return_20d  0.42" in result.output
-    assert "trend     +2     constructive" in result.output
+    assert "regime=risk_on" not in result.output
+    assert "regime_score=5" not in result.output
+    assert "action_state=no_change" not in result.output
+    assert "no_change (stretch 1 / washout 0)" not in result.output
+    assert "stretch_score=1" not in result.output
+    assert "washout_score=0" not in result.output
+    assert "action_confidence=high" not in result.output
+    assert "stretch_pressure_score=0.42" not in result.output
+    assert "washout_pressure_score=0.08" not in result.output
+    assert "pressure_confidence=medium" not in result.output
+    assert "market_signal_contradictions=" not in result.output
+    assert "component  score  status" not in result.output
+    assert "trend     +2     constructive" not in result.output
 
 
 def test_regime_backfill_fetches_sources_once_and_outputs_summary(
@@ -2263,6 +2279,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         snapshot_version: str | None,
         write_snapshot: bool,
         skip_existing: bool,
+        overwrite_snapshot: bool,
     ) -> RegimeBackfillResult:
         assert events == ["prices", "market-series"]
         assert start_date == date(2026, 8, 28)
@@ -2275,6 +2292,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         assert snapshot_version is None
         assert write_snapshot is True
         assert skip_existing is True
+        assert overwrite_snapshot is False
         events.append("backfill")
         return RegimeBackfillResult(
             start_date=start_date,
@@ -2333,7 +2351,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
     assert "regime_backfill_first_date=2026-08-28" in result.output
     assert "regime_backfill_last_date=2026-08-29" in result.output
     assert "regime_snapshot_count=2" in result.output
-    assert "market_signal_snapshot_count=2" in result.output
+    assert "market_signal_artifact_count=2" in result.output
     assert "regime_backfill_skipped_existing_count=0" in result.output
     assert str(snapshot_root / "2026-08-29.json") in result.output
     assert str(signal_snapshot_root / "2026-08-29.jsonl") in result.output

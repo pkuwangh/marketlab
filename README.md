@@ -2,19 +2,18 @@
 
 - [MarketLab](#marketlab)
   - [Current Capabilities](#current-capabilities)
-  - [Development](#development)
-  - [Local Bin](#local-bin)
   - [Normal Daily Use](#normal-daily-use)
+  - [Market Regime Pillar](#market-regime-pillar)
+    - [Market Regime Signals](#market-regime-signals)
+    - [Portfolio Policy](#portfolio-policy)
   - [Gmail Recap Fetch](#gmail-recap-fetch)
   - [Bulltard Debug Utilities](#bulltard-debug-utilities)
-  - [Market Regime](#market-regime)
-  - [Portfolio Policy](#portfolio-policy)
   - [Visualization](#visualization)
   - [Local Research Store](#local-research-store)
   - [Candidate Validation](#candidate-validation)
   - [Reset Local Research Data](#reset-local-research-data)
 
-MarketLab is a local-first research system for market-regime analysis and large-cap opportunity tracking.
+MarketLab is a research system for market-regime analysis and large-cap opportunity tracking.
 
 The implementation follows `DESIGN.md`: point-in-time observations, deterministic calculations, bounded agent outputs, and reproducible reports.
 
@@ -60,16 +59,18 @@ The routine operating path is one command:
 ./bin/marketlab daily
 ```
 
-By default it uses today's local date, refreshes market sources, writes the regime snapshot,
-fetches the Bulltard recap from Gmail when read-only Gmail credentials exist, validates
-captured candidates, renders the daily policy report and regime chart, and refreshes the
-local DuckDB store. If Gmail is not configured and `data/inbox/bulltard/recap-YYYY-MM-DD.html`
-is missing, the market-regime and policy loop still runs and Bulltard is skipped.
+By default it uses today's local date. The daily run first refreshes market sources, writes
+market-signal and regime snapshots, derives the portfolio policy, and renders the daily
+policy report and regime chart. When read-only Gmail credentials exist, it then fetches the
+Bulltard recap from Gmail, validates captured candidates, and refreshes the local DuckDB
+store for outcome review.
+Daily mode replaces same-version regime artifacts by default when refreshed source data changes
+the derived output; use `--no-replace-regime` to make that strict.
 
 For a specific date:
 
 ```bash
-./bin/marketlab daily --date 2026-08-31
+./bin/marketlab daily --date 2026-09-04
 ```
 
 The lower-level `regime`, `bulltard`, `policy`, `chart`, and `store` commands remain available
@@ -82,39 +83,43 @@ for debugging, backfills, and focused research.
 Compute the market regime directly:
 
 ```bash
-./bin/marketlab regime snapshot --date 2026-08-28 --fetch-prices
+./bin/marketlab regime snapshot --date 2026-09-04 --refresh-sources
 ```
 
-`--fetch-prices` refreshes the local Yahoo price cache before computing the immutable regime
-snapshot. Overlapping Yahoo/Stooq refreshes replace existing rows for the same symbol/date because
-vendors can revise adjusted prices; saved regime, policy, and candidate snapshots remain the frozen
+`--refresh-sources` refreshes the local Yahoo price cache and FRED market series before computing
+the regime snapshot. The lower-level `--fetch-prices` and `--fetch-market-series` flags remain
+available for partial diagnostics, but routine one-off regime runs should refresh both source
+families together. Overlapping Yahoo/Stooq refreshes replace existing rows for the same symbol/date
+because vendors can revise adjusted prices; saved policy and candidate snapshots remain the frozen
 research record. Index symbols keep their source symbol in each row, but use filesystem-safe cache
 names such as `INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
+Regime computation always starts from local price/FRED observations. Market-signal rows are
+replaceable derived artifacts under `data/derived/market/signals`; they are for inspection and
+outcome replay, not immutable snapshots and not an input cache.
 
-The v0 score uses:
+The current score uses:
 
 - SPY/QQQ trend and moving-average posture.
 - SPY realized volatility and VIX.
 - RSP/SPY and IWM/SPY participation.
 - HYG/TLT risk appetite.
 
+Backfill market-regime snapshots and derived market-signal artifacts over local price dates:
+
+```bash
+./bin/marketlab regime backfill --start 2025-01-02 --end 2026-09-04
+```
+
+Backfill skips existing same-version regime snapshots by default, so repeated runs fill missing dates
+without rewriting frozen historical records. Market-signal artifacts are replaceable. Use
+`--recompute-existing` only when you intentionally want to recompute saved regime dates and surface
+any immutable snapshot conflicts.
+
 Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
 
 ```bash
-./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-08-28
+./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-09-04
 ```
-
-Backfill market-regime and market-signal snapshots over local price dates:
-
-```bash
-./bin/marketlab regime backfill \
-  --start 2025-01-02 \
-  --end 2026-08-28
-```
-
-Backfill skips existing same-version snapshots by default, so repeated runs fill missing dates
-without rewriting frozen historical records. Use `--recompute-existing` only when you intentionally
-want to recompute saved dates and surface any immutable snapshot conflicts.
 
 Replay rare action states or normalized pressure buckets:
 

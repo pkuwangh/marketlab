@@ -22,6 +22,7 @@ from marketlab.regime import (
     compute_regime_pressure_outcomes,
     compute_regime_snapshot,
     derive_regime_action_state,
+    format_regime_key_signals,
     load_regime_snapshot,
     refresh_regime_prices,
     write_regime_snapshot,
@@ -158,6 +159,22 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.stretch_pressure_score is not None
     assert result.snapshot.washout_pressure_score is not None
     assert len(result.pressure.features) == 14
+    assert [module.name for module in result.pressure.modules] == [
+        "trend_extension",
+        "vol_complacency",
+        "breadth_fragility",
+        "credit_risk_appetite",
+        "liquidity_conditions",
+        "yield_curve_pressure",
+    ]
+    volatility_module = next(
+        module for module in result.pressure.modules if module.name == "vol_complacency"
+    )
+    assert volatility_module.feature_names == (
+        "spy_realized_vol_20d",
+        "vix_close",
+        "vvix_close",
+    )
     assert "spy_return_20d" in result.pressure_table
     assert result.snapshot.missing_symbols == ()
     assert result.contradictions == ()
@@ -181,15 +198,39 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     ]
     assert "price_proxy" in result.signal_table
     assert "vol_of_vol" in result.signal_table
+    assert "value" in result.signal_table
+    assert "current" not in result.signal_table
+    assert "recent" not in result.signal_table
+    assert "context" not in result.signal_table
+    assert "now: VIX 16.00, SPY rv20" in result.signal_table
+    assert "VIX: 5d +0.0%, 20d +0.0%" in result.signal_table
+    assert "now: VVIX 85.00" in result.signal_table
+    assert "VVIX: 5d +0.0%, 20d +0.0%" in result.signal_table
+    assert "SPY/QQQ: 20,60d" in result.signal_table
+    assert "MA50,200" in result.signal_table
     assert "credit_spread" in result.signal_table
     assert "financial_conditions" in result.signal_table
     assert "yield_curve" in result.signal_table
+    summary_table = format_regime_key_signals(result)
+    assert "regime" in summary_table
+    assert "risk_on (+5)" in summary_table
+    assert "action" in summary_table
+    assert "no_change" in summary_table
+    assert "no_change (stretch 1 / washout 0)" not in summary_table
+    assert "input_gaps" in summary_table
+    assert "none" in summary_table
+    data_lines = [
+        line for line in summary_table.splitlines() if line.strip() and not line.startswith("-")
+    ]
+    assert data_lines[-1].startswith("action")
 
     loaded_signals = load_market_signal_snapshot(
         source_date=source_date,
         snapshot_root=signal_snapshot_root,
     )
     assert loaded_signals == result.signals
+    trend_signal = next(signal for signal in result.signals if signal.family == "trend")
+    assert trend_signal.details["qqq_return_60d"] is not None
 
     loaded = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
     assert loaded == result.snapshot
@@ -221,6 +262,98 @@ def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path
     assert "^VVIX" in result.snapshot.missing_symbols
     assert "vol_of_vol" in result.signal_table
     assert "missing" in result.table
+
+
+def test_compute_regime_snapshot_overwrite_repairs_same_version_snapshot(
+    tmp_path: Path,
+) -> None:
+    source_date = date(2026, 8, 15)
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
+    snapshot_root = tmp_path / "snapshots"
+    signal_snapshot_root = tmp_path / "signals"
+    start = source_date - timedelta(days=229)
+    for symbol, base, step in (
+        ("SPY", 100.0, 0.50),
+        ("QQQ", 120.0, 0.60),
+        ("RSP", 100.0, 0.45),
+        ("IWM", 90.0, 0.40),
+        ("HYG", 80.0, 0.10),
+        ("TLT", 100.0, -0.05),
+        ("^VIX", 16.0, 0.0),
+        ("^VVIX", 85.0, 0.0),
+    ):
+        _write_price_history(
+            price_root,
+            symbol=symbol,
+            start=start,
+            closes=[base + index * step for index in range(230)],
+        )
+    first = compute_regime_snapshot(
+        source_date=source_date,
+        price_root=price_root,
+        market_series_root=market_series_root,
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
+    )
+    assert first.snapshot.confidence == "low"
+
+    _write_market_series_value(
+        market_series_root,
+        series_id="BAMLH0A0HYM2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=2.7,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="NFCI",
+        observed_date=source_date - timedelta(days=5),
+        availability_date=source_date,
+        value=-0.5,
+        unit="index",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS10",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=4.6,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=4.0,
+        unit="percent_level",
+    )
+
+    with pytest.raises(RegimeError, match="Refusing to overwrite"):
+        compute_regime_snapshot(
+            source_date=source_date,
+            price_root=price_root,
+            market_series_root=market_series_root,
+            snapshot_root=snapshot_root,
+            signal_snapshot_root=signal_snapshot_root,
+        )
+
+    repaired = compute_regime_snapshot(
+        source_date=source_date,
+        price_root=price_root,
+        market_series_root=market_series_root,
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=signal_snapshot_root,
+        overwrite_snapshot=True,
+    )
+
+    assert repaired.snapshot_path == first.snapshot_path
+    assert repaired.signal_snapshot_path == first.signal_snapshot_path
+    assert repaired.snapshot.confidence == "high"
+    loaded = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+    assert loaded == repaired.snapshot
 
 
 def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
@@ -461,11 +594,13 @@ def test_write_regime_snapshot_keeps_model_versions_separate(tmp_path: Path) -> 
     assert v2.regime == "risk_off"
 
 
-def test_compute_regime_snapshot_consumes_saved_market_signal_boundary(tmp_path: Path) -> None:
+def test_compute_regime_snapshot_ignores_saved_market_signal_boundary(tmp_path: Path) -> None:
     source_date = date(2026, 8, 28)
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
     signal_root = tmp_path / "signals"
     snapshot_root = tmp_path / "regime"
-    signals = (
+    stale_signals = (
         _market_signal(
             source_date=source_date,
             family="trend",
@@ -565,23 +700,75 @@ def test_compute_regime_snapshot_consumes_saved_market_signal_boundary(tmp_path:
             details={"yield_curve": 0.1},
         ),
     )
-    signal_path = write_market_signal_snapshot(signals, snapshot_root=signal_root)
+    write_market_signal_snapshot(stale_signals, snapshot_root=signal_root)
+    start = source_date - timedelta(days=229)
+    for symbol, base, step in (
+        ("SPY", 100.0, 0.50),
+        ("QQQ", 120.0, 0.60),
+        ("RSP", 100.0, 0.45),
+        ("IWM", 90.0, 0.40),
+        ("HYG", 80.0, 0.10),
+        ("TLT", 100.0, -0.05),
+        ("^VIX", 16.0, 0.0),
+        ("^VVIX", 85.0, 0.0),
+    ):
+        _write_price_history(
+            price_root,
+            symbol=symbol,
+            start=start,
+            closes=[base + index * step for index in range(230)],
+        )
+    _write_market_series_value(
+        market_series_root,
+        series_id="BAMLH0A0HYM2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=2.7,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="NFCI",
+        observed_date=source_date - timedelta(days=5),
+        availability_date=source_date,
+        value=-0.5,
+        unit="index",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS10",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=4.6,
+        unit="percent_level",
+    )
+    _write_market_series_value(
+        market_series_root,
+        series_id="DGS2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=4.0,
+        unit="percent_level",
+    )
 
     result = compute_regime_snapshot(
         source_date=source_date,
-        price_root=tmp_path / "missing-prices",
-        market_series_root=tmp_path / "missing-series",
+        price_root=price_root,
+        market_series_root=market_series_root,
         snapshot_root=snapshot_root,
         signal_snapshot_root=signal_root,
+        write_snapshot=False,
     )
 
-    assert result.signal_snapshot_path == signal_path
-    assert result.snapshot.score == -5
-    assert result.snapshot.regime == "risk_off"
+    assert result.signal_snapshot_path is None
+    assert result.snapshot.score == 5
+    assert result.snapshot.regime == "risk_on"
     assert result.snapshot.price_date == source_date
-    assert result.snapshot.spy_return_20d == -0.10
-    assert result.snapshot.vix_close == 31.0
-    assert result.snapshot.vvix_close == 130.0
+    assert result.snapshot.confidence == "high"
+    assert result.snapshot.spy_return_20d is not None
+    assert result.snapshot.spy_return_20d > 0.0
+    assert result.snapshot.vix_close == 16.0
+    assert result.snapshot.vvix_close == 85.0
     assert result.snapshot.market_signal_snapshot_version == "2026-08-28_eod"
 
 
@@ -911,6 +1098,11 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
             source_date=start_date + timedelta(days=1),
             regime="risk_on",
             score=5,
+            action_state="scale_down_protect",
+            action_confidence="medium",
+            action_reason="Stretched/de-risk threshold crossed",
+            stretch_score=4,
+            washout_score=0,
             spy_return_20d=0.08,
             spy_return_60d=0.15,
             spy_ma50_distance=0.07,
@@ -925,6 +1117,11 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
             source_date=start_date + timedelta(days=2),
             regime="risk_off",
             score=-5,
+            action_state="scale_up_redeploy",
+            action_confidence="medium",
+            action_reason="Washout/re-risk threshold crossed",
+            stretch_score=0,
+            washout_score=4,
             components=(
                 RegimeComponentScore(
                     name="trend",
@@ -1062,6 +1259,11 @@ def _snapshot(
     hyg_tlt_relative_20d: float | None = 0.02,
     vix_close: float | None = 16.0,
     vvix_close: float | None = 85.0,
+    action_state: str = "no_change",
+    action_confidence: str = "medium",
+    action_reason: str = "No rare-action threshold crossed",
+    stretch_score: int = 0,
+    washout_score: int = 0,
     model_version: str = "fixture_model",
     signal_time: str = "eod",
     snapshot_version: str | None = None,
@@ -1097,6 +1299,11 @@ def _snapshot(
         hyg_tlt_relative_20d=hyg_tlt_relative_20d,
         vix_close=vix_close,
         vvix_close=vvix_close,
+        action_state=action_state,
+        action_confidence=action_confidence,
+        action_reason=action_reason,
+        stretch_score=stretch_score,
+        washout_score=washout_score,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
     )
@@ -1109,7 +1316,7 @@ def _regime_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
         / source_date_value
         / "eod"
         / f"{source_date_value}_eod"
-        / "market_regime_score_v0"
+        / "market_regime_score_v1"
         / "regime.json"
     )
 
@@ -1121,7 +1328,7 @@ def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path
         / source_date_value
         / "eod"
         / f"{source_date_value}_eod"
-        / "market_signals_model_v0"
+        / "market_signals_model_v1"
         / "market-signals.jsonl"
     )
 
