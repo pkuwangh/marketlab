@@ -85,6 +85,10 @@ def test_format_market_signals_formats_percent_levels_and_points() -> None:
         observed_date=date(2026, 8, 27),
         availability_date=date(2026, 8, 28),
         reason="fixture signal",
+        details={
+            "credit_spread_change_5d": 0.08,
+            "credit_spread_change_20d": 0.22,
+        },
     )
     percentage_points = MarketSignal(
         source_date=date(2026, 8, 28),
@@ -99,15 +103,38 @@ def test_format_market_signals_formats_percent_levels_and_points() -> None:
         observed_date=date(2026, 8, 27),
         availability_date=date(2026, 8, 28),
         reason="fixture signal",
+        details={
+            "yield_curve_change_5d": 0.06,
+            "yield_curve_change_20d": 0.18,
+        },
+    )
+    index_level = MarketSignal(
+        source_date=date(2026, 8, 28),
+        feature_version="fixture",
+        family="liquidity",
+        name="financial_conditions",
+        status="loose",
+        score=1,
+        value=-0.56,
+        unit="index",
+        source="fixture",
+        observed_date=date(2026, 8, 27),
+        availability_date=date(2026, 8, 28),
+        reason="fixture signal",
+        details={
+            "financial_conditions_change_4w": -0.03,
+            "financial_conditions_change_13w": -0.11,
+        },
     )
 
-    table = format_market_signals((percent_level, percentage_points))
+    table = format_market_signals((percent_level, index_level, percentage_points))
 
-    assert "2.63%" in table
-    assert "+0.42pp" in table
+    assert "HY OAS 2.63%; 5,20d chg +8/+22bp" in table
+    assert "NFCI -0.56; 4,13w chg -0.03/-0.11" in table
+    assert "10y-2y +0.42pp; 5,20d chg +6/+18bp" in table
 
 
-def test_format_market_signals_shows_volatility_index_changes() -> None:
+def test_format_market_signals_shows_compact_volatility_values() -> None:
     signal = _signal(
         source_date=date(2026, 8, 28),
         family="volatility",
@@ -124,7 +151,54 @@ def test_format_market_signals_shows_volatility_index_changes() -> None:
     assert "current" not in table
     assert "recent" not in table
     assert "context" not in table
-    assert "now: VVIX 84.40; VVIX: 5d +12.0%, 20d -4.0%" in table
+    assert "VVIX 84.40; 5,20d move +12.0%, -4.0%" in table
+
+
+def test_format_market_signals_shows_compact_cross_asset_values() -> None:
+    source_date = date(2026, 8, 28)
+    volatility = _signal(
+        source_date=source_date,
+        family="volatility",
+        name="price_proxy",
+        score=1,
+        value="fallback volatility",
+        details={
+            "vix_close": 14.53,
+            "vix_return_5d": 0.007,
+            "vix_return_20d": -0.025,
+            "spy_realized_vol_20d": 0.081,
+        },
+    )
+    breadth = _signal(
+        source_date=source_date,
+        family="breadth",
+        name="price_proxy",
+        score=1,
+        value="fallback breadth",
+        details={
+            "rsp_spy_relative_5d": 0.004,
+            "iwm_spy_relative_5d": -0.003,
+            "rsp_spy_relative_20d": -0.001,
+            "iwm_spy_relative_20d": -0.014,
+        },
+    )
+    credit = _signal(
+        source_date=source_date,
+        family="credit",
+        name="price_proxy",
+        score=0,
+        value="fallback credit",
+        details={
+            "hyg_tlt_relative_5d": 0.002,
+            "hyg_tlt_relative_20d": 0.003,
+        },
+    )
+
+    table = format_market_signals((volatility, breadth, credit))
+
+    assert "VIX 14.53; 5,20d move +0.7%, -2.5%; SPY rv20 +8.1%" in table
+    assert "RSP/SPY: 5,20d +0.4/-0.1%; IWM/SPY: 5d,20d -0.3/-1.4%" in table
+    assert "HYG/TLT: 5,20d +0.2%, +0.3%" in table
 
 
 def test_format_market_signals_shows_paired_trend_values() -> None:

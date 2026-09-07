@@ -918,6 +918,7 @@ def _compute_regime_snapshot_from_histories(
         ),
         features=features,
         market_series=market_series,
+        market_series_histories=market_series_histories,
     )
     signal_snapshot_path = None
 
@@ -1342,6 +1343,7 @@ def _market_signals_from_snapshot(
     *,
     features: dict[str, _SymbolFeatures],
     market_series: dict[str, MarketSeriesObservation | None],
+    market_series_histories: dict[str, tuple[MarketSeriesObservation, ...]],
 ) -> tuple[MarketSignal, ...]:
     signals = [
         MarketSignal(
@@ -1370,7 +1372,13 @@ def _market_signals_from_snapshot(
         for component in snapshot.components
     ]
     signals.append(_vvix_signal(snapshot=snapshot, features=features["^VVIX"]))
-    signals.extend(_fred_market_signals(source_date=snapshot.source_date, series=market_series))
+    signals.extend(
+        _fred_market_signals(
+            source_date=snapshot.source_date,
+            series=market_series,
+            histories=market_series_histories,
+        )
+    )
     return tuple(
         replace(
             signal,
@@ -1510,14 +1518,25 @@ def _fred_market_signals(
     *,
     source_date: date,
     series: dict[str, MarketSeriesObservation | None],
+    histories: dict[str, tuple[MarketSeriesObservation, ...]],
 ) -> tuple[MarketSignal, ...]:
     return (
-        _high_yield_oas_signal(source_date=source_date, row=series["BAMLH0A0HYM2"]),
-        _nfci_signal(source_date=source_date, row=series["NFCI"]),
+        _high_yield_oas_signal(
+            source_date=source_date,
+            row=series["BAMLH0A0HYM2"],
+            history=histories.get("BAMLH0A0HYM2", ()),
+        ),
+        _nfci_signal(
+            source_date=source_date,
+            row=series["NFCI"],
+            history=histories.get("NFCI", ()),
+        ),
         _yield_curve_signal(
             source_date=source_date,
             ten_year=series["DGS10"],
             two_year=series["DGS2"],
+            ten_year_history=histories.get("DGS10", ()),
+            two_year_history=histories.get("DGS2", ()),
         ),
     )
 
@@ -1526,6 +1545,7 @@ def _high_yield_oas_signal(
     *,
     source_date: date,
     row: MarketSeriesObservation | None,
+    history: tuple[MarketSeriesObservation, ...],
 ) -> MarketSignal:
     if row is None:
         return _missing_fred_signal(
@@ -1557,6 +1577,13 @@ def _high_yield_oas_signal(
         row=row,
         source="fred:BAMLH0A0HYM2",
         reason=reason,
+        details=_market_series_change_details(
+            source_date=source_date,
+            row=row,
+            history=history,
+            key_prefix="credit_spread",
+            lookbacks=(("5d", 5), ("20d", 20)),
+        ),
     )
 
 
@@ -1564,6 +1591,7 @@ def _nfci_signal(
     *,
     source_date: date,
     row: MarketSeriesObservation | None,
+    history: tuple[MarketSeriesObservation, ...],
 ) -> MarketSignal:
     if row is None:
         return _missing_fred_signal(
@@ -1595,6 +1623,13 @@ def _nfci_signal(
         row=row,
         source="fred:NFCI",
         reason=reason,
+        details=_market_series_change_details(
+            source_date=source_date,
+            row=row,
+            history=history,
+            key_prefix="financial_conditions",
+            lookbacks=(("4w", 4), ("13w", 13)),
+        ),
     )
 
 
@@ -1603,6 +1638,8 @@ def _yield_curve_signal(
     source_date: date,
     ten_year: MarketSeriesObservation | None,
     two_year: MarketSeriesObservation | None,
+    ten_year_history: tuple[MarketSeriesObservation, ...],
+    two_year_history: tuple[MarketSeriesObservation, ...],
 ) -> MarketSignal:
     if ten_year is None or two_year is None:
         return _missing_fred_signal(
@@ -1640,7 +1677,16 @@ def _yield_curve_signal(
         observed_date=max(ten_year.observed_date, two_year.observed_date),
         availability_date=max(ten_year.availability_date, two_year.availability_date),
         reason=reason,
-        details={"yield_curve": value},
+        details={
+            "yield_curve": value,
+            **_yield_curve_change_details(
+                source_date=source_date,
+                ten_year=ten_year,
+                two_year=two_year,
+                ten_year_history=ten_year_history,
+                two_year_history=two_year_history,
+            ),
+        },
     )
 
 
@@ -1654,7 +1700,11 @@ def _fred_signal(
     row: MarketSeriesObservation,
     source: str,
     reason: str,
+    details: dict[str, Any] | None = None,
 ) -> MarketSignal:
+    signal_details = {name: row.value}
+    if details is not None:
+        signal_details.update(details)
     return MarketSignal(
         source_date=source_date,
         feature_version=MARKET_SIGNAL_FEATURE_VERSION,
@@ -1668,8 +1718,120 @@ def _fred_signal(
         observed_date=row.observed_date,
         availability_date=row.availability_date,
         reason=reason,
-        details={name: row.value},
+        details=signal_details,
     )
+
+
+def _market_series_change_details(
+    *,
+    source_date: date,
+    row: MarketSeriesObservation,
+    history: tuple[MarketSeriesObservation, ...],
+    key_prefix: str,
+    lookbacks: tuple[tuple[str, int], ...],
+) -> dict[str, float | None]:
+    return {
+        f"{key_prefix}_change_{label}": _market_series_observation_change(
+            source_date=source_date,
+            row=row,
+            history=history,
+            lookback_observations=lookback_observations,
+        )
+        for label, lookback_observations in lookbacks
+    }
+
+
+def _market_series_observation_change(
+    *,
+    source_date: date,
+    row: MarketSeriesObservation,
+    history: tuple[MarketSeriesObservation, ...],
+    lookback_observations: int,
+) -> float | None:
+    previous = _market_series_lookback_row(
+        source_date=source_date,
+        row=row,
+        history=history,
+        lookback_observations=lookback_observations,
+    )
+    if previous is None:
+        return None
+    return row.value - previous.value
+
+
+def _yield_curve_change_details(
+    *,
+    source_date: date,
+    ten_year: MarketSeriesObservation,
+    two_year: MarketSeriesObservation,
+    ten_year_history: tuple[MarketSeriesObservation, ...],
+    two_year_history: tuple[MarketSeriesObservation, ...],
+) -> dict[str, float | None]:
+    return {
+        f"yield_curve_change_{label}": _yield_curve_observation_change(
+            source_date=source_date,
+            ten_year=ten_year,
+            two_year=two_year,
+            ten_year_history=ten_year_history,
+            two_year_history=two_year_history,
+            lookback_observations=lookback_observations,
+        )
+        for label, lookback_observations in (("5d", 5), ("20d", 20))
+    }
+
+
+def _yield_curve_observation_change(
+    *,
+    source_date: date,
+    ten_year: MarketSeriesObservation,
+    two_year: MarketSeriesObservation,
+    ten_year_history: tuple[MarketSeriesObservation, ...],
+    two_year_history: tuple[MarketSeriesObservation, ...],
+    lookback_observations: int,
+) -> float | None:
+    previous_ten_year = _market_series_lookback_row(
+        source_date=source_date,
+        row=ten_year,
+        history=ten_year_history,
+        lookback_observations=lookback_observations,
+    )
+    previous_two_year = _market_series_lookback_row(
+        source_date=source_date,
+        row=two_year,
+        history=two_year_history,
+        lookback_observations=lookback_observations,
+    )
+    if previous_ten_year is None or previous_two_year is None:
+        return None
+    current_curve = ten_year.value - two_year.value
+    previous_curve = previous_ten_year.value - previous_two_year.value
+    return current_curve - previous_curve
+
+
+def _market_series_lookback_row(
+    *,
+    source_date: date,
+    row: MarketSeriesObservation,
+    history: tuple[MarketSeriesObservation, ...],
+    lookback_observations: int,
+) -> MarketSeriesObservation | None:
+    asof_history = tuple(
+        candidate
+        for candidate in history
+        if candidate.availability_date <= source_date
+        and candidate.observed_date <= row.observed_date
+    )
+    current_index = next(
+        (
+            index
+            for index in range(len(asof_history) - 1, -1, -1)
+            if asof_history[index].observed_date == row.observed_date
+        ),
+        None,
+    )
+    if current_index is None or current_index < lookback_observations:
+        return None
+    return asof_history[current_index - lookback_observations]
 
 
 def _missing_fred_signal(

@@ -288,100 +288,142 @@ def _format_signal_value(signal: MarketSignal) -> str:
         return value or _format_value(signal.value, signal.unit)
 
     if signal.family == "volatility" and signal.name == "price_proxy":
+        vix = _format_detail_scalar(signal.details, key="vix_close", unit="index")
+        vix_move = _format_signal_value_values(
+            (
+                _format_detail_scalar(signal.details, key="vix_return_5d", unit="percent"),
+                _format_detail_scalar(signal.details, key="vix_return_20d", unit="percent"),
+            )
+        )
+        spy_realized_volatility = _format_detail_scalar(
+            signal.details,
+            key="spy_realized_vol_20d",
+            unit="percent",
+        )
         value = _format_signal_value_sections(
             (
-                (
-                    "now",
-                    _format_detail_values(
-                        signal.details,
-                        (
-                            ("VIX", "vix_close", "index"),
-                            ("SPY rv20", "spy_realized_vol_20d", "percent"),
-                        ),
-                    ),
-                ),
-                (
-                    "VIX",
-                    _format_detail_values(
-                        signal.details,
-                        (
-                            ("5d", "vix_return_5d", "percent"),
-                            ("20d", "vix_return_20d", "percent"),
-                        ),
-                    ),
-                ),
-            )
+                ("VIX", vix or "-"),
+                ("5,20d move", vix_move),
+                ("SPY rv20", spy_realized_volatility or "-"),
+            ),
+            label_separator=" ",
         )
         return value or _format_value(signal.value, signal.unit)
 
     if signal.family == "volatility" and signal.name == "vol_of_vol":
-        current = _format_detail_values(signal.details, (("VVIX", "vvix_close", "index"),))
-        if current == "-":
-            current = _format_prefixed_value("VVIX", signal.value, signal.unit)
+        current_vvix = _format_detail_scalar(signal.details, key="vvix_close", unit="index")
+        if current_vvix is None:
+            current_vvix = _format_value(signal.value, signal.unit)
+        vvix_move = _format_signal_value_values(
+            (
+                _format_detail_scalar(signal.details, key="vvix_return_5d", unit="percent"),
+                _format_detail_scalar(signal.details, key="vvix_return_20d", unit="percent"),
+            )
+        )
         value = _format_signal_value_sections(
             (
-                ("now", current),
-                (
-                    "VVIX",
-                    _format_detail_values(
-                        signal.details,
-                        (
-                            ("5d", "vvix_return_5d", "percent"),
-                            ("20d", "vvix_return_20d", "percent"),
-                        ),
-                    ),
-                ),
-            )
+                ("VVIX", current_vvix),
+                ("5,20d move", vvix_move),
+            ),
+            label_separator=" ",
         )
         return value or _format_value(signal.value, signal.unit)
 
     if signal.family == "breadth" and signal.name == "price_proxy":
+        rsp_spy = _format_detail_pair(
+            signal.details,
+            left_key="rsp_spy_relative_5d",
+            right_key="rsp_spy_relative_20d",
+            unit="percent",
+            compact_percent=True,
+        )
+        iwm_spy = _format_detail_pair(
+            signal.details,
+            left_key="iwm_spy_relative_5d",
+            right_key="iwm_spy_relative_20d",
+            unit="percent",
+            compact_percent=True,
+        )
         value = _format_signal_value_sections(
             (
-                (
-                    "5d",
-                    _format_detail_values(
-                        signal.details,
-                        (
-                            ("RSP/SPY", "rsp_spy_relative_5d", "percent"),
-                            ("IWM/SPY", "iwm_spy_relative_5d", "percent"),
-                        ),
-                    ),
-                ),
-                (
-                    "20d",
-                    _format_detail_values(
-                        signal.details,
-                        (
-                            ("RSP/SPY", "rsp_spy_relative_20d", "percent"),
-                            ("IWM/SPY", "iwm_spy_relative_20d", "percent"),
-                        ),
-                    ),
-                ),
-            )
+                ("RSP/SPY: 5,20d", rsp_spy),
+                ("IWM/SPY: 5d,20d", iwm_spy),
+            ),
+            label_separator=" ",
         )
         return value or _format_value(signal.value, signal.unit)
 
     if signal.family == "credit" and signal.name == "price_proxy":
-        value = _format_signal_value_sections(
+        high_yield_treasury = _format_signal_value_values(
             (
-                (
-                    "5d",
-                    _format_detail_values(
-                        signal.details,
-                        (("HYG/TLT", "hyg_tlt_relative_5d", "percent"),),
-                    ),
+                _format_detail_scalar(
+                    signal.details,
+                    key="hyg_tlt_relative_5d",
+                    unit="percent",
                 ),
-                (
-                    "20d",
-                    _format_detail_values(
-                        signal.details,
-                        (("HYG/TLT", "hyg_tlt_relative_20d", "percent"),),
-                    ),
+                _format_detail_scalar(
+                    signal.details,
+                    key="hyg_tlt_relative_20d",
+                    unit="percent",
                 ),
             )
         )
+        value = _format_signal_value_sections(
+            (("HYG/TLT: 5,20d", high_yield_treasury),),
+            label_separator=" ",
+        )
         return value or _format_value(signal.value, signal.unit)
+
+    if signal.family == "credit" and signal.name == "credit_spread":
+        value = _format_signal_value_sections(
+            (
+                ("HY OAS", _format_value(signal.value, signal.unit)),
+                (
+                    "5,20d chg",
+                    _format_basis_point_change_pair(
+                        signal.details,
+                        left_key="credit_spread_change_5d",
+                        right_key="credit_spread_change_20d",
+                    ),
+                ),
+            ),
+            label_separator=" ",
+        )
+        return value or _format_prefixed_value("HY OAS", signal.value, signal.unit)
+
+    if signal.family == "liquidity" and signal.name == "financial_conditions":
+        value = _format_signal_value_sections(
+            (
+                ("NFCI", _format_value(signal.value, signal.unit)),
+                (
+                    "4,13w chg",
+                    _format_signed_decimal_change_pair(
+                        signal.details,
+                        left_key="financial_conditions_change_4w",
+                        right_key="financial_conditions_change_13w",
+                    ),
+                ),
+            ),
+            label_separator=" ",
+        )
+        return value or _format_prefixed_value("NFCI", signal.value, signal.unit)
+
+    if signal.family == "rates" and signal.name == "yield_curve":
+        value = _format_signal_value_sections(
+            (
+                ("10y-2y", _format_value(signal.value, signal.unit)),
+                (
+                    "5,20d chg",
+                    _format_basis_point_change_pair(
+                        signal.details,
+                        left_key="yield_curve_change_5d",
+                        right_key="yield_curve_change_20d",
+                    ),
+                ),
+            ),
+            label_separator=" ",
+        )
+        return value or _format_prefixed_value("10y-2y", signal.value, signal.unit)
 
     return _format_value(signal.value, signal.unit)
 
@@ -398,8 +440,8 @@ def _format_signal_value_sections(
     return separator.join(values)
 
 
-def _format_signal_value_values(values: tuple[str, ...]) -> str:
-    available = tuple(value for value in values if value != "-")
+def _format_signal_value_values(values: tuple[str | None, ...]) -> str:
+    available = tuple(value for value in values if value is not None and value != "-")
     return ", ".join(available) if available else "-"
 
 
@@ -428,11 +470,60 @@ def _format_compact_percent_pair(*, left: str | None, right: str | None) -> str:
     return f"{left.removesuffix('%')}/{right}"
 
 
+def _format_basis_point_change_pair(
+    details: dict[str, Any],
+    *,
+    left_key: str,
+    right_key: str,
+) -> str:
+    left = _format_basis_point_change(_detail_float(details, key=left_key))
+    right = _format_basis_point_change(_detail_float(details, key=right_key))
+    if left is None and right is None:
+        return "-"
+    if left is None:
+        return f"-/{right or '-'}"
+    if right is None:
+        return f"{left}/-"
+    return f"{left.removesuffix('bp')}/{right}"
+
+
+def _format_basis_point_change(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value * 100:+.0f}bp"
+
+
+def _format_signed_decimal_change_pair(
+    details: dict[str, Any],
+    *,
+    left_key: str,
+    right_key: str,
+) -> str:
+    left = _format_signed_decimal_change(_detail_float(details, key=left_key))
+    right = _format_signed_decimal_change(_detail_float(details, key=right_key))
+    if left is None and right is None:
+        return "-"
+    return f"{left or '-'}/{right or '-'}"
+
+
+def _format_signed_decimal_change(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:+.2f}"
+
+
 def _format_detail_scalar(details: dict[str, Any], *, key: str, unit: str) -> str | None:
+    value = _detail_float(details, key=key)
+    if value is None:
+        return None
+    return _format_value(value, unit)
+
+
+def _detail_float(details: dict[str, Any], *, key: str) -> float | None:
     value = details.get(key)
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return _format_value(float(value), unit)
+    return float(value)
 
 
 def _format_prefixed_value(prefix: str, value: float | str | None, unit: str) -> str:

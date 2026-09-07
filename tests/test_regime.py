@@ -202,12 +202,13 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert "current" not in result.signal_table
     assert "recent" not in result.signal_table
     assert "context" not in result.signal_table
-    assert "now: VIX 16.00, SPY rv20" in result.signal_table
-    assert "VIX: 5d +0.0%, 20d +0.0%" in result.signal_table
-    assert "now: VVIX 85.00" in result.signal_table
-    assert "VVIX: 5d +0.0%, 20d +0.0%" in result.signal_table
+    assert "VIX 16.00; 5,20d move +0.0%, +0.0%; SPY rv20" in result.signal_table
+    assert "VVIX 85.00; 5,20d move +0.0%, +0.0%" in result.signal_table
     assert "SPY/QQQ: 20,60d" in result.signal_table
     assert "MA50,200" in result.signal_table
+    assert "RSP/SPY: 5,20d" in result.signal_table
+    assert "IWM/SPY: 5d,20d" in result.signal_table
+    assert "HYG/TLT: 5,20d" in result.signal_table
     assert "credit_spread" in result.signal_table
     assert "financial_conditions" in result.signal_table
     assert "yield_curve" in result.signal_table
@@ -262,6 +263,90 @@ def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path
     assert "^VVIX" in result.snapshot.missing_symbols
     assert "vol_of_vol" in result.signal_table
     assert "missing" in result.table
+
+
+def test_compute_regime_snapshot_includes_fred_change_details(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 28)
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
+    start = source_date - timedelta(days=229)
+    for symbol, base, step in (
+        ("SPY", 100.0, 0.50),
+        ("QQQ", 120.0, 0.60),
+        ("RSP", 100.0, 0.45),
+        ("IWM", 90.0, 0.40),
+        ("HYG", 80.0, 0.10),
+        ("TLT", 100.0, -0.05),
+        ("^VIX", 16.0, 0.0),
+        ("^VVIX", 85.0, 0.0),
+    ):
+        _write_price_history(
+            price_root,
+            symbol=symbol,
+            start=start,
+            closes=[base + index * step for index in range(230)],
+        )
+    _write_market_series_history(
+        market_series_root,
+        series_id="BAMLH0A0HYM2",
+        start=source_date - timedelta(days=20),
+        values=[2.50 + index * 0.01 for index in range(21)],
+        unit="percent_level",
+    )
+    _write_market_series_history(
+        market_series_root,
+        series_id="NFCI",
+        start=source_date - timedelta(weeks=13),
+        values=[-0.37 - index * 0.01 for index in range(14)],
+        unit="index",
+        step_days=7,
+    )
+    _write_market_series_history(
+        market_series_root,
+        series_id="DGS10",
+        start=source_date - timedelta(days=20),
+        values=[4.40 + index * 0.01 for index in range(21)],
+        unit="percent_level",
+    )
+    _write_market_series_history(
+        market_series_root,
+        series_id="DGS2",
+        start=source_date - timedelta(days=20),
+        values=[4.00 for _index in range(21)],
+        unit="percent_level",
+    )
+
+    result = compute_regime_snapshot(
+        source_date=source_date,
+        price_root=price_root,
+        market_series_root=market_series_root,
+        snapshot_root=tmp_path / "snapshots",
+        signal_snapshot_root=tmp_path / "signals",
+        write_snapshot=False,
+    )
+
+    signals = {(signal.family, signal.name): signal for signal in result.signals}
+    assert signals[("credit", "credit_spread")].details["credit_spread_change_5d"] == (
+        pytest.approx(0.05)
+    )
+    assert signals[("credit", "credit_spread")].details["credit_spread_change_20d"] == (
+        pytest.approx(0.20)
+    )
+    assert signals[("liquidity", "financial_conditions")].details[
+        "financial_conditions_change_4w"
+    ] == pytest.approx(-0.04)
+    assert signals[("liquidity", "financial_conditions")].details[
+        "financial_conditions_change_13w"
+    ] == pytest.approx(-0.13)
+    assert signals[("rates", "yield_curve")].details["yield_curve_change_5d"] == (
+        pytest.approx(0.05)
+    )
+    assert signals[("rates", "yield_curve")].details["yield_curve_change_20d"] == (
+        pytest.approx(0.20)
+    )
+    assert "HY OAS 2.70%; 5,20d chg +5/+20bp" in result.signal_table
+    assert "NFCI -0.50; 4,13w chg -0.04/-0.13" in result.signal_table
+    assert "10y-2y +0.60pp; 5,20d chg +5/+20bp" in result.signal_table
 
 
 def test_compute_regime_snapshot_overwrite_repairs_same_version_snapshot(
@@ -1379,6 +1464,32 @@ def _write_market_series_value(
                 value=value,
                 unit=unit,
             ),
+        ),
+        output_root=market_series_root,
+    )
+
+
+def _write_market_series_history(
+    market_series_root: Path,
+    *,
+    series_id: str,
+    start: date,
+    values: list[float],
+    unit: str,
+    step_days: int = 1,
+) -> None:
+    write_market_series_observations(
+        tuple(
+            MarketSeriesObservation(
+                source="fixture",
+                source_series_id=series_id,
+                series_id=series_id,
+                observed_date=start + timedelta(days=index * step_days),
+                availability_date=start + timedelta(days=index * step_days),
+                value=value,
+                unit=unit,
+            )
+            for index, value in enumerate(values)
         ),
         output_root=market_series_root,
     )
