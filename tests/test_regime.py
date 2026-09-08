@@ -35,12 +35,14 @@ def test_write_regime_snapshot_refuses_different_same_date(tmp_path: Path) -> No
     write_regime_snapshot(
         _snapshot(source_date=source_date, regime="risk_on", score=2),
         snapshot_root=snapshot_root,
+        overwrite=False,
     )
 
     with pytest.raises(RegimeError, match="Refusing to overwrite"):
         write_regime_snapshot(
             _snapshot(source_date=source_date, regime="risk_off", score=-2),
             snapshot_root=snapshot_root,
+            overwrite=False,
         )
 
 
@@ -446,22 +448,12 @@ def test_compute_regime_snapshot_overwrite_repairs_same_version_snapshot(
         unit="percent_level",
     )
 
-    with pytest.raises(RegimeError, match="Refusing to overwrite"):
-        compute_regime_snapshot(
-            source_date=source_date,
-            price_root=price_root,
-            market_series_root=market_series_root,
-            snapshot_root=snapshot_root,
-            signal_snapshot_root=signal_snapshot_root,
-        )
-
     repaired = compute_regime_snapshot(
         source_date=source_date,
         price_root=price_root,
         market_series_root=market_series_root,
         snapshot_root=snapshot_root,
         signal_snapshot_root=signal_snapshot_root,
-        overwrite_snapshot=True,
     )
 
     assert repaired.snapshot_path == first.snapshot_path
@@ -469,6 +461,25 @@ def test_compute_regime_snapshot_overwrite_repairs_same_version_snapshot(
     assert repaired.snapshot.confidence == "high"
     loaded = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
     assert loaded == repaired.snapshot
+
+    _write_market_series_value(
+        market_series_root,
+        series_id="BAMLH0A0HYM2",
+        observed_date=source_date - timedelta(days=1),
+        availability_date=source_date,
+        value=2.8,
+        unit="percent_level",
+        overwrite=True,
+    )
+    with pytest.raises(RegimeError, match="Refusing to overwrite"):
+        compute_regime_snapshot(
+            source_date=source_date,
+            price_root=price_root,
+            market_series_root=market_series_root,
+            snapshot_root=snapshot_root,
+            signal_snapshot_root=signal_snapshot_root,
+            overwrite_snapshot=False,
+        )
 
 
 def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
@@ -1532,6 +1543,7 @@ def _write_market_series_value(
     availability_date: date,
     value: float,
     unit: str,
+    overwrite: bool = False,
 ) -> None:
     write_market_series_observations(
         (
@@ -1546,6 +1558,7 @@ def _write_market_series_value(
             ),
         ),
         output_root=market_series_root,
+        overwrite=overwrite,
     )
 
 

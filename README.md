@@ -60,13 +60,11 @@ The routine operating path is one command:
 ```
 
 By default it uses today's local date. The daily run first refreshes market sources, writes
-market-signal and regime snapshots, derives the portfolio policy, and renders the daily
+market-signal and regime artifacts, derives the portfolio policy, and renders the daily
 policy report and regime chart. When read-only Gmail credentials exist, it then fetches the
 Bulltard recap from Gmail, validates captured candidates, and refreshes the local DuckDB
 store for outcome review.
-Daily mode regenerates replaceable derived market-signal artifacts, but it does not replace
-same-version regime snapshots unless you pass `--replace-regime`. Use that only when you
-intentionally want a research-date snapshot to reflect changed source data or model code.
+Daily mode regenerates replaceable derived market-signal and regime artifacts by default.
 
 For a specific date:
 
@@ -88,12 +86,14 @@ Compute the market regime directly:
 ```
 
 `--refresh-sources` refreshes the local Yahoo price cache and FRED market series before computing
-the regime snapshot. The lower-level `--fetch-prices` and `--fetch-market-series` flags remain
+the regime artifact. The lower-level `--fetch-prices` and `--fetch-market-series` flags remain
 available for partial diagnostics, but routine one-off regime runs should refresh both source
 families together. Overlapping Yahoo/Stooq refreshes replace existing rows for the same symbol/date
-because vendors can revise adjusted prices; saved regime, policy, and candidate snapshots remain
-the frozen research record unless replacement is explicit. Index symbols keep their source symbol
-in each row, but use filesystem-safe cache names such as `INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
+because vendors can revise adjusted prices. Same-version regime artifacts are replaceable derived
+outputs under `data/derived/regime/market`; source observations remain under `data/observations`.
+Saved policy and candidate snapshots are still treated as research records for their own workflows.
+Index symbols keep their source symbol in each row, but use filesystem-safe cache names such as
+`INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
 FRED market-series backfills use the current available local vintage; they are useful for research,
 but they are not true historical FRED vintages.
 Regime computation always starts from local price/FRED observations. Market-signal rows are
@@ -107,18 +107,17 @@ The current score uses:
 - RSP/SPY and IWM/SPY participation.
 - HYG/TLT risk appetite.
 
-Backfill market-regime snapshots and derived market-signal artifacts over local price dates:
+Backfill market-regime artifacts and derived market-signal artifacts over local price dates:
 
 ```bash
 ./bin/marketlab regime backfill --start 2025-01-02 --end 2026-09-04
 ```
 
-Backfill skips existing same-version regime snapshots by default, so repeated runs fill missing dates
-without rewriting frozen historical records. Market-signal artifacts are replaceable. Use
-`--recompute-existing` only when you intentionally want to recompute saved regime dates and surface
-any immutable snapshot conflicts.
+Backfill skips existing same-version regime artifacts by default, so repeated runs fill missing dates
+without rewriting every saved date. Use `--recompute-existing` when you intentionally want to
+recompute and replace saved regime dates.
 
-Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
+Replay saved regime artifacts against forward SPY/QQQ returns and drawdowns:
 
 ```bash
 ./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-09-04
@@ -133,7 +132,7 @@ Replay rare action states or normalized pressure buckets:
 
 ### Portfolio Policy
 
-Create a policy snapshot from a saved regime snapshot and any saved Bulltard candidate validation snapshot:
+Create a policy snapshot from a saved regime artifact and any saved Bulltard candidate validation snapshot:
 
 ```bash
 ./bin/marketlab policy snapshot --date 2026-08-28
@@ -404,7 +403,7 @@ Replay forward outcomes after enough future price rows exist:
 This is the candidate-learning loop. Each saved Bulltard validation row is treated as a
 point-in-time candidate episode, then grouped into cohorts such as Trades Of Interest versus
 ranked-only, `confirm` versus `watch`, ranked bullish/bearish side, detailed ticker-flow subtype
-such as put selling or call buying, and same-day market regime when a regime snapshot exists.
+such as put selling or call buying, and same-day market regime when a regime artifact exists.
 The 40- and 65-trading-day horizons approximate the 60-90 calendar-day window.
 
 If you need a manual fallback, pass a local recap artifact or a small text file containing the

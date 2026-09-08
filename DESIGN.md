@@ -166,22 +166,22 @@ Agent calls should have explicit inputs and structured outputs. For example, a B
 
 ## Execution model
 
-The current operating path is an explicitly invoked CLI workflow, not an automated trading service. Once ingestion and snapshot semantics are stable over repeated use, selected collection jobs may be scheduled. A typical deterministic run is: refresh market sources → compute shared features and replaceable market-signal artifacts → score SPY/QQQ regime → fetch the Bulltard recap from Gmail or a saved artifact → extract/validate single-name candidates → calculate portfolio posture/risk budget → persist → render report/chart outputs.
+The current operating path is an explicitly invoked CLI workflow, not an automated trading service. Once ingestion and source-data semantics are stable over repeated use, selected collection jobs may be scheduled. A typical deterministic run is: refresh market sources → compute shared features and replaceable market-signal artifacts → score SPY/QQQ regime → fetch the Bulltard recap from Gmail or a saved artifact → extract/validate single-name candidates → calculate portfolio posture/risk budget → persist → render report/chart outputs.
 
 | Mode                 | Typical invocation                                      | Behavior                                                                                       |
 |----------------------|---------------------------------------------------------|------------------------------------------------------------------------------------------------|
-| Routine daily run    | marketlab daily                                         | Refresh local observations, write current snapshots, fetch the recap when Gmail is authorized, render report/chart output, and rebuild DuckDB. |
-| Historical/debug run | marketlab daily --date YYYY-MM-DD                       | Reproduce or rebuild a specific date from local/fetched sources using explicit snapshot identifiers where needed. |
+| Routine daily run    | marketlab daily                                         | Refresh local observations, write current artifacts/snapshots, fetch the recap when Gmail is authorized, render report/chart output, and rebuild DuckDB. |
+| Historical/debug run | marketlab daily --date YYYY-MM-DD                       | Reproduce or rebuild a specific date from local/fetched sources using explicit source/artifact identifiers where needed. |
 | Focused research     | marketlab regime snapshot / bulltard daily / policy outcomes | Run one subsystem for backfills, debugging, or evidence review. |
 | Scheduled ingestion  | cron → marketlab daily                                  | Optional later trigger after the workflow is stable; no autonomous trade execution. |
 
 ## Suggested initial storage
 
-A lightweight local research stack is the default: JSON/JSONL snapshots are the durable source of truth, DuckDB is a rebuildable query layer, and Parquet exports are optional. Source artifacts, parsed subscription observations, and official regime/candidate/policy snapshots should be immutable. Fetched vendor market-data files are a refreshable local cache and may upsert corrected overlapping rows; the immutable snapshots preserve what each research run actually used. Normalized tables and feature tables should reference the source snapshot and version that produced them. Suggested logical tables include market_prices, volatility, breadth, macro, sentiment, security_master, universe_membership, security_fundamentals, option_liquidity, daily_features, regime_snapshots, single_name_features, opportunity_snapshots, candidate_state_transitions, bulltard_recaps, bulltard_signals, portfolio_snapshots, research_experiments, model_versions, and signal_outcomes.
+A lightweight local research stack is the default: JSON/JSONL artifacts are the durable source of truth, DuckDB is a rebuildable query layer, and Parquet exports are optional. Source artifacts and parsed subscription observations should be reproducible. Derived regime outputs and market-signal artifacts are rebuildable model products, so they belong under `data/derived` and may be replaced by their producing workflow. Fetched vendor market-data files are a refreshable local cache and may upsert corrected overlapping rows. Normalized tables and feature tables should reference the source snapshot and version that produced them. Suggested logical tables include market_prices, volatility, breadth, macro, sentiment, security_master, universe_membership, security_fundamentals, option_liquidity, daily_features, regime_artifacts, single_name_features, opportunity_snapshots, candidate_state_transitions, bulltard_recaps, bulltard_signals, portfolio_snapshots, research_experiments, model_versions, and signal_outcomes.
 
-# 4. Time, Snapshots & Reproducibility
+# 4. Time, Artifacts & Reproducibility
 
-Time consistency is a first-class requirement. A model run must never mean "fetch whatever is latest and calculate." Every official regime or single-name opportunity calculation must consume a named, frozen as-of snapshot so that the same historical state can be reproduced later.
+Time consistency is a first-class requirement. A model run must never mean "fetch whatever is latest and calculate." Every official regime or single-name opportunity calculation must consume named, dated source observations or snapshots so that the historical input state can be reproduced later. Derived model artifacts are rebuildable outputs, not the immutability boundary.
 
 ## Canonical time modes
 
@@ -195,9 +195,9 @@ Time consistency is a first-class requirement. A model run must never mean "fetc
 
 - The canonical daily regime and opportunity state should use a clearly defined EOD/data-availability cutoff because the project targets multi-month horizons; intraday fluctuations should not continuously rewrite the strategic research record.
 
-- A historical request for an official date must return the same result regardless of when the program is run later, provided the same snapshot, feature version, and model version are selected.
+- A historical request for an official date must return the same result regardless of when the program is run later, provided the same source observations, feature version, and model version are selected.
 
-- The regime and opportunity engines receive snapshot objects. They should not themselves query external sources for "latest" values.
+- The regime and opportunity engines receive explicit source/artifact inputs. They should not themselves query external sources for "latest" values.
 
 - Live previews should be visibly labeled provisional and should be compared with-not overwrite-the latest official EOD regime.
 
@@ -207,7 +207,7 @@ Inputs have different natural timestamps. Market prices, VIX/VVIX, breadth, macr
 
 FRED market-series rows fetched without a historical-vintage API are current-vintage local history. They can support exploratory regime research, but any backtest that depends on macro revisions must label this limitation until true vintage data is added.
 
-## Immutable snapshots and version identifiers
+## Source snapshots and version identifiers
 
 | Field            | Example                        | Meaning                                         |
 |------------------|--------------------------------|-------------------------------------------------|
@@ -220,9 +220,9 @@ FRED market-series rows fetched without a historical-vintage API are current-vin
 | opportunity_version | opportunity_v2               | Exact single-name eligibility/ranking/lifecycle logic. |
 | policy_version   | exposure_v2                    | Exact mapping from regime to portfolio posture. |
 
-Historical snapshots should never be silently overwritten. If a vendor corrects data, universe membership changes, or a bug is fixed, create a new snapshot, universe, feature, regime-model, or opportunity-model version and preserve the old result for auditability. This makes it possible to distinguish "what the system knew then" from "what we know now."
+Historical source snapshots should never be silently overwritten. If a vendor corrects source data, universe membership changes, or a bug is fixed after a workflow is stable, create a new source snapshot, universe, feature, regime-model, or opportunity-model version and preserve enough provenance for auditability. Derived regime artifacts are not the protection boundary; they can be recomputed from their inputs and model version.
 
-During active local iteration, replacement can still be allowed for a same-date, same-version research artifact, but only through an explicit command option. Derived inspection artifacts, such as market-signal JSONL rows generated from observations, are rebuildable and may be replaced by their producing workflow.
+Same-date, same-version derived regime artifacts may be replaced by their producing workflow.
 
 # 5. Market Regime Model
 
@@ -611,7 +611,7 @@ Every live signal should be recorded before the outcome is known. This turns the
 
 | **Record**            | **Minimum fields**                                                                |
 |-----------------------|-----------------------------------------------------------------------------------|
-| Daily regime snapshot | Date, family scores, composite, confidence, contradictions, SPY/QQQ levels        |
+| Daily regime artifact | Date, family scores, composite, confidence, contradictions, SPY/QQQ levels        |
 | Portfolio posture     | Neutral beta target, tactical beta target, cash reserve %, option overlay stance  |
 | Bulltard extraction   | Market view, book changes, ideas, database/scanner signals, notable repeated flow |
 | Opportunity snapshot  | Ticker, eligibility gates, family scores, lifecycle state, thesis, horizon, liquidity, invalidation |
@@ -637,7 +637,7 @@ Build the simplest version that can teach us something, then add sophistication 
 | **Phase** | **Scope** | **Exit criterion** |
 |---|---|---|
 | 0. Design / bootstrap | Agree on objectives, portfolio constraints, and a minimal local CLI | Design baseline accepted; deterministic CLI runs locally |
-| 1. Market-regime foundation | Build point-in-time SPY/QQQ trend, realized volatility, basic VIX, breadth proxy, and credit proxy snapshots | We can create and replay daily regime snapshots against forward SPY/QQQ returns and drawdowns |
+| 1. Market-regime foundation | Build point-in-time SPY/QQQ trend, realized volatility, basic VIX, breadth proxy, and credit proxy artifacts | We can create and replay daily regime artifacts against forward SPY/QQQ returns and drawdowns |
 | 2. Market-regime signal expansion | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit observations | We can inspect family-level signals and compare their forward outcome separation |
 | 3. Regime calibration | Backtest family scores, disagreement states, transitions, stretched/de-risk states, and bloodbath/re-risk states before mapping them to portfolio policy | The regime model either separates forward risk/reward out of sample or explicitly records "no edge" |
 | 4. Single-name candidate pipeline | Ingest Bulltard candidates and validate them with independent price, liquidity, fundamentals, catalysts, and outcomes | We can measure whether candidate subsets outperform comparable large-cap names and benchmarks |
@@ -717,7 +717,8 @@ The initial infrastructure should optimize for iteration speed and scientific re
 
 - data/debug/: optional raw payload cache for parser replay or troubleshooting. This is not the main research product.
 
-- data/snapshots/: named prior-close, intraday-preview, and official-EOD snapshots, including eligible-universe and opportunity state.
+- data/snapshots/: named prior-close, intraday-preview, and official-EOD source/candidate/policy snapshots, including eligible-universe and opportunity state.
+- data/derived/: rebuildable model outputs such as market-signal and regime artifacts.
 
 - marketlab.duckdb: rebuildable local metadata/query database generated from `data/`; periodically checkpoint or export only after the source files are worth preserving.
 

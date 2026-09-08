@@ -167,7 +167,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         assert signal_time == "eod"
         assert snapshot_version is None
         assert write_snapshot is True
-        assert overwrite_snapshot is False
+        assert overwrite_snapshot is True
         events.append("regime")
         snapshot = _regime_snapshot(source_date=source_date)
         return RegimeSnapshotResult(
@@ -355,7 +355,7 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["regime_prices"]
-        assert overwrite_snapshot is False
+        assert overwrite_snapshot is True
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -484,7 +484,7 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         assert start_date == date(2026, 8, 31)
         assert end_date == date(2026, 8, 31)
         assert observations_root == Path("data/observations/bulltard")
-        assert regime_snapshot_root == Path("data/snapshots/regime/market")
+        assert regime_snapshot_root == Path("data/derived/regime/market")
         assert horizons == (1, 5, 20, 40, 65, 126)
         events.append("outcomes")
         return CandidateOutcomeResult(
@@ -591,7 +591,7 @@ def test_daily_run_fetches_missing_default_recap_from_gmail(
         overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert source_date == date(2026, 9, 1)
-        assert overwrite_snapshot is False
+        assert overwrite_snapshot is True
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -1026,7 +1026,7 @@ def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> No
     result = CliRunner().invoke(app, ["regime", "snapshot"])
 
     assert result.exit_code != 0
-    assert "Compute a market regime snapshot" in result.output
+    assert "Compute a derived market regime artifact" in result.output
     assert "--date" in result.output
     assert "--fetch-prices" in result.output
     assert "Missing option" not in result.output
@@ -1037,7 +1037,7 @@ def test_regime_backfill_no_args_shows_help_without_missing_option_error() -> No
     result = CliRunner().invoke(app, ["regime", "backfill"])
 
     assert result.exit_code != 0
-    assert "Backfill daily market regime snapshots and market signal artifacts" in result.output
+    assert "Backfill daily market regime artifacts and market signal artifacts" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
     assert "Missing option" not in result.output
@@ -2169,7 +2169,6 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             "--date",
             "2026-08-28",
             "--refresh-sources",
-            "--overwrite",
             "--price-start",
             "2025-01-01",
             "--price-end",
@@ -2182,7 +2181,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             str(price_root),
             "--market-series-root",
             str(market_series_root),
-            "--snapshot-root",
+            "--artifact-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_snapshot_root),
@@ -2195,7 +2194,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_price_success_count=1" in result.output
     assert "market_series_ids=BAMLH0A0HYM2" in result.output
     assert "market_series_success_count=1" in result.output
-    assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
+    assert f"regime_artifact_path={snapshot_root / '2026-08-28.json'}" in result.output
     assert (
         f"market_signal_artifact_path={signal_snapshot_root / '2026-08-28.jsonl'}"
         in result.output
@@ -2312,7 +2311,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         assert snapshot_version is None
         assert write_snapshot is True
         assert skip_existing is True
-        assert overwrite_snapshot is False
+        assert overwrite_snapshot is True
         events.append("backfill")
         return RegimeBackfillResult(
             start_date=start_date,
@@ -2356,7 +2355,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
             str(price_root),
             "--market-series-root",
             str(market_series_root),
-            "--snapshot-root",
+            "--artifact-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_snapshot_root),
@@ -2370,7 +2369,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
     assert "regime_backfill_date_count=2" in result.output
     assert "regime_backfill_first_date=2026-08-28" in result.output
     assert "regime_backfill_last_date=2026-08-29" in result.output
-    assert "regime_snapshot_count=2" in result.output
+    assert "regime_artifact_count=2" in result.output
     assert "market_signal_artifact_count=2" in result.output
     assert "regime_backfill_skipped_existing_count=0" in result.output
     assert str(snapshot_root / "2026-08-29.json") in result.output
@@ -2442,7 +2441,7 @@ def test_regime_outcomes_outputs_summary_table(
             "2026-01-01",
             "--end",
             "2026-08-28",
-            "--snapshot-root",
+            "--artifact-root",
             str(snapshot_root),
             "--price-root",
             str(price_root),
@@ -2550,7 +2549,7 @@ def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
             "2026-01-01",
             "--end",
             "2026-08-28",
-            "--snapshot-root",
+            "--artifact-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_root),
@@ -2655,7 +2654,7 @@ def test_regime_pressure_outcomes_outputs_summary_table(
             "2026-01-01",
             "--end",
             "2026-08-28",
-            "--snapshot-root",
+            "--artifact-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_root),
@@ -3246,6 +3245,7 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
     assert "price_success_count=2" in result.output
     assert "regime_price_symbols" not in result.output
     assert "regime_snapshot_path" not in result.output
+    assert "regime_artifact_path" not in result.output
     assert "candidate_validation_count=1" in result.output
     assert "candidate_validation_summary=candidates:1 confirm:1 watch:0 avoid:0" in result.output
     assert "META    confirm" in result.output

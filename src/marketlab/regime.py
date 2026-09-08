@@ -1,4 +1,4 @@
-"""Market regime snapshots from daily price proxies."""
+"""Market regime artifacts from daily price proxies."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ from marketlab.snapshots.models import (
     write_immutable_payload,
 )
 
-DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
+DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/derived/regime/market")
 DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX", "^VVIX")
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
@@ -382,7 +382,7 @@ class RegimeSnapshotResult:
 
 @dataclass(frozen=True, slots=True)
 class RegimeBackfillResult:
-    """Result of computing market regime snapshots over a date range."""
+    """Result of computing market regime artifacts over a date range."""
 
     start_date: date
     end_date: date
@@ -806,7 +806,7 @@ def compute_regime_snapshot(
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
     write_snapshot: bool = True,
-    overwrite_snapshot: bool = False,
+    overwrite_snapshot: bool = True,
 ) -> RegimeSnapshotResult:
     """Compute and optionally persist one market regime snapshot."""
 
@@ -841,9 +841,9 @@ def compute_regime_backfill(
     snapshot_version: str | None = None,
     write_snapshot: bool = True,
     skip_existing: bool = True,
-    overwrite_snapshot: bool = False,
+    overwrite_snapshot: bool = True,
 ) -> RegimeBackfillResult:
-    """Compute market regime snapshots for each SPY observation date in a range."""
+    """Compute market regime artifacts for each SPY observation date in a range."""
 
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime backfill")
     if end_date < start_date:
@@ -880,7 +880,7 @@ def compute_regime_backfill(
     signal_snapshot_paths: list[Path] = []
     skipped_snapshot_paths: list[Path] = []
     for source_date in source_dates:
-        if write_snapshot and skip_existing and not overwrite_snapshot:
+        if write_snapshot and skip_existing:
             existing_snapshot_path = _existing_regime_snapshot_path(
                 source_date=source_date,
                 snapshot_root=snapshot_root,
@@ -1058,7 +1058,7 @@ def write_regime_snapshot(
     snapshot: RegimeSnapshot,
     *,
     snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> Path:
     """Write one market regime snapshot."""
 
@@ -3041,7 +3041,7 @@ def compute_regime_outcomes(
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
 ) -> RegimeOutcomeResult:
-    """Replay forward SPY/QQQ outcomes for saved market regime snapshots."""
+    """Replay forward SPY/QQQ outcomes for saved market regime artifacts."""
 
     if end_date < start_date:
         raise RegimeError("End date must be on or after start date")
@@ -3052,7 +3052,7 @@ def compute_regime_outcomes(
         snapshot_root=snapshot_root,
     )
     if not snapshots:
-        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+        raise RegimeError(f"No market regime artifacts found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     outcomes = tuple(
@@ -3149,7 +3149,7 @@ def compute_regime_action_outcomes(
         snapshot_root=snapshot_root,
     )
     if not snapshots:
-        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+        raise RegimeError(f"No market regime artifacts found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     snapshot_actions = tuple(
@@ -3230,7 +3230,7 @@ def compute_regime_pressure_outcomes(
         snapshot for snapshot in snapshots if start_date <= snapshot.source_date <= end_date
     )
     if not target_snapshots:
-        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+        raise RegimeError(f"No market regime artifacts found from {start_date} to {end_date}")
 
     signals_by_date = _load_market_signals_by_source_date_through(
         end_date=end_date,
