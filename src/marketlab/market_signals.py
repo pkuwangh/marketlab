@@ -37,6 +37,7 @@ MARKET_SIGNAL_NAME_ORDER = {
     "price_proxy": 0,
     "vol_of_vol": 1,
     "term_structure": 2,
+    "participation": 1,
     "credit_spread": 1,
     "financial_conditions": 1,
     "yield_curve": 1,
@@ -402,6 +403,32 @@ def _format_signal_value(signal: MarketSignal) -> str:
         )
         return value or _format_value(signal.value, signal.unit)
 
+    if signal.family == "breadth" and signal.name == "participation":
+        current = _format_percent_level_pair(
+            signal.details,
+            left_key="sp500_above_50d",
+            right_key="sp500_above_200d",
+        )
+        change_5d = _format_percentage_point_change_pair(
+            signal.details,
+            left_key="sp500_above_50d_change_5d",
+            right_key="sp500_above_200d_change_5d",
+        )
+        change_20d = _format_percentage_point_change_pair(
+            signal.details,
+            left_key="sp500_above_50d_change_20d",
+            right_key="sp500_above_200d_change_20d",
+        )
+        value = _format_signal_value_sections(
+            (
+                ("SPX >50/>200", current),
+                ("5d chg", change_5d),
+                ("20d chg", change_20d),
+            ),
+            label_separator=" ",
+        )
+        return value or _format_value(signal.value, signal.unit)
+
     if signal.family == "credit" and signal.name == "price_proxy":
         high_yield_treasury = _format_signal_value_values(
             (
@@ -542,6 +569,52 @@ def _format_basis_point_change_pair(
     if right is None:
         return f"{left}/-"
     return f"{left.removesuffix('bp')}/{right}"
+
+
+def _format_percent_level_pair(
+    details: dict[str, Any],
+    *,
+    left_key: str,
+    right_key: str,
+) -> str:
+    left = _format_percent_level(_detail_float(details, key=left_key))
+    right = _format_percent_level(_detail_float(details, key=right_key))
+    if left is None and right is None:
+        return "-"
+    if left is None:
+        return f"-/{right or '-'}"
+    if right is None:
+        return f"{left}/-"
+    return f"{left.removesuffix('%')}/{right}"
+
+
+def _format_percentage_point_change_pair(
+    details: dict[str, Any],
+    *,
+    left_key: str,
+    right_key: str,
+) -> str:
+    left = _format_percentage_point_change(_detail_float(details, key=left_key))
+    right = _format_percentage_point_change(_detail_float(details, key=right_key))
+    if left is None and right is None:
+        return "-"
+    if left is None:
+        return f"-/{right or '-'}"
+    if right is None:
+        return f"{left}/-"
+    return f"{left.removesuffix('pp')}/{right}"
+
+
+def _format_percentage_point_change(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:+.1f}pp"
+
+
+def _format_percent_level(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:.1f}%"
 
 
 def _format_basis_point_change(value: float | None) -> str | None:

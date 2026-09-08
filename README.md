@@ -27,7 +27,7 @@ pillar is Bulltard-driven single-name research: use subscription flow as candida
 then independently validate and measure it.
 
 - Market regime and portfolio posture, primary pillar:
-  - Refreshes SPY/QQQ, VIX/VVIX, RSP/IWM, HYG/TLT, and FRED credit/liquidity/rates observations.
+  - Refreshes SPY/QQQ, VIX/VVIX, VIX term-structure, breadth, HYG/TLT, and FRED credit/liquidity/rates observations.
   - Computes daily directional regime, stretch/washout setup pressure, deterioration/stabilization action evidence, and rare action states: `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
   - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
   - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
@@ -85,15 +85,18 @@ Compute the market regime directly:
 ./bin/marketlab regime snapshot --date 2026-09-04 --refresh-sources
 ```
 
-`--refresh-sources` refreshes the local Yahoo price cache and FRED market series before computing
-the regime artifact. The lower-level `--fetch-prices` and `--fetch-market-series` flags remain
+`--refresh-sources` refreshes the local Yahoo price cache, EODData recent breadth rows, and FRED
+market series before computing the regime artifact. The lower-level `--fetch-prices` and
+`--fetch-market-series` flags remain
 available for partial diagnostics, but routine one-off regime runs should refresh both source
-families together. Overlapping Yahoo/Stooq refreshes replace existing rows for the same symbol/date
-because vendors can revise adjusted prices. Same-version regime artifacts are replaceable derived
-outputs under `data/derived/regime/market`; source observations remain under `data/observations`.
+families together. Overlapping Yahoo/Stooq/EODData refreshes replace existing rows for the same
+symbol/date because vendors can revise adjusted prices or index values. Same-version regime
+artifacts are replaceable derived outputs under `data/derived/regime/market`; source observations
+remain under `data/observations`.
 Saved policy and candidate snapshots are still treated as research records for their own workflows.
 Index symbols keep their source symbol in each row, but use filesystem-safe cache names such as
-`INDEX_VIX.jsonl`, `INDEX_VIX9D.jsonl`, `INDEX_VIX3M.jsonl`, and `INDEX_VVIX.jsonl`.
+`INDEX_VIX.jsonl`, `INDEX_VIX9D.jsonl`, `INDEX_VIX3M.jsonl`, `INDEX_VVIX.jsonl`,
+`INDEX_S5FI.jsonl`, and `INDEX_S5TH.jsonl`.
 FRED market-series backfills use the current available local vintage; they are useful for research,
 but they are not true historical FRED vintages.
 Regime computation always starts from local price/FRED observations. Market-signal rows are
@@ -104,7 +107,7 @@ The current score uses:
 
 - SPY/QQQ trend and moving-average posture.
 - SPY realized volatility, VIX/VVIX, and VIX9D/VIX/VIX3M term structure.
-- RSP/SPY and IWM/SPY participation.
+- RSP/SPY and IWM/SPY participation proxies, plus S&P 500 percent above 50d/200d moving averages.
 - HYG/TLT risk appetite.
 
 Backfill market-regime artifacts and derived market-signal artifacts over local price dates:

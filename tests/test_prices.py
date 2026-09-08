@@ -9,13 +9,16 @@ import pytest
 from marketlab.prices import (
     DailyPriceObservation,
     PriceDataError,
+    fetch_and_write_eoddata_index_daily_prices,
     fetch_and_write_stooq_daily_prices,
     fetch_and_write_yahoo_daily_prices,
     import_daily_price_csv,
     load_price_history,
+    parse_eoddata_index_daily_html,
     parse_stooq_daily_csv,
     parse_yahoo_daily_frame,
     price_observation_path,
+    to_eoddata_index_symbol,
     to_stooq_symbol,
     write_price_observations,
 )
@@ -115,6 +118,14 @@ def test_index_price_observations_use_safe_filename_and_load_legacy_path(
     assert price_observation_path(symbol="^VIX", price_root=output_root) == path
     assert not (output_root / "^VIX.jsonl").exists()
     assert load_price_history(symbol="^VIX", price_root=output_root)[0].symbol == "^VIX"
+
+    breadth_row = _price_row(close=46.9, symbol="$S5FI")
+    breadth_path = write_price_observations((breadth_row,), output_root=output_root)
+
+    assert breadth_path == output_root / "INDEX_S5FI.jsonl"
+    assert price_observation_path(symbol="$S5FI", price_root=output_root) == breadth_path
+    assert not (output_root / "$S5FI.jsonl").exists()
+    assert load_price_history(symbol="$S5FI", price_root=output_root)[0].symbol == "$S5FI"
 
     legacy_row = _price_row(close=90.0, symbol="^VVIX")
     legacy_path = output_root / "^VVIX.jsonl"
@@ -237,6 +248,67 @@ def test_fetch_and_write_yahoo_daily_prices_uses_downloader(tmp_path: Path) -> N
     assert rows[0].adjusted_close == 103.5
 
 
+def test_parse_eoddata_index_daily_html_reads_recent_rows() -> None:
+    html = """
+    <table>
+      <tr><th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr>
+      <tr><td>04 Sep 26</td><td>46.71</td><td>48.11</td><td>45.92</td><td>46.91</td><td>0</td></tr>
+      <tr><td>03 Sep 26</td><td>49.30</td><td>51.49</td><td>46.52</td><td>50.89</td><td>0</td></tr>
+    </table>
+    """
+
+    rows = parse_eoddata_index_daily_html(
+        html,
+        symbol="$S5FI",
+        source_symbol="S5FI",
+        start_date=date(2026, 9, 4),
+        end_date=date(2026, 9, 4),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].source == "eoddata"
+    assert rows[0].source_symbol == "S5FI"
+    assert rows[0].symbol == "$S5FI"
+    assert rows[0].observed_date == date(2026, 9, 4)
+    assert rows[0].close == 46.91
+    assert rows[0].adjusted_close == 46.91
+
+
+def test_fetch_and_write_eoddata_index_daily_prices_uses_public_quote_page(
+    tmp_path: Path,
+) -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            text=(
+                "<table>"
+                "<tr><th>Date</th><th>Open</th><th>High</th><th>Low</th>"
+                "<th>Close</th><th>Volume</th></tr>"
+                "<tr><td>04 Sep 26</td><td>68.00</td><td>69.00</td>"
+                "<td>67.00</td><td>68.78</td><td>0</td></tr>"
+                "</table>"
+            ),
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    results = fetch_and_write_eoddata_index_daily_prices(
+        symbols=("$SPXA200R", "$S5TH"),
+        start_date=date(2026, 9, 4),
+        end_date=date(2026, 9, 4),
+        output_root=tmp_path / "prices",
+        client=client,
+    )
+
+    assert [result.symbol for result in results] == ["$S5TH"]
+    assert results[0].source_symbol == "S5TH"
+    assert results[0].observation_path.name == "INDEX_S5TH.jsonl"
+    assert "stockquote/INDEX/S5TH.htm" in requested_urls[0]
+    assert load_price_history(symbol="$S5TH", price_root=tmp_path / "prices")[0].close == 68.78
+
+
 def test_fetch_and_write_yahoo_daily_prices_replaces_overlapping_vendor_rows(
     tmp_path: Path,
 ) -> None:
@@ -298,6 +370,15 @@ def test_to_stooq_symbol_adds_us_suffix_only_when_needed() -> None:
     assert to_stooq_symbol("BRK.B") == "brk.b.us"
     assert to_stooq_symbol("BMW.DE") == "bmw.de"
     assert to_stooq_symbol("^SPX") == "^spx"
+
+
+def test_to_eoddata_index_symbol_maps_breadth_aliases() -> None:
+    assert to_eoddata_index_symbol("$S5FI") == "S5FI"
+    assert to_eoddata_index_symbol("$SPXA50R") == "S5FI"
+    assert to_eoddata_index_symbol("$S5TH") == "S5TH"
+    assert to_eoddata_index_symbol("$SPXA200R") == "S5TH"
+    with pytest.raises(PriceDataError, match="Unsupported EODData index symbol"):
+        to_eoddata_index_symbol("SPY")
 
 
 def _price_row(*, close: float, symbol: str = "META") -> DailyPriceObservation:

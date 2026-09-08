@@ -7,6 +7,7 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
+from html.parser import HTMLParser
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,14 @@ from marketlab.snapshots.models import utc_timestamp
 DEFAULT_PRICE_OBSERVATIONS_ROOT = Path("data/observations/prices/daily")
 HTTP_TIMEOUT_SECONDS = 30.0
 STOOQ_DAILY_URL = "https://stooq.com/q/d/l/"
+EODDATA_INDEX_QUOTE_URL = "https://www.eoddata.com/stockquote/INDEX/{symbol}.htm"
+EODDATA_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; MarketLab/0.1; "
+        "+https://github.com/haowan/marketlab)"
+    ),
+    "Accept": "text/html,application/xhtml+xml",
+}
 YAHOO_REQUIRED_PRICE_COLUMNS = (
     ("Open", "open"),
     ("High", "high"),
@@ -27,6 +36,20 @@ YAHOO_REQUIRED_PRICE_COLUMNS = (
     ("Close", "close"),
     ("Volume", "volume"),
 )
+EODDATA_INDEX_SYMBOLS = {
+    "$S5FI": "S5FI",
+    "S5FI": "S5FI",
+    "$SPXA50R": "S5FI",
+    "SPXA50R": "S5FI",
+    "$S5TH": "S5TH",
+    "S5TH": "S5TH",
+    "$SPXA200R": "S5TH",
+    "SPXA200R": "S5TH",
+}
+EODDATA_STORAGE_SYMBOLS = {
+    "S5FI": "$S5FI",
+    "S5TH": "$S5TH",
+}
 
 
 class PriceDataError(ValueError):
@@ -317,6 +340,101 @@ def fetch_and_write_yahoo_daily_prices(
     return tuple(results)
 
 
+def fetch_eoddata_index_daily_prices(
+    *,
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    client: httpx.Client | None = None,
+) -> tuple[DailyPriceObservation, ...]:
+    """Fetch recent public EODData index rows as daily observations."""
+
+    source_symbol = to_eoddata_index_symbol(symbol)
+    storage_symbol = EODDATA_STORAGE_SYMBOLS[source_symbol]
+    if end_date < start_date:
+        raise PriceDataError("End date must be on or after start date")
+
+    owns_client = client is None
+    active_client = client or httpx.Client(timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True)
+    try:
+        logger.bind(
+            symbol=storage_symbol,
+            source_symbol=source_symbol,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+        ).info("Fetching EODData index price observations")
+        try:
+            response = active_client.get(
+                EODDATA_INDEX_QUOTE_URL.format(symbol=source_symbol),
+                params={"e": "INDEX", "s": source_symbol},
+                headers=EODDATA_REQUEST_HEADERS,
+            )
+        except httpx.HTTPError as exc:
+            raise PriceDataError(
+                f"Failed to fetch EODData prices for {storage_symbol}: {exc}"
+            ) from exc
+        if response.status_code >= 400:
+            raise PriceDataError(
+                f"EODData price fetch for {storage_symbol} failed with "
+                f"HTTP {response.status_code}"
+            )
+        rows = parse_eoddata_index_daily_html(
+            response.text,
+            symbol=storage_symbol,
+            source_symbol=source_symbol,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not rows:
+            raise PriceDataError(f"No EODData rows returned for {storage_symbol}")
+        retrieved_at = utc_timestamp()
+        rows = tuple(replace(row, retrieved_at=retrieved_at) for row in rows)
+        logger.bind(
+            symbol=storage_symbol,
+            source_symbol=source_symbol,
+            row_count=len(rows),
+            latest_price_date=rows[-1].observed_date.isoformat(),
+        ).success("Fetched EODData index price observations")
+        return rows
+    finally:
+        if owns_client:
+            active_client.close()
+
+
+def fetch_and_write_eoddata_index_daily_prices(
+    *,
+    symbols: tuple[str, ...],
+    start_date: date,
+    end_date: date,
+    output_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    client: httpx.Client | None = None,
+) -> tuple[PriceFetchResult, ...]:
+    """Fetch and persist recent public EODData index observations."""
+
+    results: list[PriceFetchResult] = []
+    for symbol in dedupe_eoddata_index_symbols(symbols):
+        rows = fetch_eoddata_index_daily_prices(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            client=client,
+        )
+        observation_path = write_price_observations(
+            rows,
+            output_root=output_root,
+            overwrite=True,
+        )
+        results.append(
+            PriceFetchResult(
+                symbol=rows[0].symbol,
+                source_symbol=rows[0].source_symbol,
+                observation_path=observation_path,
+                row_count=len(rows),
+            )
+        )
+    return tuple(results)
+
+
 def parse_stooq_daily_csv(
     text: str,
     *,
@@ -434,6 +552,51 @@ def parse_yahoo_daily_frame(
     return tuple(rows)
 
 
+def parse_eoddata_index_daily_html(
+    text: str,
+    *,
+    symbol: str,
+    source_symbol: str,
+    start_date: date,
+    end_date: date,
+) -> tuple[DailyPriceObservation, ...]:
+    """Parse EODData's recent end-of-day index price table."""
+
+    normalized_symbol = normalize_symbol(symbol)
+    parser = _HtmlTableParser()
+    parser.feed(text)
+
+    rows: list[DailyPriceObservation] = []
+    for row_number, cells in enumerate(parser.rows, start=1):
+        if len(cells) < 6:
+            continue
+        observed_date = _parse_eoddata_date(cells[0])
+        if observed_date is None or not start_date <= observed_date <= end_date:
+            continue
+        try:
+            close = _parse_html_float(cells[4])
+            rows.append(
+                DailyPriceObservation(
+                    source="eoddata",
+                    source_symbol=source_symbol,
+                    symbol=normalized_symbol,
+                    observed_date=observed_date,
+                    availability_date=observed_date,
+                    open=_parse_html_float(cells[1]),
+                    high=_parse_html_float(cells[2]),
+                    low=_parse_html_float(cells[3]),
+                    close=close,
+                    volume=_parse_html_int(cells[5]),
+                    adjusted_close=close,
+                )
+            )
+        except ValueError as exc:
+            raise PriceDataError(f"Invalid EODData price row {row_number}") from exc
+
+    rows.sort(key=lambda price: price.observed_date)
+    return tuple(rows)
+
+
 def write_price_observations(
     rows: tuple[DailyPriceObservation, ...],
     *,
@@ -518,6 +681,20 @@ def dedupe_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(normalized_symbols)
 
 
+def dedupe_eoddata_index_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize and deduplicate supported EODData index symbols."""
+
+    normalized_symbols: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        source_symbol = to_eoddata_index_symbol(symbol)
+        storage_symbol = EODDATA_STORAGE_SYMBOLS[source_symbol]
+        if storage_symbol not in seen:
+            seen.add(storage_symbol)
+            normalized_symbols.append(storage_symbol)
+    return tuple(normalized_symbols)
+
+
 def normalize_symbol(symbol: str) -> str:
     """Normalize a public market data symbol."""
 
@@ -544,6 +721,11 @@ def price_observation_stem(symbol: str) -> str:
         if not stripped:
             raise PriceDataError(f"Invalid ticker symbol: {symbol}")
         return f"INDEX_{stripped}"
+    if normalized.startswith("$"):
+        stripped = normalized[1:]
+        if not stripped:
+            raise PriceDataError(f"Invalid ticker symbol: {symbol}")
+        return f"INDEX_{stripped}"
     return normalized
 
 
@@ -565,11 +747,71 @@ def to_stooq_symbol(symbol: str) -> str:
     return f"{normalized.lower()}.us"
 
 
+def to_eoddata_index_symbol(symbol: str) -> str:
+    """Return the EODData INDEX exchange symbol for a supported breadth index."""
+
+    normalized = normalize_symbol(symbol)
+    source_symbol = EODDATA_INDEX_SYMBOLS.get(normalized)
+    if source_symbol is None:
+        raise PriceDataError(f"Unsupported EODData index symbol: {symbol}")
+    return source_symbol
+
+
 def _has_explicit_stooq_suffix(symbol: str) -> bool:
     if "." not in symbol:
         return False
     suffix = symbol.rsplit(".", 1)[1]
     return suffix.isalpha() and len(suffix) in {2, 3}
+
+
+class _HtmlTableParser(HTMLParser):
+    """Extract table rows without taking a dependency on an HTML parsing package."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[list[str]] = []
+        self._current_row: list[str] | None = None
+        self._current_cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        if tag == "tr":
+            self._current_row = []
+        elif tag in {"td", "th"} and self._current_row is not None:
+            self._current_cell = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self._current_row is not None:
+            cell = " ".join("".join(self._current_cell or ()).split())
+            self._current_row.append(cell)
+            self._current_cell = None
+        elif tag == "tr" and self._current_row is not None:
+            if self._current_row:
+                self.rows.append(self._current_row)
+            self._current_row = None
+            self._current_cell = None
+
+    def handle_data(self, data: str) -> None:
+        if self._current_cell is not None:
+            self._current_cell.append(data)
+
+
+def _parse_eoddata_date(value: str) -> date | None:
+    try:
+        return datetime.strptime(value.strip(), "%d %b %y").date()
+    except ValueError:
+        return None
+
+
+def _parse_html_float(value: str) -> float:
+    return float(value.replace(",", "").strip())
+
+
+def _parse_html_int(value: str) -> int:
+    text = value.replace(",", "").strip()
+    if text in {"", "-", "N/A"}:
+        return 0
+    return int(float(text))
 
 
 def _price_from_dict(row: dict[str, Any]) -> DailyPriceObservation:

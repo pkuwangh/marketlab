@@ -2,6 +2,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from marketlab.market_series import MarketSeriesObservation, write_market_series_observations
@@ -138,6 +139,18 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         start=start,
         closes=[85.0 for _index in range(230)],
     )
+    _write_price_history(
+        price_root,
+        symbol="$S5FI",
+        start=start,
+        closes=[65.0 for _index in range(230)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="$S5TH",
+        start=start,
+        closes=[70.0 for _index in range(230)],
+    )
     _write_market_series_value(
         market_series_root,
         series_id="BAMLH0A0HYM2",
@@ -199,7 +212,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.washout_score == int(round(result.snapshot.washout_pressure_score * 5))
     assert result.snapshot.protect_strength < 0.55
     assert result.snapshot.redeploy_strength < 0.55
-    assert len(result.pressure.features) == 16
+    assert len(result.pressure.features) == 18
     assert [module.name for module in result.pressure.modules] == [
         "trend_extension",
         "vol_complacency",
@@ -217,6 +230,15 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         "vvix_close",
         "vix9d_vix_ratio",
         "vix_vix3m_ratio",
+    )
+    breadth_module = next(
+        module for module in result.pressure.modules if module.name == "breadth_fragility"
+    )
+    assert breadth_module.feature_names == (
+        "rsp_spy_relative_20d",
+        "iwm_spy_relative_20d",
+        "sp500_above_50d",
+        "sp500_above_200d",
     )
     assert "spy_return_20d" in result.pressure_table
     assert result.snapshot.missing_symbols == ()
@@ -236,6 +258,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         ("credit", "price_proxy"),
         ("volatility", "vol_of_vol"),
         ("volatility", "term_structure"),
+        ("breadth", "participation"),
         ("credit", "credit_spread"),
         ("liquidity", "financial_conditions"),
         ("rates", "yield_curve"),
@@ -251,6 +274,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert "VVIX 85.00; 5,20d move +0.0%, +0.0%" in result.signal_table
     assert "VIX9D/VIX 0.94; 5,20d move +0.0%, +0.0%" in result.signal_table
     assert "VIX/VIX3M 0.84; 5,20d move +0.0%, +0.0%" in result.signal_table
+    assert "SPX >50/>200 65.0/70.0%; 5d chg +0.0/+0.0pp" in result.signal_table
     assert "SPY/QQQ: 20,60d" in result.signal_table
     assert "MA50,200" in result.signal_table
     assert "RSP/SPY: 5,20d" in result.signal_table
@@ -328,6 +352,8 @@ def test_compute_regime_snapshot_includes_fred_change_details(tmp_path: Path) ->
         ("^VIX9D", 15.0, 0.0),
         ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
+        ("$S5FI", 65.0, 0.0),
+        ("$S5TH", 70.0, 0.0),
     ):
         _write_price_history(
             price_root,
@@ -421,6 +447,8 @@ def test_compute_regime_snapshot_overwrite_repairs_same_version_snapshot(
         ("^VIX9D", 15.0, 0.0),
         ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
+        ("$S5FI", 65.0, 0.0),
+        ("$S5TH", 70.0, 0.0),
     ):
         _write_price_history(
             price_root,
@@ -522,6 +550,8 @@ def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
         ("^VIX9D", 15.0, 0.0),
         ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
+        ("$S5FI", 65.0, 0.0),
+        ("$S5TH", 70.0, 0.0),
     ):
         _write_price_history(
             price_root,
@@ -603,6 +633,8 @@ def test_compute_regime_backfill_skips_existing_same_version_snapshot(
         ("^VIX9D", 15.0, 0.0),
         ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
+        ("$S5FI", 65.0, 0.0),
+        ("$S5TH", 70.0, 0.0),
     ):
         _write_price_history(
             price_root,
@@ -880,6 +912,8 @@ def test_compute_regime_snapshot_ignores_saved_market_signal_boundary(tmp_path: 
         ("^VIX9D", 15.0, 0.0),
         ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
+        ("$S5FI", 65.0, 0.0),
+        ("$S5TH", 70.0, 0.0),
     ):
         _write_price_history(
             price_root,
@@ -1109,6 +1143,7 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
 
 def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
     calls: list[str] = []
+    eoddata_urls: list[str] = []
 
     def downloader(ticker, **kwargs):  # noqa: ANN001, ARG001
         calls.append(ticker)
@@ -1128,11 +1163,27 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         frame.index.name = "Date"
         return frame
 
+    def eoddata_handler(request: httpx.Request) -> httpx.Response:
+        eoddata_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            text=(
+                "<table>"
+                "<tr><th>Date</th><th>Open</th><th>High</th><th>Low</th>"
+                "<th>Close</th><th>Volume</th></tr>"
+                "<tr><td>14 Aug 26</td><td>65.0</td><td>66.0</td>"
+                "<td>64.0</td><td>65.5</td><td>0</td></tr>"
+                "</table>"
+            ),
+        )
+
+    eoddata_client = httpx.Client(transport=httpx.MockTransport(eoddata_handler))
     result = refresh_regime_prices(
         start_date=date(2026, 8, 14),
         end_date=date(2026, 8, 14),
         price_root=tmp_path / "prices",
         downloader=downloader,
+        eoddata_client=eoddata_client,
     )
 
     assert result.requested_symbols == (
@@ -1146,13 +1197,18 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         "^VIX9D",
         "^VIX3M",
         "^VVIX",
+        "$S5FI",
+        "$S5TH",
     )
-    assert calls == list(result.requested_symbols)
-    assert len(result.price_results) == 10
-    assert result.price_results[-4].observation_path.name == "INDEX_VIX.jsonl"
-    assert result.price_results[-3].observation_path.name == "INDEX_VIX9D.jsonl"
-    assert result.price_results[-2].observation_path.name == "INDEX_VIX3M.jsonl"
-    assert result.price_results[-1].observation_path.name == "INDEX_VVIX.jsonl"
+    assert calls == list(result.requested_symbols[:10])
+    assert len(eoddata_urls) == 2
+    assert len(result.price_results) == 12
+    assert result.price_results[-6].observation_path.name == "INDEX_VIX.jsonl"
+    assert result.price_results[-5].observation_path.name == "INDEX_VIX9D.jsonl"
+    assert result.price_results[-4].observation_path.name == "INDEX_VIX3M.jsonl"
+    assert result.price_results[-3].observation_path.name == "INDEX_VVIX.jsonl"
+    assert result.price_results[-2].observation_path.name == "INDEX_S5FI.jsonl"
+    assert result.price_results[-1].observation_path.name == "INDEX_S5TH.jsonl"
     assert result.price_failures == ()
 
 
@@ -1463,6 +1519,8 @@ def _snapshot(
     hyg_tlt_relative_20d: float | None = 0.02,
     vix_close: float | None = 16.0,
     vvix_close: float | None = 85.0,
+    sp500_above_50d: float | None = 65.0,
+    sp500_above_200d: float | None = 70.0,
     action_state: str = "no_change",
     action_confidence: str = "medium",
     action_reason: str = "No rare-action threshold crossed",
@@ -1505,6 +1563,8 @@ def _snapshot(
         hyg_tlt_relative_20d=hyg_tlt_relative_20d,
         vix_close=vix_close,
         vvix_close=vvix_close,
+        sp500_above_50d=sp500_above_50d,
+        sp500_above_200d=sp500_above_200d,
         action_state=action_state,
         action_confidence=action_confidence,
         action_reason=action_reason,

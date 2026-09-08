@@ -911,7 +911,8 @@ marketlab/
   - Fear/greed-style sentiment or equivalent risk-appetite observations from a stable source-specific importer.
   - Put/call or positioning proxies only after source semantics are clear.
 
-- Strengthen breadth and credit/liquidity after the first policy loop reveals a measured weakness. Prefer one robust signal per family over many correlated variants.
+- Breadth internals now include S&P 500 percent above 50d/200d moving averages through isolated EODData recent-history ingestion; next breadth work should measure whether these levels and 5d/20d changes improve forward outcome separation beyond RSP/SPY and IWM/SPY.
+- Strengthen credit/liquidity after the first policy loop reveals a measured weakness. Prefer one robust signal per family over many correlated variants.
 
 - Keep `regime snapshot` showing family-level evidence, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
 

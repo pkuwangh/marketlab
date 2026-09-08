@@ -201,6 +201,32 @@ def test_format_market_signals_shows_compact_cross_asset_values() -> None:
     assert "HYG/TLT: 5,20d +0.2%, +0.3%" in table
 
 
+def test_format_market_signals_shows_breadth_participation_values() -> None:
+    signal = _signal(
+        source_date=date(2026, 9, 4),
+        family="breadth",
+        name="participation",
+        score=-1,
+        value=46.91,
+        unit="percent_level",
+        details={
+            "sp500_above_50d": 46.91,
+            "sp500_above_200d": 68.78,
+            "sp500_above_50d_change_5d": -5.97,
+            "sp500_above_200d_change_5d": -1.39,
+            "sp500_above_50d_change_20d": -12.45,
+            "sp500_above_200d_change_20d": -3.98,
+        },
+    )
+
+    table = format_market_signals((signal,))
+
+    assert (
+        "SPX >50/>200 46.9/68.8%; 5d chg -6.0/-1.4pp; "
+        "20d chg -12.4/-4.0pp"
+    ) in table
+
+
 def test_format_market_signals_shows_paired_trend_values() -> None:
     signal = _signal(
         source_date=date(2026, 8, 28),
@@ -229,6 +255,7 @@ def test_format_market_signals_groups_rows_by_family_order() -> None:
     table = format_market_signals(
         (
             _signal(source_date=source_date, family="credit", name="credit_spread", score=1),
+            _signal(source_date=source_date, family="breadth", name="participation", score=1),
             _signal(source_date=source_date, family="volatility", name="vol_of_vol", score=1),
             _signal(source_date=source_date, family="trend", name="price_proxy", score=2),
             _signal(source_date=source_date, family="volatility", name="price_proxy", score=1),
@@ -246,6 +273,11 @@ def test_format_market_signals_groups_rows_by_family_order() -> None:
         "vol_of_vol",
     )
     assert _row_index(table, "volatility", "vol_of_vol") < _row_index(
+        table,
+        "breadth",
+        "participation",
+    )
+    assert _row_index(table, "breadth", "participation") < _row_index(
         table,
         "credit",
         "credit_spread",

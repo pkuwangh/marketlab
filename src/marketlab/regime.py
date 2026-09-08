@@ -35,6 +35,7 @@ from marketlab.prices import (
     PriceDataError,
     PriceFetchResult,
     dedupe_symbols,
+    fetch_and_write_eoddata_index_daily_prices,
     fetch_and_write_yahoo_daily_prices,
     load_price_history,
 )
@@ -52,7 +53,7 @@ from marketlab.snapshots.models import (
 )
 
 DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/derived/regime/market")
-DEFAULT_REGIME_PRICE_SYMBOLS = (
+DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS = (
     "SPY",
     "QQQ",
     "IWM",
@@ -64,6 +65,8 @@ DEFAULT_REGIME_PRICE_SYMBOLS = (
     "^VIX3M",
     "^VVIX",
 )
+DEFAULT_REGIME_BREADTH_SYMBOLS = ("$S5FI", "$S5TH")
+DEFAULT_REGIME_PRICE_SYMBOLS = DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS + DEFAULT_REGIME_BREADTH_SYMBOLS
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v1"
@@ -251,6 +254,8 @@ class RegimeSnapshot:
     vvix_close: float | None
     vix9d_vix_ratio: float | None = None
     vix_vix3m_ratio: float | None = None
+    sp500_above_50d: float | None = None
+    sp500_above_200d: float | None = None
     action_version: str = REGIME_ACTION_VERSION
     action_state: str = "no_change"
     stretch_score: int = 0
@@ -317,6 +322,8 @@ class RegimeSnapshot:
             "vvix_close": self.vvix_close,
             "vix9d_vix_ratio": self.vix9d_vix_ratio,
             "vix_vix3m_ratio": self.vix_vix3m_ratio,
+            "sp500_above_50d": self.sp500_above_50d,
+            "sp500_above_200d": self.sp500_above_200d,
             "action_version": self.action_version,
             "action_state": self.action_state,
             "stretch_score": self.stretch_score,
@@ -597,6 +604,8 @@ class _SymbolFeatures:
     return_5d: float | None
     return_20d: float | None
     return_60d: float | None
+    change_5d: float | None
+    change_20d: float | None
     ma50_distance: float | None
     ma200_distance: float | None
     realized_vol_20d: float | None
@@ -698,6 +707,18 @@ PRESSURE_FEATURE_SPECS = (
         reason="Small-cap participation weakness relative to its own history",
     ),
     _PressureFeatureSpec(
+        family="breadth",
+        name="sp500_above_50d",
+        mode="low_weakness_pressure",
+        reason="S&P 500 50d breadth participation versus its own history",
+    ),
+    _PressureFeatureSpec(
+        family="breadth",
+        name="sp500_above_200d",
+        mode="low_weakness_pressure",
+        reason="S&P 500 200d breadth participation versus its own history",
+    ),
+    _PressureFeatureSpec(
         family="credit",
         name="hyg_tlt_relative_20d",
         mode="low_weakness_pressure",
@@ -751,7 +772,12 @@ PRESSURE_MODULE_SPECS = (
     _PressureModuleSpec(
         family="breadth",
         name="breadth_fragility",
-        feature_names=("rsp_spy_relative_20d", "iwm_spy_relative_20d"),
+        feature_names=(
+            "rsp_spy_relative_20d",
+            "iwm_spy_relative_20d",
+            "sp500_above_50d",
+            "sp500_above_200d",
+        ),
         reason="Participation weakness pressure",
     ),
     _PressureModuleSpec(
@@ -782,16 +808,23 @@ def refresh_regime_prices(
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     symbols: tuple[str, ...] = DEFAULT_REGIME_PRICE_SYMBOLS,
     downloader=None,
+    eoddata_client=None,
 ) -> RegimePriceRefreshResult:
-    """Refresh Yahoo price observations for market regime proxies."""
+    """Refresh price observations for market regime proxies."""
 
     if end_date < start_date:
         raise RegimeError("Price refresh end date must be on or after start date")
 
     requested_symbols = dedupe_symbols(symbols)
+    breadth_symbols = tuple(
+        symbol for symbol in requested_symbols if symbol in DEFAULT_REGIME_BREADTH_SYMBOLS
+    )
+    yahoo_symbols = tuple(
+        symbol for symbol in requested_symbols if symbol not in DEFAULT_REGIME_BREADTH_SYMBOLS
+    )
     price_results: list[PriceFetchResult] = []
     price_failures: list[RegimePriceRefreshFailure] = []
-    for symbol in requested_symbols:
+    for symbol in yahoo_symbols:
         try:
             price_results.extend(
                 fetch_and_write_yahoo_daily_prices(
@@ -800,6 +833,25 @@ def refresh_regime_prices(
                     end_date=end_date,
                     output_root=price_root,
                     downloader=downloader,
+                )
+            )
+        except PriceDataError as exc:
+            price_failures.append(RegimePriceRefreshFailure(symbol=symbol, error=str(exc)))
+            logger.bind(
+                symbol=symbol,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                error=str(exc),
+            ).error("Failed market regime price refresh")
+    for symbol in breadth_symbols:
+        try:
+            price_results.extend(
+                fetch_and_write_eoddata_index_daily_prices(
+                    symbols=(symbol,),
+                    start_date=start_date,
+                    end_date=end_date,
+                    output_root=price_root,
+                    client=eoddata_client,
                 )
             )
         except PriceDataError as exc:
@@ -1209,6 +1261,8 @@ def _regime_snapshot_from_observation_features(
         vvix_close=features["^VVIX"].close,
         vix9d_vix_ratio=_ratio(features["^VIX9D"].close, features["^VIX"].close),
         vix_vix3m_ratio=_ratio(features["^VIX"].close, features["^VIX3M"].close),
+        sp500_above_50d=features["$S5FI"].close,
+        sp500_above_200d=features["$S5TH"].close,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
         market_signal_snapshot_version=snapshot_version,
@@ -1252,6 +1306,11 @@ def _regime_snapshot_from_market_signals(
         family="volatility",
         name="term_structure",
     )
+    participation_signal = _signal_by_name(
+        signals,
+        family="breadth",
+        name="participation",
+    )
     price_date = _signal_detail_date(trend, "price_date") or (
         trend.observed_date if trend else None
     )
@@ -1284,6 +1343,8 @@ def _regime_snapshot_from_market_signals(
         vvix_close=vvix_close,
         vix9d_vix_ratio=_signal_detail_float(term_structure_signal, "vix9d_vix_ratio"),
         vix_vix3m_ratio=_signal_detail_float(term_structure_signal, "vix_vix3m_ratio"),
+        sp500_above_50d=_signal_detail_float(participation_signal, "sp500_above_50d"),
+        sp500_above_200d=_signal_detail_float(participation_signal, "sp500_above_200d"),
         signal_time=signal_time,
         snapshot_version=snapshot_version,
         market_signal_snapshot_version=_shared_market_signal_snapshot_version(signals),
@@ -1480,6 +1541,7 @@ def _market_signals_from_snapshot(
     ]
     signals.append(_vvix_signal(snapshot=snapshot, features=features["^VVIX"]))
     signals.append(_vix_term_structure_signal(snapshot=snapshot, features=features))
+    signals.append(_breadth_participation_signal(snapshot=snapshot, features=features))
     signals.extend(
         _fred_market_signals(
             source_date=snapshot.source_date,
@@ -1708,6 +1770,81 @@ def _vix_term_structure_signal(
         value=vix_vix3m_ratio,
         unit="ratio",
         source="yahoo_vix_term_structure",
+        observed_date=observed_date,
+        availability_date=observed_date,
+        reason=reason,
+        details=details,
+    )
+
+
+def _breadth_participation_signal(
+    *,
+    snapshot: RegimeSnapshot,
+    features: dict[str, _SymbolFeatures],
+) -> MarketSignal:
+    sp500_above_50d = features["$S5FI"]
+    sp500_above_200d = features["$S5TH"]
+    missing_symbols = tuple(
+        symbol
+        for symbol, feature in (("$S5FI", sp500_above_50d), ("$S5TH", sp500_above_200d))
+        if feature.close is None
+    )
+    details = {
+        "sp500_above_50d": sp500_above_50d.close,
+        "sp500_above_200d": sp500_above_200d.close,
+        "sp500_above_50d_change_5d": sp500_above_50d.change_5d,
+        "sp500_above_50d_change_20d": sp500_above_50d.change_20d,
+        "sp500_above_200d_change_5d": sp500_above_200d.change_5d,
+        "sp500_above_200d_change_20d": sp500_above_200d.change_20d,
+        "missing_symbols": list(missing_symbols),
+    }
+    if missing_symbols:
+        return MarketSignal(
+            source_date=snapshot.source_date,
+            feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+            family="breadth",
+            name="participation",
+            status="missing",
+            score=0,
+            value=None,
+            unit="percent_level",
+            source="eoddata:S5FI/S5TH",
+            observed_date=None,
+            availability_date=None,
+            reason="S&P 500 breadth internals are unavailable",
+            details=details,
+        )
+
+    above_50d = sp500_above_50d.close
+    above_200d = sp500_above_200d.close
+    if _le(above_50d, 40.0) or _le(above_200d, 40.0):
+        status = "weak"
+        score = -1
+        reason = "S&P 500 breadth internals show weak participation"
+    elif _ge(above_50d, 60.0) and _ge(above_200d, 55.0):
+        status = "broad"
+        score = 1
+        reason = "S&P 500 breadth internals show broad participation"
+    else:
+        status = "mixed"
+        score = 0
+        reason = "S&P 500 breadth internals are mixed"
+    observed_dates = tuple(
+        feature.price_date
+        for feature in (sp500_above_50d, sp500_above_200d)
+        if feature.price_date is not None
+    )
+    observed_date = max(observed_dates) if observed_dates else None
+    return MarketSignal(
+        source_date=snapshot.source_date,
+        feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+        family="breadth",
+        name="participation",
+        status=status,
+        score=score,
+        value=above_50d,
+        unit="percent_level",
+        source="eoddata:S5FI/S5TH",
         observed_date=observed_date,
         availability_date=observed_date,
         reason=reason,
@@ -2074,6 +2211,8 @@ def _missing_market_signal_count(
         missing_count += 1
     if features["^VIX9D"].price_date is None or features["^VIX3M"].price_date is None:
         missing_count += 1
+    if features["$S5FI"].price_date is None or features["$S5TH"].price_date is None:
+        missing_count += 1
     if market_series["BAMLH0A0HYM2"] is None:
         missing_count += 1
     if market_series["NFCI"] is None:
@@ -2402,19 +2541,32 @@ def _vix_term_structure_turn_feature(
 
 
 def _breadth_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionFeature | None:
-    signal = _signal_by_name(signals, family="breadth", name="price_proxy")
-    rsp_relative_5d = _signal_detail_float(signal, "rsp_spy_relative_5d")
-    iwm_relative_5d = _signal_detail_float(signal, "iwm_spy_relative_5d")
+    proxy_signal = _signal_by_name(signals, family="breadth", name="price_proxy")
+    participation_signal = _signal_by_name(signals, family="breadth", name="participation")
+    rsp_relative_5d = _signal_detail_float(proxy_signal, "rsp_spy_relative_5d")
+    iwm_relative_5d = _signal_detail_float(proxy_signal, "iwm_spy_relative_5d")
+    above_50d_change_5d = _signal_detail_float(
+        participation_signal,
+        "sp500_above_50d_change_5d",
+    )
+    above_200d_change_5d = _signal_detail_float(
+        participation_signal,
+        "sp500_above_200d_change_5d",
+    )
     deterioration = _average_scores(
         (
             _negative_change_score(rsp_relative_5d, full_at=0.025),
             _negative_change_score(iwm_relative_5d, full_at=0.035),
+            _negative_change_score(above_50d_change_5d, full_at=8.0),
+            _negative_change_score(above_200d_change_5d, full_at=5.0),
         )
     )
     stabilization = _average_scores(
         (
             _positive_change_score(rsp_relative_5d, full_at=0.025),
             _positive_change_score(iwm_relative_5d, full_at=0.035),
+            _positive_change_score(above_50d_change_5d, full_at=8.0),
+            _positive_change_score(above_200d_change_5d, full_at=5.0),
         )
     )
     if deterioration is None and stabilization is None:
@@ -2425,8 +2577,11 @@ def _breadth_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionF
         deterioration_score=deterioration or 0.0,
         stabilization_score=stabilization or 0.0,
         reason=(
-            "RSP/SPY and IWM/SPY 5d relative moves "
-            f"{_format_percent(rsp_relative_5d)}/{_format_percent(iwm_relative_5d)}"
+            "Breadth 5d turns "
+            f"RSP/SPY {_format_percent(rsp_relative_5d)}, "
+            f"IWM/SPY {_format_percent(iwm_relative_5d)}, "
+            f"SPX >50d {_format_points(above_50d_change_5d)}, "
+            f"SPX >200d {_format_points(above_200d_change_5d)}"
         ),
     )
 
@@ -2717,6 +2872,7 @@ def _missing_independent_market_signal_count(signals: tuple[MarketSignal, ...]) 
     independent_signals = (
         ("volatility", "vol_of_vol"),
         ("volatility", "term_structure"),
+        ("breadth", "participation"),
         ("credit", "credit_spread"),
         ("liquidity", "financial_conditions"),
         ("rates", "yield_curve"),
@@ -3111,6 +3267,8 @@ def _pressure_feature_values_from_observations(
     vix9d = features.get("^VIX9D", _empty_symbol_features("^VIX9D"))
     vix3m = features.get("^VIX3M", _empty_symbol_features("^VIX3M"))
     vvix = features.get("^VVIX", _empty_symbol_features("^VVIX"))
+    sp500_above_50d = features.get("$S5FI", _empty_symbol_features("$S5FI"))
+    sp500_above_200d = features.get("$S5TH", _empty_symbol_features("$S5TH"))
     ten_year = market_series.get("DGS10")
     two_year = market_series.get("DGS2")
     return {
@@ -3126,6 +3284,8 @@ def _pressure_feature_values_from_observations(
         "vix_vix3m_ratio": _ratio(vix.close, vix3m.close),
         "rsp_spy_relative_20d": _relative_return(rsp, spy),
         "iwm_spy_relative_20d": _relative_return(iwm, spy),
+        "sp500_above_50d": sp500_above_50d.close,
+        "sp500_above_200d": sp500_above_200d.close,
         "hyg_tlt_relative_20d": _relative_return(hyg, tlt),
         "credit_spread": _market_series_value(market_series.get("BAMLH0A0HYM2")),
         "financial_conditions": _market_series_value(market_series.get("NFCI")),
@@ -3155,6 +3315,8 @@ def _pressure_feature_values_from_snapshot(
         "vix_vix3m_ratio": snapshot.vix_vix3m_ratio,
         "rsp_spy_relative_20d": snapshot.rsp_spy_relative_20d,
         "iwm_spy_relative_20d": snapshot.iwm_spy_relative_20d,
+        "sp500_above_50d": snapshot.sp500_above_50d,
+        "sp500_above_200d": snapshot.sp500_above_200d,
         "hyg_tlt_relative_20d": snapshot.hyg_tlt_relative_20d,
         "credit_spread": _signal_value(signals, family="credit", name="credit_spread"),
         "financial_conditions": _signal_value(
@@ -3174,6 +3336,7 @@ def _pressure_feature_values_from_signals(
     volatility = _signal_by_name(signals, family="volatility", name="price_proxy")
     term_structure = _signal_by_name(signals, family="volatility", name="term_structure")
     breadth = _signal_by_name(signals, family="breadth", name="price_proxy")
+    participation = _signal_by_name(signals, family="breadth", name="participation")
     credit = _signal_by_name(signals, family="credit", name="price_proxy")
     return {
         "spy_return_20d": _signal_detail_float(trend, "spy_return_20d"),
@@ -3188,6 +3351,8 @@ def _pressure_feature_values_from_signals(
         "vix_vix3m_ratio": _signal_detail_float(term_structure, "vix_vix3m_ratio"),
         "rsp_spy_relative_20d": _signal_detail_float(breadth, "rsp_spy_relative_20d"),
         "iwm_spy_relative_20d": _signal_detail_float(breadth, "iwm_spy_relative_20d"),
+        "sp500_above_50d": _signal_detail_float(participation, "sp500_above_50d"),
+        "sp500_above_200d": _signal_detail_float(participation, "sp500_above_200d"),
         "hyg_tlt_relative_20d": _signal_detail_float(credit, "hyg_tlt_relative_20d"),
         "credit_spread": _signal_value(signals, family="credit", name="credit_spread"),
         "financial_conditions": _signal_value(
@@ -4162,6 +4327,8 @@ def _symbol_features(
         return_5d=_lookback_return(history, index=index, lookback=5),
         return_20d=_lookback_return(history, index=index, lookback=20),
         return_60d=_lookback_return(history, index=index, lookback=60),
+        change_5d=_lookback_change(history, index=index, lookback=5),
+        change_20d=_lookback_change(history, index=index, lookback=20),
         ma50_distance=_moving_average_distance(history, index=index, window=50),
         ma200_distance=_moving_average_distance(history, index=index, window=200),
         realized_vol_20d=_realized_volatility(history, index=index, lookback=20),
@@ -4176,6 +4343,8 @@ def _empty_symbol_features(symbol: str) -> _SymbolFeatures:
         return_5d=None,
         return_20d=None,
         return_60d=None,
+        change_5d=None,
+        change_20d=None,
         ma50_distance=None,
         ma200_distance=None,
         realized_vol_20d=None,
@@ -4499,6 +4668,18 @@ def _lookback_return(
     return history[index].return_close / past_close - 1.0
 
 
+def _lookback_change(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int,
+    lookback: int,
+) -> float | None:
+    past_index = index - lookback
+    if past_index < 0:
+        return None
+    return history[index].return_close - history[past_index].return_close
+
+
 def _moving_average_distance(
     history: tuple[DailyPriceObservation, ...],
     *,
@@ -4546,6 +4727,10 @@ def _lt(value: float | None, threshold: float) -> bool:
     return value is not None and value < threshold
 
 
+def _le(value: float | None, threshold: float) -> bool:
+    return value is not None and value <= threshold
+
+
 def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
     source_date = date.fromisoformat(str(row["source_date"]))
     signal_time = str(row.get("signal_time", SignalTime.EOD.value))
@@ -4585,6 +4770,8 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         vvix_close=_optional_float(row.get("vvix_close")),
         vix9d_vix_ratio=_optional_float(row.get("vix9d_vix_ratio")),
         vix_vix3m_ratio=_optional_float(row.get("vix_vix3m_ratio")),
+        sp500_above_50d=_optional_float(row.get("sp500_above_50d")),
+        sp500_above_200d=_optional_float(row.get("sp500_above_200d")),
         action_version=str(row.get("action_version", REGIME_ACTION_VERSION)),
         action_state=str(row.get("action_state", "no_change")),
         stretch_score=int(row.get("stretch_score", 0)),
@@ -4703,6 +4890,8 @@ def _format_pressure_raw(feature: RegimePressureFeature) -> str:
         or feature.name == "spy_realized_vol_20d"
     ):
         return _format_percent(value)
+    if feature.name in {"sp500_above_50d", "sp500_above_200d"}:
+        return f"{value:.1f}%"
     if feature.name == "credit_spread":
         return f"{value:.2f}%"
     if feature.name == "yield_curve":
@@ -4738,6 +4927,12 @@ def _format_index(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:.2f}"
+
+
+def _format_points(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:+.1f}pp"
 
 
 def _format_drawdown(value: float | None) -> str:
