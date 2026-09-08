@@ -36,6 +36,7 @@ MARKET_SIGNAL_FAMILY_ORDER = {
 MARKET_SIGNAL_NAME_ORDER = {
     "price_proxy": 0,
     "vol_of_vol": 1,
+    "term_structure": 2,
     "credit_spread": 1,
     "financial_conditions": 1,
     "yield_curve": 1,
@@ -329,6 +330,54 @@ def _format_signal_value(signal: MarketSignal) -> str:
         )
         return value or _format_value(signal.value, signal.unit)
 
+    if signal.family == "volatility" and signal.name == "term_structure":
+        vix9d_vix = _format_detail_scalar(
+            signal.details,
+            key="vix9d_vix_ratio",
+            unit="ratio",
+        )
+        vix9d_vix_move = _format_signal_value_values(
+            (
+                _format_detail_scalar(
+                    signal.details,
+                    key="vix9d_vix_ratio_change_5d",
+                    unit="percent",
+                ),
+                _format_detail_scalar(
+                    signal.details,
+                    key="vix9d_vix_ratio_change_20d",
+                    unit="percent",
+                ),
+            )
+        )
+        vix_vix3m = _format_detail_scalar(
+            signal.details,
+            key="vix_vix3m_ratio",
+            unit="ratio",
+        )
+        vix_vix3m_move = _format_signal_value_values(
+            (
+                _format_detail_scalar(
+                    signal.details,
+                    key="vix_vix3m_ratio_change_5d",
+                    unit="percent",
+                ),
+                _format_detail_scalar(
+                    signal.details,
+                    key="vix_vix3m_ratio_change_20d",
+                    unit="percent",
+                ),
+            )
+        )
+        value = _format_signal_value_sections(
+            (
+                ("VIX9D/VIX", _format_value_with_move(vix9d_vix, vix9d_vix_move)),
+                ("VIX/VIX3M", _format_value_with_move(vix_vix3m, vix_vix3m_move)),
+            ),
+            label_separator=" ",
+        )
+        return value or _format_value(signal.value, signal.unit)
+
     if signal.family == "breadth" and signal.name == "price_proxy":
         rsp_spy = _format_detail_pair(
             signal.details,
@@ -443,6 +492,14 @@ def _format_signal_value_sections(
 def _format_signal_value_values(values: tuple[str | None, ...]) -> str:
     available = tuple(value for value in values if value is not None and value != "-")
     return ", ".join(available) if available else "-"
+
+
+def _format_value_with_move(value: str | None, move: str) -> str:
+    if value is None and move == "-":
+        return "-"
+    if move == "-":
+        return value or "-"
+    return f"{value or '-'}; 5,20d move {move}"
 
 
 def _format_detail_pair(

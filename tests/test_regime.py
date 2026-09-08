@@ -122,6 +122,18 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     )
     _write_price_history(
         price_root,
+        symbol="^VIX9D",
+        start=start,
+        closes=[15.0 for _index in range(230)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="^VIX3M",
+        start=start,
+        closes=[19.0 for _index in range(230)],
+    )
+    _write_price_history(
+        price_root,
         symbol="^VVIX",
         start=start,
         closes=[85.0 for _index in range(230)],
@@ -187,7 +199,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.washout_score == int(round(result.snapshot.washout_pressure_score * 5))
     assert result.snapshot.protect_strength < 0.55
     assert result.snapshot.redeploy_strength < 0.55
-    assert len(result.pressure.features) == 14
+    assert len(result.pressure.features) == 16
     assert [module.name for module in result.pressure.modules] == [
         "trend_extension",
         "vol_complacency",
@@ -203,6 +215,8 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         "spy_realized_vol_20d",
         "vix_close",
         "vvix_close",
+        "vix9d_vix_ratio",
+        "vix_vix3m_ratio",
     )
     assert "spy_return_20d" in result.pressure_table
     assert result.snapshot.missing_symbols == ()
@@ -221,18 +235,22 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
         ("breadth", "price_proxy"),
         ("credit", "price_proxy"),
         ("volatility", "vol_of_vol"),
+        ("volatility", "term_structure"),
         ("credit", "credit_spread"),
         ("liquidity", "financial_conditions"),
         ("rates", "yield_curve"),
     ]
     assert "price_proxy" in result.signal_table
     assert "vol_of_vol" in result.signal_table
+    assert "term_structure" in result.signal_table
     assert "value" in result.signal_table
     assert "current" not in result.signal_table
     assert "recent" not in result.signal_table
     assert "context" not in result.signal_table
     assert "VIX 16.00; 5,20d move +0.0%, +0.0%; SPY rv20" in result.signal_table
     assert "VVIX 85.00; 5,20d move +0.0%, +0.0%" in result.signal_table
+    assert "VIX9D/VIX 0.94; 5,20d move +0.0%, +0.0%" in result.signal_table
+    assert "VIX/VIX3M 0.84; 5,20d move +0.0%, +0.0%" in result.signal_table
     assert "SPY/QQQ: 20,60d" in result.signal_table
     assert "MA50,200" in result.signal_table
     assert "RSP/SPY: 5,20d" in result.signal_table
@@ -307,6 +325,8 @@ def test_compute_regime_snapshot_includes_fred_change_details(tmp_path: Path) ->
         ("HYG", 80.0, 0.10),
         ("TLT", 100.0, -0.05),
         ("^VIX", 16.0, 0.0),
+        ("^VIX9D", 15.0, 0.0),
+        ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
     ):
         _write_price_history(
@@ -398,6 +418,8 @@ def test_compute_regime_snapshot_overwrite_repairs_same_version_snapshot(
         ("HYG", 80.0, 0.10),
         ("TLT", 100.0, -0.05),
         ("^VIX", 16.0, 0.0),
+        ("^VIX9D", 15.0, 0.0),
+        ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
     ):
         _write_price_history(
@@ -497,6 +519,8 @@ def test_compute_regime_backfill_writes_daily_snapshots(tmp_path: Path) -> None:
         ("HYG", 80.0, 0.10),
         ("TLT", 100.0, -0.05),
         ("^VIX", 16.0, 0.0),
+        ("^VIX9D", 15.0, 0.0),
+        ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
     ):
         _write_price_history(
@@ -576,6 +600,8 @@ def test_compute_regime_backfill_skips_existing_same_version_snapshot(
         ("HYG", 80.0, 0.10),
         ("TLT", 100.0, -0.05),
         ("^VIX", 16.0, 0.0),
+        ("^VIX9D", 15.0, 0.0),
+        ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
     ):
         _write_price_history(
@@ -851,6 +877,8 @@ def test_compute_regime_snapshot_ignores_saved_market_signal_boundary(tmp_path: 
         ("HYG", 80.0, 0.10),
         ("TLT", 100.0, -0.05),
         ("^VIX", 16.0, 0.0),
+        ("^VIX9D", 15.0, 0.0),
+        ("^VIX3M", 19.0, 0.0),
         ("^VVIX", 85.0, 0.0),
     ):
         _write_price_history(
@@ -1115,11 +1143,15 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         "HYG",
         "TLT",
         "^VIX",
+        "^VIX9D",
+        "^VIX3M",
         "^VVIX",
     )
     assert calls == list(result.requested_symbols)
-    assert len(result.price_results) == 8
-    assert result.price_results[-2].observation_path.name == "INDEX_VIX.jsonl"
+    assert len(result.price_results) == 10
+    assert result.price_results[-4].observation_path.name == "INDEX_VIX.jsonl"
+    assert result.price_results[-3].observation_path.name == "INDEX_VIX9D.jsonl"
+    assert result.price_results[-2].observation_path.name == "INDEX_VIX3M.jsonl"
     assert result.price_results[-1].observation_path.name == "INDEX_VVIX.jsonl"
     assert result.price_failures == ()
 

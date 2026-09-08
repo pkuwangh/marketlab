@@ -906,7 +906,8 @@ marketlab/
 - Keep hardening the market-signal artifact layer as the evidence boundary for regime and policy. The current model consumes generated signal rows; next steps are longer-history calibration, measured source expansion, and a standalone signal-production command only if the regime workflow becomes too coupled.
 
 - Continue Market Signal Expansion only where source access is practical and measured outcome replay improves:
-  - VIX term structure and realized-vs-implied volatility where the data source is reliable.
+  - VIX term structure is now in the first expansion slice through VIX9D/VIX and VIX/VIX3M ratios; next volatility additions should wait for measured replay value.
+  - Realized-vs-implied volatility where the data source is reliable.
   - Fear/greed-style sentiment or equivalent risk-appetite observations from a stable source-specific importer.
   - Put/call or positioning proxies only after source semantics are clear.
 

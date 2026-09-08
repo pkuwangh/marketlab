@@ -52,7 +52,18 @@ from marketlab.snapshots.models import (
 )
 
 DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/derived/regime/market")
-DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX", "^VVIX")
+DEFAULT_REGIME_PRICE_SYMBOLS = (
+    "SPY",
+    "QQQ",
+    "IWM",
+    "RSP",
+    "HYG",
+    "TLT",
+    "^VIX",
+    "^VIX9D",
+    "^VIX3M",
+    "^VVIX",
+)
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v1"
@@ -238,6 +249,8 @@ class RegimeSnapshot:
     hyg_tlt_relative_20d: float | None
     vix_close: float | None
     vvix_close: float | None
+    vix9d_vix_ratio: float | None = None
+    vix_vix3m_ratio: float | None = None
     action_version: str = REGIME_ACTION_VERSION
     action_state: str = "no_change"
     stretch_score: int = 0
@@ -302,6 +315,8 @@ class RegimeSnapshot:
             "hyg_tlt_relative_20d": self.hyg_tlt_relative_20d,
             "vix_close": self.vix_close,
             "vvix_close": self.vvix_close,
+            "vix9d_vix_ratio": self.vix9d_vix_ratio,
+            "vix_vix3m_ratio": self.vix_vix3m_ratio,
             "action_version": self.action_version,
             "action_state": self.action_state,
             "stretch_score": self.stretch_score,
@@ -659,6 +674,18 @@ PRESSURE_FEATURE_SPECS = (
         reason="VVIX normalized as complacency versus panic",
     ),
     _PressureFeatureSpec(
+        family="volatility",
+        name="vix9d_vix_ratio",
+        mode="low_stretch_high_washout",
+        reason="VIX9D/VIX term ratio normalized as contango versus near-term stress",
+    ),
+    _PressureFeatureSpec(
+        family="volatility",
+        name="vix_vix3m_ratio",
+        mode="low_stretch_high_washout",
+        reason="VIX/VIX3M term ratio normalized as contango versus backwardation",
+    ),
+    _PressureFeatureSpec(
         family="breadth",
         name="rsp_spy_relative_20d",
         mode="low_weakness_pressure",
@@ -712,7 +739,13 @@ PRESSURE_MODULE_SPECS = (
     _PressureModuleSpec(
         family="volatility",
         name="vol_complacency",
-        feature_names=("spy_realized_vol_20d", "vix_close", "vvix_close"),
+        feature_names=(
+            "spy_realized_vol_20d",
+            "vix_close",
+            "vvix_close",
+            "vix9d_vix_ratio",
+            "vix_vix3m_ratio",
+        ),
         reason="Volatility complacency and panic pressure",
     ),
     _PressureModuleSpec(
@@ -1174,6 +1207,8 @@ def _regime_snapshot_from_observation_features(
         hyg_tlt_relative_20d=_relative_return(features["HYG"], features["TLT"]),
         vix_close=features["^VIX"].close,
         vvix_close=features["^VVIX"].close,
+        vix9d_vix_ratio=_ratio(features["^VIX9D"].close, features["^VIX"].close),
+        vix_vix3m_ratio=_ratio(features["^VIX"].close, features["^VIX3M"].close),
         signal_time=signal_time,
         snapshot_version=snapshot_version,
         market_signal_snapshot_version=snapshot_version,
@@ -1212,6 +1247,11 @@ def _regime_snapshot_from_market_signals(
     vvix_close = _signal_value(signals, family="volatility", name="vol_of_vol")
     if vvix_close is None:
         vvix_close = _signal_detail_float(vvix_signal, "vvix_close")
+    term_structure_signal = _signal_by_name(
+        signals,
+        family="volatility",
+        name="term_structure",
+    )
     price_date = _signal_detail_date(trend, "price_date") or (
         trend.observed_date if trend else None
     )
@@ -1242,6 +1282,8 @@ def _regime_snapshot_from_market_signals(
         hyg_tlt_relative_20d=_signal_detail_float(credit, "hyg_tlt_relative_20d"),
         vix_close=_signal_detail_float(volatility, "vix_close"),
         vvix_close=vvix_close,
+        vix9d_vix_ratio=_signal_detail_float(term_structure_signal, "vix9d_vix_ratio"),
+        vix_vix3m_ratio=_signal_detail_float(term_structure_signal, "vix_vix3m_ratio"),
         signal_time=signal_time,
         snapshot_version=snapshot_version,
         market_signal_snapshot_version=_shared_market_signal_snapshot_version(signals),
@@ -1437,6 +1479,7 @@ def _market_signals_from_snapshot(
         for component in snapshot.components
     ]
     signals.append(_vvix_signal(snapshot=snapshot, features=features["^VVIX"]))
+    signals.append(_vix_term_structure_signal(snapshot=snapshot, features=features))
     signals.extend(
         _fred_market_signals(
             source_date=snapshot.source_date,
@@ -1576,6 +1619,99 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
             "vvix_return_20d": features.return_20d,
             "missing_symbols": [],
         },
+    )
+
+
+def _vix_term_structure_signal(
+    *,
+    snapshot: RegimeSnapshot,
+    features: dict[str, _SymbolFeatures],
+) -> MarketSignal:
+    vix9d = features["^VIX9D"]
+    vix = features["^VIX"]
+    vix3m = features["^VIX3M"]
+    vix9d_vix_ratio = _ratio(vix9d.close, vix.close)
+    vix_vix3m_ratio = _ratio(vix.close, vix3m.close)
+    missing_symbols = tuple(
+        symbol
+        for symbol, feature in (("^VIX9D", vix9d), ("^VIX", vix), ("^VIX3M", vix3m))
+        if feature.close is None
+    )
+    details = {
+        "vix9d_close": vix9d.close,
+        "vix_close": vix.close,
+        "vix3m_close": vix3m.close,
+        "vix9d_vix_ratio": vix9d_vix_ratio,
+        "vix_vix3m_ratio": vix_vix3m_ratio,
+        "vix9d_vix_ratio_change_5d": _relative_ratio_return(
+            vix9d,
+            vix,
+            field_name="return_5d",
+        ),
+        "vix9d_vix_ratio_change_20d": _relative_ratio_return(
+            vix9d,
+            vix,
+            field_name="return_20d",
+        ),
+        "vix_vix3m_ratio_change_5d": _relative_ratio_return(
+            vix,
+            vix3m,
+            field_name="return_5d",
+        ),
+        "vix_vix3m_ratio_change_20d": _relative_ratio_return(
+            vix,
+            vix3m,
+            field_name="return_20d",
+        ),
+        "missing_symbols": list(missing_symbols),
+    }
+    if missing_symbols or (vix9d_vix_ratio is None and vix_vix3m_ratio is None):
+        return MarketSignal(
+            source_date=snapshot.source_date,
+            feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+            family="volatility",
+            name="term_structure",
+            status="missing",
+            score=0,
+            value=None,
+            unit="ratio",
+            source="yahoo_vix_term_structure",
+            observed_date=None,
+            availability_date=None,
+            reason="VIX9D/VIX/VIX3M term structure is unavailable",
+            details=details,
+        )
+
+    if _ge(vix_vix3m_ratio, 1.0) or _ge(vix9d_vix_ratio, 1.10):
+        status = "inverted"
+        score = -1
+        reason = "VIX term structure shows near-term stress"
+    elif _lt(vix_vix3m_ratio, 0.90) and _lt(vix9d_vix_ratio, 0.95):
+        status = "contango"
+        score = 1
+        reason = "VIX term structure is upward sloping"
+    else:
+        status = "mixed"
+        score = 0
+        reason = "VIX term structure is mixed"
+    observed_dates = tuple(
+        feature.price_date for feature in (vix9d, vix, vix3m) if feature.price_date is not None
+    )
+    observed_date = max(observed_dates) if observed_dates else None
+    return MarketSignal(
+        source_date=snapshot.source_date,
+        feature_version=MARKET_SIGNAL_FEATURE_VERSION,
+        family="volatility",
+        name="term_structure",
+        status=status,
+        score=score,
+        value=vix_vix3m_ratio,
+        unit="ratio",
+        source="yahoo_vix_term_structure",
+        observed_date=observed_date,
+        availability_date=observed_date,
+        reason=reason,
+        details=details,
     )
 
 
@@ -1936,6 +2072,8 @@ def _missing_market_signal_count(
     missing_count = 0
     if features["^VVIX"].price_date is None:
         missing_count += 1
+    if features["^VIX9D"].price_date is None or features["^VIX3M"].price_date is None:
+        missing_count += 1
     if market_series["BAMLH0A0HYM2"] is None:
         missing_count += 1
     if market_series["NFCI"] is None:
@@ -2153,6 +2291,7 @@ def _action_turn_features(
         _trend_turn_feature(snapshot=snapshot),
         _vix_turn_feature(signals=signals),
         _vvix_turn_feature(snapshot=snapshot, signals=signals),
+        _vix_term_structure_turn_feature(signals=signals),
         _breadth_turn_feature(signals=signals),
         _hyg_tlt_turn_feature(signals=signals),
         _credit_spread_turn_feature(signals=signals),
@@ -2226,6 +2365,39 @@ def _vvix_turn_feature(
         deterioration_score=deterioration,
         stabilization_score=_negative_change_score(vvix_return_5d, full_at=0.12),
         reason=f"VVIX 5d move {_format_percent(vvix_return_5d)}",
+    )
+
+
+def _vix_term_structure_turn_feature(
+    *,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="volatility", name="term_structure")
+    vix9d_vix_change_5d = _signal_detail_float(signal, "vix9d_vix_ratio_change_5d")
+    vix_vix3m_change_5d = _signal_detail_float(signal, "vix_vix3m_ratio_change_5d")
+    deterioration = _average_scores(
+        (
+            _positive_change_score(vix9d_vix_change_5d, full_at=0.10),
+            _positive_change_score(vix_vix3m_change_5d, full_at=0.08),
+        )
+    )
+    stabilization = _average_scores(
+        (
+            _negative_change_score(vix9d_vix_change_5d, full_at=0.10),
+            _negative_change_score(vix_vix3m_change_5d, full_at=0.08),
+        )
+    )
+    if deterioration is None and stabilization is None:
+        return None
+    return RegimeActionFeature(
+        family="volatility",
+        name="term_structure_turn",
+        deterioration_score=deterioration or 0.0,
+        stabilization_score=stabilization or 0.0,
+        reason=(
+            "VIX term-ratio 5d moves "
+            f"{_format_percent(vix9d_vix_change_5d)}/{_format_percent(vix_vix3m_change_5d)}"
+        ),
     )
 
 
@@ -2544,6 +2716,7 @@ def _missing_symbols_from_signals(signals: tuple[MarketSignal, ...]) -> tuple[st
 def _missing_independent_market_signal_count(signals: tuple[MarketSignal, ...]) -> int:
     independent_signals = (
         ("volatility", "vol_of_vol"),
+        ("volatility", "term_structure"),
         ("credit", "credit_spread"),
         ("liquidity", "financial_conditions"),
         ("rates", "yield_curve"),
@@ -2935,6 +3108,8 @@ def _pressure_feature_values_from_observations(
     hyg = features.get("HYG", _empty_symbol_features("HYG"))
     tlt = features.get("TLT", _empty_symbol_features("TLT"))
     vix = features.get("^VIX", _empty_symbol_features("^VIX"))
+    vix9d = features.get("^VIX9D", _empty_symbol_features("^VIX9D"))
+    vix3m = features.get("^VIX3M", _empty_symbol_features("^VIX3M"))
     vvix = features.get("^VVIX", _empty_symbol_features("^VVIX"))
     ten_year = market_series.get("DGS10")
     two_year = market_series.get("DGS2")
@@ -2947,6 +3122,8 @@ def _pressure_feature_values_from_observations(
         "spy_realized_vol_20d": spy.realized_vol_20d,
         "vix_close": vix.close,
         "vvix_close": vvix.close,
+        "vix9d_vix_ratio": _ratio(vix9d.close, vix.close),
+        "vix_vix3m_ratio": _ratio(vix.close, vix3m.close),
         "rsp_spy_relative_20d": _relative_return(rsp, spy),
         "iwm_spy_relative_20d": _relative_return(iwm, spy),
         "hyg_tlt_relative_20d": _relative_return(hyg, tlt),
@@ -2974,6 +3151,8 @@ def _pressure_feature_values_from_snapshot(
         "spy_realized_vol_20d": snapshot.spy_realized_vol_20d,
         "vix_close": snapshot.vix_close,
         "vvix_close": snapshot.vvix_close,
+        "vix9d_vix_ratio": snapshot.vix9d_vix_ratio,
+        "vix_vix3m_ratio": snapshot.vix_vix3m_ratio,
         "rsp_spy_relative_20d": snapshot.rsp_spy_relative_20d,
         "iwm_spy_relative_20d": snapshot.iwm_spy_relative_20d,
         "hyg_tlt_relative_20d": snapshot.hyg_tlt_relative_20d,
@@ -2993,6 +3172,7 @@ def _pressure_feature_values_from_signals(
 ) -> dict[str, float | None]:
     trend = _signal_by_name(signals, family="trend", name="price_proxy")
     volatility = _signal_by_name(signals, family="volatility", name="price_proxy")
+    term_structure = _signal_by_name(signals, family="volatility", name="term_structure")
     breadth = _signal_by_name(signals, family="breadth", name="price_proxy")
     credit = _signal_by_name(signals, family="credit", name="price_proxy")
     return {
@@ -3004,6 +3184,8 @@ def _pressure_feature_values_from_signals(
         "spy_realized_vol_20d": _signal_detail_float(volatility, "spy_realized_vol_20d"),
         "vix_close": _signal_detail_float(volatility, "vix_close"),
         "vvix_close": _signal_value(signals, family="volatility", name="vol_of_vol"),
+        "vix9d_vix_ratio": _signal_detail_float(term_structure, "vix9d_vix_ratio"),
+        "vix_vix3m_ratio": _signal_detail_float(term_structure, "vix_vix3m_ratio"),
         "rsp_spy_relative_20d": _signal_detail_float(breadth, "rsp_spy_relative_20d"),
         "iwm_spy_relative_20d": _signal_detail_float(breadth, "iwm_spy_relative_20d"),
         "hyg_tlt_relative_20d": _signal_detail_float(credit, "hyg_tlt_relative_20d"),
@@ -4224,6 +4406,28 @@ def _relative_return_for_lookback(
     return left_return - right_return
 
 
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
+
+
+def _relative_ratio_return(
+    numerator: _SymbolFeatures,
+    denominator: _SymbolFeatures,
+    *,
+    field_name: str,
+) -> float | None:
+    numerator_return = getattr(numerator, field_name)
+    denominator_return = getattr(denominator, field_name)
+    if numerator_return is None or denominator_return is None:
+        return None
+    denominator_factor = 1.0 + denominator_return
+    if denominator_factor <= 0.0:
+        return None
+    return (1.0 + numerator_return) / denominator_factor - 1.0
+
+
 def _asof_index(history: tuple[DailyPriceObservation, ...], source_date: date) -> int | None:
     for index in range(len(history) - 1, -1, -1):
         if history[index].availability_date and history[index].availability_date <= source_date:
@@ -4379,6 +4583,8 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         hyg_tlt_relative_20d=_optional_float(row["hyg_tlt_relative_20d"]),
         vix_close=_optional_float(row["vix_close"]),
         vvix_close=_optional_float(row.get("vvix_close")),
+        vix9d_vix_ratio=_optional_float(row.get("vix9d_vix_ratio")),
+        vix_vix3m_ratio=_optional_float(row.get("vix_vix3m_ratio")),
         action_version=str(row.get("action_version", REGIME_ACTION_VERSION)),
         action_state=str(row.get("action_state", "no_change")),
         stretch_score=int(row.get("stretch_score", 0)),
@@ -4501,6 +4707,8 @@ def _format_pressure_raw(feature: RegimePressureFeature) -> str:
         return f"{value:.2f}%"
     if feature.name == "yield_curve":
         return f"{value:+.2f}pp"
+    if feature.name.endswith("_ratio"):
+        return f"{value:.2f}"
     return _format_index(value)
 
 

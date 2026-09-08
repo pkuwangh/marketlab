@@ -93,7 +93,7 @@ because vendors can revise adjusted prices. Same-version regime artifacts are re
 outputs under `data/derived/regime/market`; source observations remain under `data/observations`.
 Saved policy and candidate snapshots are still treated as research records for their own workflows.
 Index symbols keep their source symbol in each row, but use filesystem-safe cache names such as
-`INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
+`INDEX_VIX.jsonl`, `INDEX_VIX9D.jsonl`, `INDEX_VIX3M.jsonl`, and `INDEX_VVIX.jsonl`.
 FRED market-series backfills use the current available local vintage; they are useful for research,
 but they are not true historical FRED vintages.
 Regime computation always starts from local price/FRED observations. Market-signal rows are
@@ -103,7 +103,7 @@ outcome replay, not immutable snapshots and not an input cache.
 The current score uses:
 
 - SPY/QQQ trend and moving-average posture.
-- SPY realized volatility and VIX.
+- SPY realized volatility, VIX/VVIX, and VIX9D/VIX/VIX3M term structure.
 - RSP/SPY and IWM/SPY participation.
 - HYG/TLT risk appetite.
 
