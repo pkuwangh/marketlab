@@ -283,6 +283,8 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert "credit_spread" in result.signal_table
     assert "financial_conditions" in result.signal_table
     assert "yield_curve" in result.signal_table
+    assert "cross_factor_relationships" in result.action_table
+    assert "No active action evidence" in result.action_table
     summary_table = format_regime_key_signals(result)
     assert "regime" in summary_table
     assert "risk_on (+5)" in summary_table
@@ -309,6 +311,60 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert loaded is not None
     assert loaded.action_state == "no_change"
     assert loaded.stretch_pressure_score == result.snapshot.stretch_pressure_score
+
+
+def test_compute_regime_snapshot_rejects_stale_vix_term_structure(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 15)
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=source_date - timedelta(days=29),
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="^VIX",
+        start=source_date - timedelta(days=29),
+        closes=[16.0 for _index in range(30)],
+    )
+    stale_start = source_date - timedelta(days=49)
+    _write_price_history(
+        price_root,
+        symbol="^VIX9D",
+        start=stale_start,
+        closes=[15.0 for _index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="^VIX3M",
+        start=stale_start,
+        closes=[19.0 for _index in range(30)],
+    )
+
+    result = compute_regime_snapshot(
+        source_date=source_date,
+        price_root=price_root,
+        snapshot_root=tmp_path / "snapshots",
+        signal_snapshot_root=tmp_path / "signals",
+        write_snapshot=False,
+    )
+
+    term_signal = next(
+        signal
+        for signal in result.signals
+        if signal.family == "volatility" and signal.name == "term_structure"
+    )
+    assert term_signal.status == "missing"
+    assert term_signal.reason == "VIX9D/VIX/VIX3M term structure is unavailable on aligned dates"
+    assert term_signal.details["vix_observed_date"] == source_date.isoformat()
+    assert term_signal.details["vix9d_observed_date"] == (
+        source_date - timedelta(days=20)
+    ).isoformat()
+    assert term_signal.details["stale_pairs"] == ["VIX9D/VIX", "VIX/VIX3M"]
+    assert result.snapshot.vix9d_vix_ratio is None
+    assert result.snapshot.vix_vix3m_ratio is None
+    assert "volatility/term_structure" in format_regime_key_signals(result)
 
 
 def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path) -> None:
@@ -720,6 +776,150 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
     assert action.redeploy_strength < action.protect_strength
     assert "Stretch setup plus deterioration evidence" in action.reason
     assert "VVIX 5d move" in action.reason
+
+
+def test_derive_regime_action_state_detects_cross_factor_divergence() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_on",
+        score=5,
+        spy_return_20d=0.04,
+        qqq_return_20d=0.03,
+        stretch_pressure_score=0.75,
+        washout_pressure_score=0.02,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="breadth",
+                name="price_proxy",
+                status="narrow",
+                score=-1,
+                value="weak breadth",
+                details={
+                    "rsp_spy_relative_5d": -0.03,
+                    "iwm_spy_relative_5d": -0.04,
+                },
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="breadth",
+                name="participation",
+                status="weak",
+                score=-1,
+                value=35.0,
+                details={
+                    "sp500_above_50d_change_5d": -10.0,
+                    "sp500_above_200d_change_5d": -6.0,
+                },
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="credit",
+                name="price_proxy",
+                status="weak",
+                score=-1,
+                value="HYG/TLT weak",
+                details={"hyg_tlt_relative_5d": -0.04},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="credit",
+                name="credit_spread",
+                status="mixed",
+                score=0,
+                value=4.0,
+                details={"credit_spread_change_5d": 0.40},
+            ),
+        ),
+    )
+
+    cross_features = {
+        feature.name: feature
+        for feature in action.action_features
+        if feature.family == "cross_factor"
+    }
+    assert action.state == "scale_down_protect"
+    assert cross_features["price_breadth_divergence"].evidence_kind == "divergence"
+    assert cross_features["price_breadth_divergence"].deterioration_score > 0.0
+    assert cross_features["equity_credit_divergence"].evidence_kind == "divergence"
+    assert cross_features["equity_credit_divergence"].deterioration_score > 0.0
+    cross_module = next(
+        module for module in action.action_modules if module.family == "cross_factor"
+    )
+    assert "price_breadth_divergence" in cross_module.feature_names
+    assert "equity_credit_divergence" in cross_module.feature_names
+    assert cross_module.deterioration_score > 0.0
+
+
+def test_action_modules_bound_each_family_contribution() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_on",
+        score=5,
+        spy_return_20d=None,
+        qqq_return_20d=None,
+        vix_close=30.0,
+        stretch_pressure_score=0.80,
+        washout_pressure_score=0.02,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="price_proxy",
+                status="stressed",
+                score=-1,
+                value="VIX 30.0",
+                details={"vix_return_5d": 0.15},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="stressed",
+                score=-1,
+                value=130.0,
+                details={"vvix_return_5d": 0.12},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="term_structure",
+                status="inverted",
+                score=-1,
+                value=1.0,
+                details={
+                    "vix9d_vix_ratio_change_5d": 0.10,
+                    "vix_vix3m_ratio_change_5d": 0.08,
+                },
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="breadth",
+                name="price_proxy",
+                status="mixed",
+                score=0,
+                value="slightly weak breadth",
+                details={"rsp_spy_relative_5d": -0.005},
+            ),
+        ),
+    )
+
+    volatility_module = next(
+        module for module in action.action_modules if module.family == "volatility"
+    )
+    breadth_module = next(module for module in action.action_modules if module.family == "breadth")
+    assert volatility_module.feature_count == 3
+    assert volatility_module.deterioration_score == pytest.approx(1.0)
+    assert breadth_module.deterioration_score == pytest.approx(0.2)
+    assert action.deterioration_score == pytest.approx(0.6)
 
 
 def test_write_regime_snapshot_keeps_signal_times_separate(tmp_path: Path) -> None:

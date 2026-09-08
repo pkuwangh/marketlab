@@ -215,6 +215,7 @@ class RegimeActionFeature:
     deterioration_score: float
     stabilization_score: float
     reason: str
+    evidence_kind: str = "turn"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -222,6 +223,31 @@ class RegimeActionFeature:
             "name": self.name,
             "deterioration_score": self.deterioration_score,
             "stabilization_score": self.stabilization_score,
+            "reason": self.reason,
+            "evidence_kind": self.evidence_kind,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeActionModule:
+    """One bounded action-evidence contribution composed from leaf features."""
+
+    family: str
+    name: str
+    deterioration_score: float
+    stabilization_score: float
+    feature_count: int
+    feature_names: tuple[str, ...]
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "family": self.family,
+            "name": self.name,
+            "deterioration_score": self.deterioration_score,
+            "stabilization_score": self.stabilization_score,
+            "feature_count": self.feature_count,
+            "feature_names": list(self.feature_names),
             "reason": self.reason,
         }
 
@@ -268,6 +294,7 @@ class RegimeSnapshot:
     action_confidence: str = "low"
     action_reason: str = "Action state not computed"
     action_features: tuple[RegimeActionFeature, ...] = ()
+    action_modules: tuple[RegimeActionModule, ...] = ()
     pressure_version: str = REGIME_PRESSURE_VERSION
     stretch_pressure_score: float | None = None
     washout_pressure_score: float | None = None
@@ -336,6 +363,7 @@ class RegimeSnapshot:
             "action_confidence": self.action_confidence,
             "action_reason": self.action_reason,
             "action_features": [feature.to_dict() for feature in self.action_features],
+            "action_modules": [module.to_dict() for module in self.action_modules],
             "pressure_version": self.pressure_version,
             "stretch_pressure_score": self.stretch_pressure_score,
             "washout_pressure_score": self.washout_pressure_score,
@@ -365,6 +393,7 @@ class RegimeActionState:
     redeploy_strength: float = 0.0
     action_score: float = 0.0
     action_features: tuple[RegimeActionFeature, ...] = ()
+    action_modules: tuple[RegimeActionModule, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -382,6 +411,7 @@ class RegimeActionState:
             "reason": self.reason,
             "evidence": list(self.evidence),
             "action_features": [feature.to_dict() for feature in self.action_features],
+            "action_modules": [module.to_dict() for module in self.action_modules],
         }
 
 
@@ -400,6 +430,7 @@ class RegimeSnapshotResult:
     action: RegimeActionState | None = None
     pressure: RegimePressureSnapshot | None = None
     pressure_table: str = ""
+    action_table: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1136,6 +1167,7 @@ def _compute_regime_snapshot_from_histories(
         action=action,
         pressure=pressure,
         pressure_table=format_regime_pressure_features(pressure.features),
+        action_table=format_regime_action_modules(action.action_modules),
     )
 
 
@@ -1259,8 +1291,8 @@ def _regime_snapshot_from_observation_features(
         hyg_tlt_relative_20d=_relative_return(features["HYG"], features["TLT"]),
         vix_close=features["^VIX"].close,
         vvix_close=features["^VVIX"].close,
-        vix9d_vix_ratio=_ratio(features["^VIX9D"].close, features["^VIX"].close),
-        vix_vix3m_ratio=_ratio(features["^VIX"].close, features["^VIX3M"].close),
+        vix9d_vix_ratio=_aligned_ratio(features["^VIX9D"], features["^VIX"]),
+        vix_vix3m_ratio=_aligned_ratio(features["^VIX"], features["^VIX3M"]),
         sp500_above_50d=features["$S5FI"].close,
         sp500_above_200d=features["$S5TH"].close,
         signal_time=signal_time,
@@ -1492,6 +1524,26 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
     return _format_table(rows)
 
 
+def format_regime_action_modules(modules: tuple[RegimeActionModule, ...]) -> str:
+    """Format bounded action-evidence modules as a compact table."""
+
+    if not modules:
+        return "No regime action evidence modules found."
+
+    rows = [["family", "module", "D", "R", "active_evidence"]]
+    for module in modules:
+        rows.append(
+            [
+                module.family,
+                module.name,
+                _format_pressure_score(module.deterioration_score),
+                _format_pressure_score(module.stabilization_score),
+                module.reason,
+            ]
+        )
+    return _format_table(rows)
+
+
 def _missing_market_input_labels(
     *,
     snapshot: RegimeSnapshot,
@@ -1692,40 +1744,45 @@ def _vix_term_structure_signal(
     vix9d = features["^VIX9D"]
     vix = features["^VIX"]
     vix3m = features["^VIX3M"]
-    vix9d_vix_ratio = _ratio(vix9d.close, vix.close)
-    vix_vix3m_ratio = _ratio(vix.close, vix3m.close)
+    vix9d_vix_ratio = _aligned_ratio(vix9d, vix)
+    vix_vix3m_ratio = _aligned_ratio(vix, vix3m)
     missing_symbols = tuple(
         symbol
         for symbol, feature in (("^VIX9D", vix9d), ("^VIX", vix), ("^VIX3M", vix3m))
         if feature.close is None
     )
+    stale_pairs = _vix_term_structure_stale_pairs(vix9d=vix9d, vix=vix, vix3m=vix3m)
     details = {
         "vix9d_close": vix9d.close,
         "vix_close": vix.close,
         "vix3m_close": vix3m.close,
+        "vix9d_observed_date": vix9d.price_date.isoformat() if vix9d.price_date else None,
+        "vix_observed_date": vix.price_date.isoformat() if vix.price_date else None,
+        "vix3m_observed_date": vix3m.price_date.isoformat() if vix3m.price_date else None,
         "vix9d_vix_ratio": vix9d_vix_ratio,
         "vix_vix3m_ratio": vix_vix3m_ratio,
-        "vix9d_vix_ratio_change_5d": _relative_ratio_return(
+        "vix9d_vix_ratio_change_5d": _aligned_relative_ratio_return(
             vix9d,
             vix,
             field_name="return_5d",
         ),
-        "vix9d_vix_ratio_change_20d": _relative_ratio_return(
+        "vix9d_vix_ratio_change_20d": _aligned_relative_ratio_return(
             vix9d,
             vix,
             field_name="return_20d",
         ),
-        "vix_vix3m_ratio_change_5d": _relative_ratio_return(
+        "vix_vix3m_ratio_change_5d": _aligned_relative_ratio_return(
             vix,
             vix3m,
             field_name="return_5d",
         ),
-        "vix_vix3m_ratio_change_20d": _relative_ratio_return(
+        "vix_vix3m_ratio_change_20d": _aligned_relative_ratio_return(
             vix,
             vix3m,
             field_name="return_20d",
         ),
         "missing_symbols": list(missing_symbols),
+        "stale_pairs": list(stale_pairs),
     }
     if missing_symbols or (vix9d_vix_ratio is None and vix_vix3m_ratio is None):
         return MarketSignal(
@@ -1740,7 +1797,7 @@ def _vix_term_structure_signal(
             source="yahoo_vix_term_structure",
             observed_date=None,
             availability_date=None,
-            reason="VIX9D/VIX/VIX3M term structure is unavailable",
+            reason="VIX9D/VIX/VIX3M term structure is unavailable on aligned dates",
             details=details,
         )
 
@@ -1756,9 +1813,7 @@ def _vix_term_structure_signal(
         status = "mixed"
         score = 0
         reason = "VIX term structure is mixed"
-    observed_dates = tuple(
-        feature.price_date for feature in (vix9d, vix, vix3m) if feature.price_date is not None
-    )
+    observed_dates = _vix_term_structure_observed_dates(vix9d=vix9d, vix=vix, vix3m=vix3m)
     observed_date = max(observed_dates) if observed_dates else None
     return MarketSignal(
         source_date=snapshot.source_date,
@@ -2209,7 +2264,14 @@ def _missing_market_signal_count(
     missing_count = 0
     if features["^VVIX"].price_date is None:
         missing_count += 1
-    if features["^VIX9D"].price_date is None or features["^VIX3M"].price_date is None:
+    if (
+        features["^VIX9D"].price_date is None
+        or features["^VIX3M"].price_date is None
+        or (
+            _aligned_ratio(features["^VIX9D"], features["^VIX"]) is None
+            and _aligned_ratio(features["^VIX"], features["^VIX3M"]) is None
+        )
+    ):
         missing_count += 1
     if features["$S5FI"].price_date is None or features["$S5TH"].price_date is None:
         missing_count += 1
@@ -2280,13 +2342,14 @@ def derive_regime_action_state(
     )
     stretch_score = _action_setup_bucket(stretch_setup_score)
     washout_score = _action_setup_bucket(washout_setup_score)
-    action_features = _action_turn_features(snapshot=snapshot, signals=signals)
-    deterioration_score = _action_feature_average(
-        action_features,
+    action_features = _action_features(snapshot=snapshot, signals=signals)
+    action_modules = _action_modules(action_features)
+    deterioration_score = _action_module_average(
+        action_modules,
         field_name="deterioration_score",
     )
-    stabilization_score = _action_feature_average(
-        action_features,
+    stabilization_score = _action_module_average(
+        action_modules,
         field_name="stabilization_score",
     )
     protect_strength = math.sqrt(stretch_setup_score * deterioration_score)
@@ -2345,6 +2408,7 @@ def derive_regime_action_state(
             protect_strength=protect_strength,
             redeploy_strength=redeploy_strength,
             signals=signals,
+            action_features=action_features,
         ),
         reason=_action_reason(reason=reason, evidence=evidence),
         evidence=evidence,
@@ -2354,6 +2418,7 @@ def derive_regime_action_state(
         redeploy_strength=redeploy_strength,
         action_score=action_score,
         action_features=action_features,
+        action_modules=action_modules,
     )
 
 
@@ -2376,6 +2441,7 @@ def _snapshot_with_action(
         action_confidence=action.confidence,
         action_reason=action.reason,
         action_features=action.action_features,
+        action_modules=action.action_modules,
     )
 
 
@@ -2393,14 +2459,14 @@ def _action_setup_bucket(score: float) -> int:
     return int(round(_clamp(score, 0.0, 1.0) * 5))
 
 
-def _action_feature_average(
-    features: tuple[RegimeActionFeature, ...],
+def _action_module_average(
+    modules: tuple[RegimeActionModule, ...],
     *,
     field_name: str,
 ) -> float:
     scores = tuple(
         score
-        for score in sorted((getattr(feature, field_name) for feature in features), reverse=True)
+        for score in sorted((getattr(module, field_name) for module in modules), reverse=True)
         if score > 0.0
     )
     if not scores:
@@ -2421,7 +2487,79 @@ def _action_feature_evidence(
     )
 
 
-def _action_turn_features(
+def _action_modules(features: tuple[RegimeActionFeature, ...]) -> tuple[RegimeActionModule, ...]:
+    module_specs = (
+        ("trend", "trend_turn"),
+        ("volatility", "volatility_turn"),
+        ("breadth", "breadth_turn"),
+        ("credit", "credit_turn"),
+        ("liquidity", "liquidity_turn"),
+        ("cross_factor", "cross_factor_relationships"),
+    )
+    return tuple(
+        module
+        for family, name in module_specs
+        if (
+            module := _action_module(
+                family=family,
+                name=name,
+                features=tuple(feature for feature in features if feature.family == family),
+            )
+        )
+        is not None
+    )
+
+
+def _action_module(
+    *,
+    family: str,
+    name: str,
+    features: tuple[RegimeActionFeature, ...],
+) -> RegimeActionModule | None:
+    if not features:
+        return None
+
+    active_features = tuple(
+        feature
+        for feature in features
+        if feature.deterioration_score > 0.0 or feature.stabilization_score > 0.0
+    )
+    feature_names = tuple(feature.name for feature in active_features)
+    reason = (
+        ", ".join(
+            f"{feature.evidence_kind}:{feature.name}" for feature in active_features
+        )
+        if active_features
+        else "No active action evidence"
+    )
+    return RegimeActionModule(
+        family=family,
+        name=name,
+        deterioration_score=_action_feature_score(features, field_name="deterioration_score"),
+        stabilization_score=_action_feature_score(features, field_name="stabilization_score"),
+        feature_count=len(active_features),
+        feature_names=feature_names,
+        reason=reason,
+    )
+
+
+def _action_feature_score(
+    features: tuple[RegimeActionFeature, ...],
+    *,
+    field_name: str,
+) -> float:
+    scores = tuple(
+        score
+        for score in sorted((getattr(feature, field_name) for feature in features), reverse=True)
+        if score > 0.0
+    )
+    if not scores:
+        return 0.0
+    top_scores = scores[:3]
+    return sum(top_scores) / len(top_scores)
+
+
+def _action_features(
     *,
     snapshot: RegimeSnapshot,
     signals: tuple[MarketSignal, ...],
@@ -2435,6 +2573,7 @@ def _action_turn_features(
         _hyg_tlt_turn_feature(signals=signals),
         _credit_spread_turn_feature(signals=signals),
         _financial_conditions_turn_feature(signals=signals),
+        *_cross_factor_action_features(snapshot=snapshot, signals=signals),
     ]
     return tuple(feature for feature in features if feature is not None)
 
@@ -2631,6 +2770,304 @@ def _financial_conditions_turn_feature(
     )
 
 
+def _cross_factor_action_features(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> tuple[RegimeActionFeature, ...]:
+    features = (
+        _vvix_leading_vix_higher_feature(snapshot=snapshot, signals=signals),
+        _volatility_normalization_confirmation_feature(signals=signals),
+        _price_breadth_divergence_feature(snapshot=snapshot, signals=signals),
+        _equity_credit_divergence_feature(snapshot=snapshot, signals=signals),
+        _breadth_credit_confirmation_feature(signals=signals),
+        _rebound_not_confirmed_by_credit_feature(snapshot=snapshot, signals=signals),
+    )
+    return tuple(feature for feature in features if feature is not None)
+
+
+def _vvix_leading_vix_higher_feature(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    vix_signal = _signal_by_name(signals, family="volatility", name="price_proxy")
+    vvix_signal = _signal_by_name(signals, family="volatility", name="vol_of_vol")
+    vix_return_5d = _signal_detail_float(vix_signal, "vix_return_5d")
+    vvix_return_5d = _signal_detail_float(vvix_signal, "vvix_return_5d")
+    if vvix_return_5d is None:
+        return None
+
+    low_vix_score = (
+        _positive_change_score(vvix_return_5d, full_at=0.12)
+        if _le(snapshot.vix_close, 16.0)
+        else None
+    )
+    relative_score = None
+    relative_change = None
+    if vix_return_5d is not None:
+        relative_change = vvix_return_5d - vix_return_5d
+        relative_score = _positive_change_score(relative_change, full_at=0.12)
+    deterioration = _max_scores((low_vix_score, relative_score)) or 0.0
+    return RegimeActionFeature(
+        family="cross_factor",
+        name="vvix_leading_vix_higher",
+        deterioration_score=deterioration,
+        stabilization_score=0.0,
+        evidence_kind="divergence",
+        reason=(
+            "VVIX vs VIX 5d "
+            f"{_format_percent(vvix_return_5d)}/{_format_percent(vix_return_5d)}; "
+            f"lead {_format_percent(relative_change)}; VIX {_format_index(snapshot.vix_close)}"
+        ),
+    )
+
+
+def _volatility_normalization_confirmation_feature(
+    *,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    vvix_signal = _signal_by_name(signals, family="volatility", name="vol_of_vol")
+    term_signal = _signal_by_name(signals, family="volatility", name="term_structure")
+    vvix_return_5d = _signal_detail_float(vvix_signal, "vvix_return_5d")
+    vix9d_vix_change_5d = _signal_detail_float(term_signal, "vix9d_vix_ratio_change_5d")
+    vix_vix3m_change_5d = _signal_detail_float(term_signal, "vix_vix3m_ratio_change_5d")
+    vvix_score = _negative_change_score(vvix_return_5d, full_at=0.12)
+    term_score = _average_scores(
+        (
+            _negative_change_score(vix9d_vix_change_5d, full_at=0.10),
+            _negative_change_score(vix_vix3m_change_5d, full_at=0.08),
+        )
+    )
+    if vvix_score is None and term_score is None:
+        return None
+    stabilization = _gated_score(vvix_score, term_score)
+    return RegimeActionFeature(
+        family="cross_factor",
+        name="volatility_normalization_confirmation",
+        deterioration_score=0.0,
+        stabilization_score=stabilization,
+        evidence_kind="confirmation",
+        reason=(
+            "VVIX and VIX term ratios 5d "
+            f"{_format_percent(vvix_return_5d)}, "
+            f"{_format_percent(vix9d_vix_change_5d)}/"
+            f"{_format_percent(vix_vix3m_change_5d)}"
+        ),
+    )
+
+
+def _price_breadth_divergence_feature(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    price_score = _price_stable_or_rising_score(snapshot)
+    breadth_damage = _breadth_deterioration_score(signals)
+    if price_score is None and breadth_damage is None:
+        return None
+    deterioration = _gated_score(price_score, breadth_damage)
+    return RegimeActionFeature(
+        family="cross_factor",
+        name="price_breadth_divergence",
+        deterioration_score=deterioration,
+        stabilization_score=0.0,
+        evidence_kind="divergence",
+        reason=(
+            "SPY/QQQ stable while breadth weakens: "
+            f"price gate {_format_pressure_score(price_score)}, "
+            f"breadth damage {_format_pressure_score(breadth_damage)}"
+        ),
+    )
+
+
+def _equity_credit_divergence_feature(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    price_score = _price_stable_or_rising_score(snapshot)
+    credit_damage = _credit_liquidity_deterioration_score(signals)
+    if price_score is None and credit_damage is None:
+        return None
+    deterioration = _gated_score(price_score, credit_damage)
+    return RegimeActionFeature(
+        family="cross_factor",
+        name="equity_credit_divergence",
+        deterioration_score=deterioration,
+        stabilization_score=0.0,
+        evidence_kind="divergence",
+        reason=(
+            "SPY/QQQ stable while credit/liquidity weakens: "
+            f"price gate {_format_pressure_score(price_score)}, "
+            f"funding damage {_format_pressure_score(credit_damage)}"
+        ),
+    )
+
+
+def _breadth_credit_confirmation_feature(
+    *,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    breadth_recovery = _breadth_recovery_score(signals)
+    funding_recovery = _credit_liquidity_stabilization_score(signals)
+    if breadth_recovery is None and funding_recovery is None:
+        return None
+    stabilization = _gated_score(breadth_recovery, funding_recovery)
+    return RegimeActionFeature(
+        family="cross_factor",
+        name="breadth_credit_confirmation",
+        deterioration_score=0.0,
+        stabilization_score=stabilization,
+        evidence_kind="confirmation",
+        reason=(
+            "Breadth and credit/liquidity recovery: "
+            f"breadth {_format_pressure_score(breadth_recovery)}, "
+            f"funding {_format_pressure_score(funding_recovery)}"
+        ),
+    )
+
+
+def _rebound_not_confirmed_by_credit_feature(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    price_rebound = _price_stable_or_rising_score(snapshot)
+    breadth_recovery = _breadth_recovery_score(signals)
+    rebound_score = _max_scores((price_rebound, breadth_recovery))
+    credit_damage = _credit_liquidity_deterioration_score(signals)
+    if rebound_score is None and credit_damage is None:
+        return None
+    contradiction = _gated_score(rebound_score, credit_damage) * 0.5
+    return RegimeActionFeature(
+        family="cross_factor",
+        name="rebound_not_confirmed_by_credit",
+        deterioration_score=contradiction,
+        stabilization_score=0.0,
+        evidence_kind="contradiction",
+        reason=(
+            "Rebound lacks credit/liquidity confirmation: "
+            f"rebound {_format_pressure_score(rebound_score)}, "
+            f"funding damage {_format_pressure_score(credit_damage)}"
+        ),
+    )
+
+
+def _price_stable_or_rising_score(snapshot: RegimeSnapshot) -> float | None:
+    price_return = _average((snapshot.spy_return_20d, snapshot.qqq_return_20d))
+    if price_return is None:
+        return None
+    return 1.0 if price_return >= 0.0 else 0.0
+
+
+def _breadth_deterioration_score(signals: tuple[MarketSignal, ...]) -> float | None:
+    proxy_signal = _signal_by_name(signals, family="breadth", name="price_proxy")
+    participation_signal = _signal_by_name(signals, family="breadth", name="participation")
+    return _average_scores(
+        (
+            _negative_change_score(
+                _signal_detail_float(proxy_signal, "rsp_spy_relative_5d"),
+                full_at=0.025,
+            ),
+            _negative_change_score(
+                _signal_detail_float(proxy_signal, "iwm_spy_relative_5d"),
+                full_at=0.035,
+            ),
+            _negative_change_score(
+                _signal_detail_float(participation_signal, "sp500_above_50d_change_5d"),
+                full_at=8.0,
+            ),
+            _negative_change_score(
+                _signal_detail_float(participation_signal, "sp500_above_200d_change_5d"),
+                full_at=5.0,
+            ),
+        )
+    )
+
+
+def _breadth_recovery_score(signals: tuple[MarketSignal, ...]) -> float | None:
+    proxy_signal = _signal_by_name(signals, family="breadth", name="price_proxy")
+    participation_signal = _signal_by_name(signals, family="breadth", name="participation")
+    return _average_scores(
+        (
+            _positive_change_score(
+                _signal_detail_float(proxy_signal, "rsp_spy_relative_5d"),
+                full_at=0.025,
+            ),
+            _positive_change_score(
+                _signal_detail_float(proxy_signal, "iwm_spy_relative_5d"),
+                full_at=0.035,
+            ),
+            _positive_change_score(
+                _signal_detail_float(participation_signal, "sp500_above_50d_change_5d"),
+                full_at=8.0,
+            ),
+            _positive_change_score(
+                _signal_detail_float(participation_signal, "sp500_above_200d_change_5d"),
+                full_at=5.0,
+            ),
+        )
+    )
+
+
+def _credit_liquidity_deterioration_score(signals: tuple[MarketSignal, ...]) -> float | None:
+    credit_proxy = _signal_by_name(signals, family="credit", name="price_proxy")
+    credit_spread = _signal_by_name(signals, family="credit", name="credit_spread")
+    liquidity = _signal_by_name(signals, family="liquidity", name="financial_conditions")
+    return _average_scores(
+        (
+            _negative_change_score(
+                _signal_detail_float(credit_proxy, "hyg_tlt_relative_5d"),
+                full_at=0.03,
+            ),
+            _positive_change_score(
+                _signal_detail_float(credit_spread, "credit_spread_change_5d"),
+                full_at=0.30,
+            ),
+            _positive_change_score(
+                _signal_detail_float(liquidity, "financial_conditions_change_4w"),
+                full_at=0.15,
+            ),
+        )
+    )
+
+
+def _credit_liquidity_stabilization_score(signals: tuple[MarketSignal, ...]) -> float | None:
+    credit_proxy = _signal_by_name(signals, family="credit", name="price_proxy")
+    credit_spread = _signal_by_name(signals, family="credit", name="credit_spread")
+    liquidity = _signal_by_name(signals, family="liquidity", name="financial_conditions")
+    return _average_scores(
+        (
+            _positive_change_score(
+                _signal_detail_float(credit_proxy, "hyg_tlt_relative_5d"),
+                full_at=0.03,
+            ),
+            _negative_change_score(
+                _signal_detail_float(credit_spread, "credit_spread_change_5d"),
+                full_at=0.30,
+            ),
+            _negative_change_score(
+                _signal_detail_float(liquidity, "financial_conditions_change_4w"),
+                full_at=0.15,
+            ),
+        )
+    )
+
+
+def _gated_score(first: float | None, second: float | None) -> float:
+    if first is None or second is None or first <= 0.0 or second <= 0.0:
+        return 0.0
+    return math.sqrt(first * second)
+
+
+def _max_scores(scores: tuple[float | None, ...]) -> float | None:
+    clean_scores = tuple(score for score in scores if score is not None)
+    if not clean_scores:
+        return None
+    return max(clean_scores)
+
+
 def _positive_change_score(value: float | None, *, full_at: float) -> float | None:
     if value is None:
         return None
@@ -2761,6 +3198,7 @@ def _action_confidence(
     protect_strength: float,
     redeploy_strength: float,
     signals: tuple[MarketSignal, ...],
+    action_features: tuple[RegimeActionFeature, ...] = (),
 ) -> str:
     strongest = max(protect_strength, redeploy_strength)
     if state == "no_change":
@@ -2771,6 +3209,11 @@ def _action_confidence(
     if not signals:
         return _downgrade_confidence(confidence, steps=1)
     if any(signal.status == "missing" for signal in signals):
+        return _downgrade_confidence(confidence, steps=1)
+    if state == "scale_up_redeploy" and any(
+        feature.evidence_kind == "contradiction" and feature.deterioration_score >= 0.25
+        for feature in action_features
+    ):
         return _downgrade_confidence(confidence, steps=1)
     return confidence
 
@@ -3044,8 +3487,27 @@ def _pressure_feature(
             reason="No point-in-time value available",
         )
 
+    current_sample = next(
+        (sample for sample in reversed(clean_samples) if sample.asof_date == source_date),
+        None,
+    )
+    if current_sample is None:
+        return RegimePressureFeature(
+            source_date=source_date,
+            pressure_version=REGIME_PRESSURE_VERSION,
+            family=spec.family,
+            name=spec.name,
+            raw_value=None,
+            percentile=None,
+            normalized_score=None,
+            stretch_score=None,
+            washout_score=None,
+            sample_count=len(clean_samples[-PRESSURE_LOOKBACK_SAMPLES:]),
+            reason="No point-in-time value available",
+        )
+
     lookback_samples = clean_samples[-PRESSURE_LOOKBACK_SAMPLES:]
-    raw_value = lookback_samples[-1].value
+    raw_value = current_sample.value
     sample_count = len(lookback_samples)
     if sample_count < MIN_PRESSURE_FEATURE_SAMPLES:
         return RegimePressureFeature(
@@ -3280,8 +3742,8 @@ def _pressure_feature_values_from_observations(
         "spy_realized_vol_20d": spy.realized_vol_20d,
         "vix_close": vix.close,
         "vvix_close": vvix.close,
-        "vix9d_vix_ratio": _ratio(vix9d.close, vix.close),
-        "vix_vix3m_ratio": _ratio(vix.close, vix3m.close),
+        "vix9d_vix_ratio": _aligned_ratio(vix9d, vix),
+        "vix_vix3m_ratio": _aligned_ratio(vix, vix3m),
         "rsp_spy_relative_20d": _relative_return(rsp, spy),
         "iwm_spy_relative_20d": _relative_return(iwm, spy),
         "sp500_above_50d": sp500_above_50d.close,
@@ -3552,6 +4014,7 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         redeploy_strength=snapshot.redeploy_strength,
         action_score=snapshot.action_score,
         action_features=snapshot.action_features,
+        action_modules=snapshot.action_modules,
     )
 
 
@@ -4581,6 +5044,16 @@ def _ratio(numerator: float | None, denominator: float | None) -> float | None:
     return numerator / denominator
 
 
+def _aligned_ratio(numerator: _SymbolFeatures, denominator: _SymbolFeatures) -> float | None:
+    if (
+        numerator.price_date is None
+        or denominator.price_date is None
+        or numerator.price_date != denominator.price_date
+    ):
+        return None
+    return _ratio(numerator.close, denominator.close)
+
+
 def _relative_ratio_return(
     numerator: _SymbolFeatures,
     denominator: _SymbolFeatures,
@@ -4595,6 +5068,57 @@ def _relative_ratio_return(
     if denominator_factor <= 0.0:
         return None
     return (1.0 + numerator_return) / denominator_factor - 1.0
+
+
+def _aligned_relative_ratio_return(
+    numerator: _SymbolFeatures,
+    denominator: _SymbolFeatures,
+    *,
+    field_name: str,
+) -> float | None:
+    if (
+        numerator.price_date is None
+        or denominator.price_date is None
+        or numerator.price_date != denominator.price_date
+    ):
+        return None
+    return _relative_ratio_return(numerator, denominator, field_name=field_name)
+
+
+def _vix_term_structure_stale_pairs(
+    *,
+    vix9d: _SymbolFeatures,
+    vix: _SymbolFeatures,
+    vix3m: _SymbolFeatures,
+) -> tuple[str, ...]:
+    stale_pairs: list[str] = []
+    if _has_mismatched_price_dates(vix9d, vix):
+        stale_pairs.append("VIX9D/VIX")
+    if _has_mismatched_price_dates(vix, vix3m):
+        stale_pairs.append("VIX/VIX3M")
+    return tuple(stale_pairs)
+
+
+def _vix_term_structure_observed_dates(
+    *,
+    vix9d: _SymbolFeatures,
+    vix: _SymbolFeatures,
+    vix3m: _SymbolFeatures,
+) -> tuple[date, ...]:
+    observed_dates = []
+    if _aligned_ratio(vix9d, vix) is not None and vix.price_date is not None:
+        observed_dates.append(vix.price_date)
+    if _aligned_ratio(vix, vix3m) is not None and vix.price_date is not None:
+        observed_dates.append(vix.price_date)
+    return tuple(observed_dates)
+
+
+def _has_mismatched_price_dates(left: _SymbolFeatures, right: _SymbolFeatures) -> bool:
+    return (
+        left.price_date is not None
+        and right.price_date is not None
+        and left.price_date != right.price_date
+    )
 
 
 def _asof_index(history: tuple[DailyPriceObservation, ...], source_date: date) -> int | None:
@@ -4745,6 +5269,11 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
     action_features = tuple(
         _action_feature_from_dict(feature) for feature in row.get("action_features", ())
     )
+    action_modules = (
+        tuple(_action_module_from_dict(module) for module in row.get("action_modules", ()))
+        if "action_modules" in row
+        else _action_modules(action_features)
+    )
     return RegimeSnapshot(
         source_date=source_date,
         feature_version=str(row["feature_version"]),
@@ -4784,6 +5313,7 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         action_confidence=str(row.get("action_confidence", "low")),
         action_reason=str(row.get("action_reason", "Action state not computed")),
         action_features=action_features,
+        action_modules=action_modules,
         pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),
         stretch_pressure_score=_optional_float(row.get("stretch_pressure_score")),
         washout_pressure_score=_optional_float(row.get("washout_pressure_score")),
@@ -4805,6 +5335,19 @@ def _action_feature_from_dict(row: dict[str, Any]) -> RegimeActionFeature:
         name=str(row["name"]),
         deterioration_score=float(row["deterioration_score"]),
         stabilization_score=float(row["stabilization_score"]),
+        reason=str(row["reason"]),
+        evidence_kind=str(row.get("evidence_kind", "turn")),
+    )
+
+
+def _action_module_from_dict(row: dict[str, Any]) -> RegimeActionModule:
+    return RegimeActionModule(
+        family=str(row["family"]),
+        name=str(row["name"]),
+        deterioration_score=float(row["deterioration_score"]),
+        stabilization_score=float(row["stabilization_score"]),
+        feature_count=int(row["feature_count"]),
+        feature_names=tuple(str(name) for name in row["feature_names"]),
         reason=str(row["reason"]),
     )
 

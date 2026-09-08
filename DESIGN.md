@@ -1,7 +1,7 @@
 # Market Regime & Large-Cap Opportunity Research System
 
 **High-Level Design - Version 1.0**
-**Status:** Two-engine, local-first research loop with Gmail recap acquisition, reproducible snapshots, rare-action regime policy, and rebuildable DuckDB query state
+**Status:** Pre-debut, local-first research loop with an EOD market-regime engine, Gmail recap acquisition, replaceable derived regime artifacts, candidate/policy snapshots, and rebuildable DuckDB query state
 **Primary audience:** coding/research agents and the human researcher
 
 > **Purpose:** Build a durable, testable research process that (1) sizes marginal market exposure while maintaining a permanent long-term core in SPY/QQQ and (2) identifies unusually attractive multi-month opportunities in large, fundamentally viable, options-liquid individual stocks.
@@ -17,7 +17,7 @@
 | Dry powder     | Preserve flexibility and reduce portfolio beta                   | Cash / cash equivalents                                          |
 | Overlay        | Monetize or reshape exposure around the core                     | Covered calls, cash-secured puts, defined-risk option structures |
 
-This document stays at the system-design level while including the implementation architecture needed for reproducibility: Python orchestration, bounded agents, immutable time snapshots, local-first storage, an incremental Codex-to-API runtime path, and a visualization layer designed for both exploratory research and auditable backtests. The research system has two coordinated engines: a SPY/QQQ market-regime engine and a large-cap single-name opportunity engine.
+This document stays at the system-design level while including the implementation architecture needed for reproducibility: Python orchestration, bounded agents, point-in-time source observations, research snapshots, replaceable derived artifacts during pre-debut model work, local-first storage, and a visualization layer designed for both exploratory research and auditable backtests. The research system has two coordinated engines: a SPY/QQQ market-regime engine and a large-cap single-name opportunity engine.
 
 The market-regime engine is the current implementation priority. Bulltard is useful candidate-generation evidence for the single-name engine, but it is not the source of truth for overall market regime. Market regime should be built primarily from independent market inputs such as index price structure, volatility structure, breadth, credit/liquidity, and sentiment/positioning.
 
@@ -177,29 +177,29 @@ The current operating path is an explicitly invoked CLI workflow, not an automat
 
 ## Suggested initial storage
 
-A lightweight local research stack is the default: JSON/JSONL artifacts are the durable source of truth, DuckDB is a rebuildable query layer, and Parquet exports are optional. Source artifacts and parsed subscription observations should be reproducible. Derived regime outputs and market-signal artifacts are rebuildable model products, so they belong under `data/derived` and may be replaced by their producing workflow. Fetched vendor market-data files are a refreshable local cache and may upsert corrected overlapping rows. Normalized tables and feature tables should reference the source snapshot and version that produced them. Suggested logical tables include market_prices, volatility, breadth, macro, sentiment, security_master, universe_membership, security_fundamentals, option_liquidity, daily_features, regime_artifacts, single_name_features, opportunity_snapshots, candidate_state_transitions, bulltard_recaps, bulltard_signals, portfolio_snapshots, research_experiments, model_versions, and signal_outcomes.
+A lightweight local research stack is the default: JSON/JSONL artifacts are the durable source of truth, DuckDB is a rebuildable query layer, and Parquet exports are optional. Source artifacts and parsed subscription observations should be reproducible. Derived regime outputs and market-signal artifacts are rebuildable model products, so they belong under `data/derived` and may be replaced by their producing workflow. Fetched vendor market-data files are a refreshable local cache and may upsert corrected overlapping rows. Normalized tables and feature tables should reference the source observations, artifact identities, and versions that produced them. Suggested logical tables include market_prices, volatility, breadth, macro, sentiment, security_master, universe_membership, security_fundamentals, option_liquidity, daily_features, regime_artifacts, single_name_features, opportunity_snapshots, candidate_state_transitions, bulltard_recaps, bulltard_signals, portfolio_snapshots, research_experiments, model_versions, and signal_outcomes.
 
 # 4. Time, Artifacts & Reproducibility
 
-Time consistency is a first-class requirement. A model run must never mean "fetch whatever is latest and calculate." Every official regime or single-name opportunity calculation must consume named, dated source observations or snapshots so that the historical input state can be reproduced later. Derived model artifacts are rebuildable outputs, not the immutability boundary.
+Time consistency is a first-class requirement. A model run must never mean "fetch whatever is latest and calculate." Every official regime or single-name opportunity calculation must consume named, dated source observations or snapshots so that the historical input state can be reconstructed later. Derived model artifacts are rebuildable outputs, not the immutability boundary.
 
 ## Canonical time modes
 
 | Mode             | Purpose                                                                                      | Status / rule                                                              |
 |------------------|----------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
-| Prior close      | Pre-market research using only information available through the previous completed session. | Stable once the prior session closes.                                      |
-| Intraday preview | Understand how the regime may be evolving during the current session.                        | Provisional; allowed to change and never treated as the scientific record. |
-| End of day (EOD) | Canonical daily regime **and opportunity state** for research, backtests, and longitudinal performance tracking. | Official; frozen after the defined market-close/data-availability cutoff. |
+| End of day (EOD) | Canonical daily regime and opportunity state for research, backtests, and longitudinal performance tracking. | Current supported mode for date-level market workflows. |
+| Prior close      | Future pre-market research using only information available through the previous completed session. | Unsupported until timestamp-aware observations exist. |
+| Intraday preview | Future view of how the regime may be evolving during the current session.                    | Unsupported for official records; any future support must be visibly provisional. |
 
 ## Official signal semantics
 
-- The canonical daily regime and opportunity state should use a clearly defined EOD/data-availability cutoff because the project targets multi-month horizons; intraday fluctuations should not continuously rewrite the strategic research record.
+- The canonical daily regime and opportunity state use EOD signal timing because the current market inputs are date-level observations. `prior_close` and `intraday_preview` should reject for date-level regime workflows until timestamp-aware inputs are introduced.
 
-- A historical request for an official date must return the same result regardless of when the program is run later, provided the same source observations, feature version, and model version are selected.
+- A historical request for an official date should return the same result when the same source observations, feature definitions, model code/version, and artifact version are selected. During pre-debut iteration, derived regime and market-signal artifacts may be regenerated instead of preserved as immutable research records.
 
-- The regime and opportunity engines receive explicit source/artifact inputs. They should not themselves query external sources for "latest" values.
+- The routine CLI may refresh source observations before computing outputs. The calculation layer then consumes local source observations and explicit artifact paths; it should not silently query external sources for "latest" values during feature calculation.
 
-- Live previews should be visibly labeled provisional and should be compared with-not overwrite-the latest official EOD regime.
+- Any future live preview should be visibly labeled provisional and compared with, not mistaken for, the latest official EOD regime.
 
 ## Timestamp alignment
 
@@ -211,18 +211,17 @@ FRED market-series rows fetched without a historical-vintage API are current-vin
 
 | Field            | Example                        | Meaning                                         |
 |------------------|--------------------------------|-------------------------------------------------|
-| signal_date      | 2026-08-24                     | Trading date represented by the signal.         |
-| signal_time      | EOD                            | Canonical mode or explicit intraday timestamp.  |
-| snapshot_version | marketdata_v1 / 2026-08-24_eod | Exact frozen observations used.                 |
-| universe_version | largecap_v1 / 2026-08-24 | Exact point-in-time eligible universe and gate configuration. |
-| feature_version  | features_v4                    | Exact feature definitions and transformations.  |
-| model_version    | regime_v3                      | Exact regime logic / fitted parameters.         |
-| opportunity_version | opportunity_v2               | Exact single-name eligibility/ranking/lifecycle logic. |
-| policy_version   | exposure_v2                    | Exact mapping from regime to portfolio posture. |
+| signal_date      | 2026-09-04                     | Trading date represented by the signal.         |
+| signal_time      | eod                            | Current supported date-level timing label.      |
+| artifact_version | 2026-09-04_eod                 | Explicit same-date artifact identity.           |
+| feature_version  | market_signals_v0 / regime_pressure_v1 | Exact feature definitions and transformations. |
+| model_version    | market_signals_model_v1 / market_regime_score_v1 | Exact model logic / fitted parameters. |
+| opportunity_version | future opportunity model version | Exact single-name eligibility/ranking/lifecycle logic. |
+| policy_version   | portfolio_policy_v0            | Exact mapping from regime to portfolio posture. |
 
-Historical source snapshots should never be silently overwritten. If a vendor corrects source data, universe membership changes, or a bug is fixed after a workflow is stable, create a new source snapshot, universe, feature, regime-model, or opportunity-model version and preserve enough provenance for auditability. Derived regime artifacts are not the protection boundary; they can be recomputed from their inputs and model version.
+Historical source observations, source snapshots, and candidate lifecycle records should not be silently overwritten once a workflow is stable. If a vendor corrects source data, universe membership changes, or a bug is fixed after the system has debuted as a live research record, create a new source/artifact, universe, feature, regime-model, or opportunity-model version and preserve enough provenance for auditability.
 
-Same-date, same-version derived regime artifacts may be replaced by their producing workflow.
+During pre-debut model iteration, derived regime and market-signal artifacts for the same date may be replaced by their producing workflow.
 
 # 5. Market Regime Model
 
@@ -244,6 +243,10 @@ Because these inputs use different units, the regime engine should not combine t
 - Map the percentile into stretch pressure, washout pressure, or both based on the feature's economic meaning.
 - Aggregate within each signal family first, then aggregate family scores so one dense family does not overwhelm sparse but important evidence.
 - Use top pressure percentiles for calibration/backtests, while keeping action rules compact and interpretable enough to improve or replace without carrying stale benchmark code.
+
+Action evidence should also be grouped into bounded modules, including a separate cross-factor module
+for divergence, confirmation, and contradiction evidence. This keeps a cluster of similar volatility
+or trend turns from drowning out a smaller but independent breadth or credit warning.
 
 | **Family**              | **Candidate inputs**                                                               | **Question answered**                                                           |
 |-------------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
@@ -292,22 +295,17 @@ reweighted, or retired.
 
 ## Regime output
 
-Avoid a binary BUY/SELL output. A useful daily snapshot should look more like:
+Avoid a binary BUY/SELL output. The current regime snapshot output is deliberately decomposed:
 
-| **Field**                   | **Example interpretation**                                                              |
-|-----------------------------|-----------------------------------------------------------------------------------------|
-| Regime score                | -2 = risk-off, -1 = cautious, 0 = neutral, +1 = constructive, +2 = risk-on              |
-| Stretch / de-risk score     | Whether conditions argue for raising cash, trimming tactical beta, or selling calls     |
-| Washout / re-risk score     | Whether conditions argue for redeploying cash or adding bounded upside exposure         |
-| Confidence                  | How aligned the feature families are and how familiar the current state is historically |
-| Forward return distribution | Historical distribution for SPY/QQQ over roughly 40-65 trading days                     |
-| Drawdown distribution       | Expected/max adverse excursion under comparable regimes                                 |
-| Contradictions              | Important families that disagree with the composite                                     |
-| Change flag                 | Whether the regime is stable, improving, or deteriorating                               |
-| Policy posture              | Suggested marginal beta/cash/overlay posture inside predefined risk limits              |
-| Action state                | `no_change`, `scale_down_protect`, or `scale_up_redeploy`                               |
+| **Output block** | **Purpose** |
+|------------------|-------------|
+| Key signals | Headline regime, stretch/washout pressure, missing inputs, contradictions, and final action state. |
+| Action evidence modules | Family-bounded deterioration/redeployment evidence across trend, volatility, breadth, credit, liquidity, and cross-factor relationships. |
+| Market signals | Directional family rows such as trend, volatility, breadth, credit, liquidity, and rates. |
+| Pressure features | Normalized stretch/washout setup inputs using point-in-time raw values and trailing historical context. |
+| Outcome replays | Separate commands compare regime, action, pressure, and policy buckets against forward SPY/QQQ returns and drawdowns. |
 
-The output should prefer calibrated uncertainty over false precision. "Moderately cautious, 62% confidence" is more useful than "QQQ will fall 7.3%."
+The headline regime score is a summed directional signal, not the action. The action state is derived from setup pressure plus action evidence and should normally remain `no_change`. The output should prefer calibrated uncertainty over false precision; "risk-on but stretch pressure is rising" is more useful than a brittle BUY/SELL label.
 
 # 6. Translation From Signal to Portfolio Posture
 
@@ -611,7 +609,7 @@ Every live signal should be recorded before the outcome is known. This turns the
 
 | **Record**            | **Minimum fields**                                                                |
 |-----------------------|-----------------------------------------------------------------------------------|
-| Daily regime artifact | Date, family scores, composite, confidence, contradictions, SPY/QQQ levels        |
+| Daily regime artifact | Date, family scores, action modules/evidence, composite, confidence, contradictions, SPY/QQQ levels |
 | Portfolio posture     | Neutral beta target, tactical beta target, cash reserve %, option overlay stance  |
 | Bulltard extraction   | Market view, book changes, ideas, database/scanner signals, notable repeated flow |
 | Opportunity snapshot  | Ticker, eligibility gates, family scores, lifecycle state, thesis, horizon, liquidity, invalidation |
@@ -624,26 +622,25 @@ Every live signal should be recorded before the outcome is known. This turns the
 
 - Observation timestamps and availability timestamps for every external input family.
 
-- Named snapshot identifier and whether the result is prior-close, intraday-preview, or official EOD.
+- Named artifact or snapshot identifier and the official EOD signal-time label.
 
 - Feature, universe, regime-model, opportunity-model, and portfolio-policy versions.
 
 - Execution timestamp, code revision / experiment identifier, and any agent worker versions or extraction schema versions used.
 
-# 11. Development Plan
+# 11. Current Development Sequence
 
 Build the simplest version that can teach us something, then add sophistication only when justified. A valid implementation slice should increase decision feedback: better candidate rows, better regime evidence, better outcome measurement, or a clearer rejection of a weak idea. Status files, generic storage layers, crawlers, broad manifests, and agent wrappers are secondary unless they unblock that feedback loop.
 
-| **Phase** | **Scope** | **Exit criterion** |
-|---|---|---|
-| 0. Design / bootstrap | Agree on objectives, portfolio constraints, and a minimal local CLI | Design baseline accepted; deterministic CLI runs locally |
-| 1. Market-regime foundation | Build point-in-time SPY/QQQ trend, realized volatility, basic VIX, breadth proxy, and credit proxy artifacts | We can create and replay daily regime artifacts against forward SPY/QQQ returns and drawdowns |
-| 2. Market-regime signal expansion | Add independent volatility-structure, sentiment/positioning, stronger breadth, and liquidity/credit observations | We can inspect family-level signals and compare their forward outcome separation |
-| 3. Regime calibration | Backtest family scores, disagreement states, transitions, stretched/de-risk states, and bloodbath/re-risk states before mapping them to portfolio policy | The regime model either separates forward risk/reward out of sample or explicitly records "no edge" |
-| 4. Single-name candidate pipeline | Ingest Bulltard candidates and validate them with independent price, liquidity, fundamentals, catalysts, and outcomes | We can measure whether candidate subsets outperform comparable large-cap names and benchmarks |
-| 5. Portfolio policy | Map calibrated regime to bounded beta/cash/overlay posture and combine with validated single-name opportunities | Policy adds risk-adjusted value vs. fixed-policy benchmark |
-| 6. Visualization and reporting | Render regime components, disagreements, transitions, candidates, and outcomes from versioned inputs | Important charts and reports are reproducible from CLI commands |
-| 7. Iterate | Periodic review, feature retirement, parameter freezes, candidate/outcome monitoring | Stable research cadence without constant curve-fitting |
+The current implementation has enough regime inputs to begin the feedback loop. The near-term sequence is:
+
+1. Run the normal daily workflow for several real sessions and preserve the produced source observations, derived regime artifacts, candidate snapshots, reports, and charts.
+2. Backfill enough history to replay regime, pressure, action, and policy buckets over 20-, 40-, and 65-trading-day horizons.
+3. Add event-study and ablation tooling to test whether `setup + action evidence` beats setup-only and headline-regime-only reads.
+4. Calibrate rare-action thresholds, confidence handling, and provisional policy bands against replay results before adding new raw indicator families.
+5. Extend the Bulltard candidate loop from triage toward opportunity episodes only after the 60-90 day candidate outcome dataset is large enough to compare signal cohorts.
+6. Add persistent hysteresis/cooldown state mechanics only after continuous action scores show enough value to justify stateful policy behavior.
+7. Defer cloud infrastructure, a permanent agent runtime, and broader data-provider integration until the local daily/replay loop exposes a concrete need.
 
 # 12. Key Design Risks
 
@@ -656,7 +653,7 @@ Build the simplest version that can teach us something, then add sophistication 
 | Model causes excessive trading               | Use hysteresis / minimum-change rules and tactical exposure bands                                                 |
 | Narrative bias from newsletters/social media | Record signals before outcomes; statistically score repeated patterns                                             |
 | Regime shifts                                | Monitor degradation; allow "unknown/low confidence" rather than forcing a view                                    |
-| Time inconsistency / look-ahead bias         | Immutable as-of snapshots, explicit availability timestamps, official EOD semantics, and point-in-time backtests. |
+| Time inconsistency / look-ahead bias         | Dated observations, explicit availability timestamps, official EOD semantics, and point-in-time backtests. |
 | Subscription anchoring / authority bias      | Bulltard creates candidates, not decisions; compare against independent features and measure incremental value. |
 | Illiquid option implementation               | Hard liquidity gates, spread/OI/volume diagnostics, and realistic slippage assumptions before strategy testing. |
 | Fundamental distress masquerades as value    | Separate hard viability gate from upside scoring; require explicit invalidation conditions and episode tracking. |
@@ -690,7 +687,7 @@ Build the simplest version that can teach us something, then add sophistication 
 
 - Which independent fundamental/estimate-revision data sources are practical and point-in-time enough for v0?
 
-| Recommended immediate next step: run the fresh daily loop for several real sessions, then calibrate rare-action thresholds and policy bands against longer saved history before adding new signal families. |
+| Recommended immediate next step: run the fresh daily loop for several real sessions, then add event-study/ablation tooling and calibrate rare-action thresholds before adding new signal families. |
 |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 # 14. Implementation Infrastructure
@@ -717,8 +714,9 @@ The initial infrastructure should optimize for iteration speed and scientific re
 
 - data/debug/: optional raw payload cache for parser replay or troubleshooting. This is not the main research product.
 
-- data/snapshots/: named prior-close, intraday-preview, and official-EOD source/candidate/policy snapshots, including eligible-universe and opportunity state.
-- data/derived/: rebuildable model outputs such as market-signal and regime artifacts.
+- data/snapshots/: research snapshots that should represent a saved point-in-time decision record, currently candidate validation and portfolio policy.
+
+- data/derived/: rebuildable model outputs such as market-signal and regime artifacts. These are replaceable during pre-debut model iteration.
 
 - marketlab.duckdb: rebuildable local metadata/query database generated from `data/`; periodically checkpoint or export only after the source files are worth preserving.
 
@@ -768,7 +766,7 @@ The current v0 implementation uses self-contained HTML/SVG emitted by CLI comman
 
 The primary daily research view should use aligned panels with a shared time axis:
 
-- Panel 1 - SPY or QQQ price curve, optionally with major moving averages and drawdown. Shade the background by official regime bucket; do not use live-preview states in historical official charts.
+- Panel 1 - SPY or QQQ price curve, optionally with major moving averages and drawdown. Shade the background by official regime bucket; do not use future live-preview states in historical official charts.
 
 - Panel 2 - Continuous composite regime score. Show threshold bands and explicit regime-transition markers so the viewer can distinguish gradual deterioration from discrete policy changes.
 
@@ -807,13 +805,13 @@ Useful cohort views include: Bulltard signals by type; repeated-flow episodes; c
 
 ## Point-in-time rendering rules
 
-- Charts must load data from named snapshot/universe/model versions rather than silently querying latest values.
+- Charts must load data from named observations, artifacts, snapshots, and model versions rather than silently querying latest values.
 
 - Official historical charts use only information available at the corresponding cutoff; future labels/outcomes may be added only as clearly separated evaluation layers.
 
-- Live-preview charts must be visibly marked provisional and should show the last official EOD signal for comparison.
+- Live-preview charts are future work. If added, they must be visibly marked provisional and show the last official EOD signal for comparison.
 
-- Every exported figure should embed or accompany the date range, snapshot version, universe version when relevant, feature version, regime/opportunity model version, and code/experiment revision.
+- Every exported figure should embed or accompany the date range, artifact/snapshot version, universe version when relevant, feature version, regime/opportunity model version, and code/experiment revision.
 
 ## Current and Future Command Surface
 
@@ -841,14 +839,14 @@ This architecture makes visual research cheap during exploration while keeping t
 
 # 16. Coding-Agent Implementation Contract
 
-Treat this document as the architectural source of truth unless a later design version explicitly supersedes it. When implementing:
+Treat this document as the architectural source of truth unless a later design version explicitly supersedes it. Use `AGENTS.md` for concise repository rules and `MARKET_REGIME_ACTION_ALGORITHM_DESIGN.md` for the current regime-action algorithm. When implementing:
 
 - Implement the core research loop before support infrastructure. A feature is not done because it stores an artifact; it is done when it produces, scores, explains, or evaluates a market/regime/candidate observation.
 - Keep canonical numerical calculations deterministic and testable. Do not let an LLM/agent silently modify a regime score, historical snapshot, or backtest result.
-- Preserve point-in-time correctness. Every official signal must be reproducible from a named frozen snapshot and explicit feature/model/policy versions.
+- Preserve point-in-time correctness. Every official signal must be reproducible from dated source observations or snapshots plus explicit feature/model/policy versions.
 - Keep source observations reproducible, but do not equate reproducibility with copying every interface response. Store the smallest durable observations needed to support a research claim; keep raw payloads only when they are necessary for debugging, audit, or parser replay.
 - Keep active research data out of Git. Only code, schemas, configuration, small test fixtures, and documentation belong in the repository.
-- Hide agent implementation details behind a `ResearchAgent` interface so the v0 Codex CLI backend can later be replaced by an API backend.
+- If a permanent agent runtime becomes necessary, hide implementation details behind a `ResearchAgent` interface so a local exploratory backend can later be replaced by an API backend.
 - Treat agent output as bounded structured research input. Validate before persistence.
 - Treat Bulltard as a candidate generator/feature source, never as the final decision authority. Persist all extracted candidates and rejected candidates needed for unbiased evaluation.
 - Keep Bulltard acquisition deterministic and targeted: bootstrap each day from the original signed recap link, use a short-lived same-session HTTP client, retrieve named views needed by the current research question, and use Playwright only as an explicit fallback.
@@ -903,10 +901,10 @@ marketlab/
 
 - Keep the two-engine split explicit in code and documentation: `regime` owns aggregate market context, while `bulltard` and later `opportunity` own single-name candidate evidence.
 
-- Keep hardening the market-signal artifact layer as the evidence boundary for regime and policy. The current model consumes generated signal rows; next steps are longer-history calibration, measured source expansion, and a standalone signal-production command only if the regime workflow becomes too coupled.
+- Keep the market-signal artifact layer as the evidence boundary for regime and policy. The current model consumes generated signal rows; next steps are longer-history calibration, event studies, ablations, and a standalone signal-production command only if the regime workflow becomes too coupled.
 
 - Continue Market Signal Expansion only where source access is practical and measured outcome replay improves:
-  - VIX term structure is now in the first expansion slice through VIX9D/VIX and VIX/VIX3M ratios; next volatility additions should wait for measured replay value.
+  - VIX term structure is now in the first expansion slice through VIX9D/VIX and VIX/VIX3M ratios; same-date legs are required, and stale vendor legs should become input gaps instead of mixed-date evidence. Next volatility additions should wait for measured replay value.
   - Realized-vs-implied volatility where the data source is reliable.
   - Fear/greed-style sentiment or equivalent risk-appetite observations from a stable source-specific importer.
   - Put/call or positioning proxies only after source semantics are clear.
@@ -914,7 +912,9 @@ marketlab/
 - Breadth internals now include S&P 500 percent above 50d/200d moving averages through isolated EODData recent-history ingestion; next breadth work should measure whether these levels and 5d/20d changes improve forward outcome separation beyond RSP/SPY and IWM/SPY.
 - Strengthen credit/liquidity after the first policy loop reveals a measured weakness. Prefer one robust signal per family over many correlated variants.
 
-- Keep `regime snapshot` showing family-level evidence, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
+- Treat the current action layer as `Regime -> Setup -> Action Evidence -> State`. The implemented action evidence is family-bounded and includes cross-factor divergence/confirmation/contradiction features; persistent hysteresis/cooldowns are later state-machine mechanics, not another market signal layer.
+
+- Keep `regime snapshot` showing family-level evidence, action modules, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
 
 - Replay each added market family and every policy revision against forward SPY/QQQ returns and drawdowns. Keep a feature only if it improves out-of-sample separation, calibration, contradiction handling, or interpretability.
 
@@ -924,8 +924,8 @@ marketlab/
 
 - Extend the first canonical single-name visualization after the opportunity engine exists: add lifecycle markers, opportunity-family scores, and option-liquidity panels beyond the current candidate-validation view.
 
-- Keep JSON/JSONL snapshots as the durable local source of truth and DuckDB/Parquet as query/export layers. Ensure generated data paths remain gitignored except tiny test fixtures.
+- Keep JSON/JSONL observations, research snapshots, and derived artifacts as the local file source of truth, with DuckDB/Parquet as query/export layers. Ensure generated data paths remain gitignored except tiny test fixtures.
 
-- Implement a ResearchAgent interface with a Codex CLI backend, but keep agent-derived outputs outside the canonical numerical signal until their value is demonstrated.
+- Defer a permanent ResearchAgent interface until a concrete agent worker is needed. Keep any agent-derived output outside the canonical numerical signal until its value is demonstrated.
 
 - Decide which Bulltard observation fields are legally/contractually appropriate to store locally for personal research before relying on them as a historical dataset.

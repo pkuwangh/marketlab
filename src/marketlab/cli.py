@@ -3006,6 +3006,9 @@ def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
         typer.echo(f"pressure_feature_count={len(result.pressure.features)}")
     typer.echo("")
     typer.echo(format_regime_key_signals(result))
+    if result.action_table:
+        typer.echo("")
+        typer.echo(result.action_table)
     if result.signal_table:
         typer.echo("")
         typer.echo(result.signal_table)
