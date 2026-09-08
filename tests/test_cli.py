@@ -167,7 +167,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         assert signal_time == "eod"
         assert snapshot_version is None
         assert write_snapshot is True
-        assert overwrite_snapshot is True
+        assert overwrite_snapshot is False
         events.append("regime")
         snapshot = _regime_snapshot(source_date=source_date)
         return RegimeSnapshotResult(
@@ -355,7 +355,7 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["regime_prices"]
-        assert overwrite_snapshot is True
+        assert overwrite_snapshot is False
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -591,7 +591,7 @@ def test_daily_run_fetches_missing_default_recap_from_gmail(
         overwrite_snapshot: bool,
     ) -> RegimeSnapshotResult:
         assert source_date == date(2026, 9, 1)
-        assert overwrite_snapshot is True
+        assert overwrite_snapshot is False
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -1472,8 +1472,25 @@ def test_version_option() -> None:
     assert f"marketlab {__version__}" in result.output
 
 
-def test_bulltard_inspect_recap_outputs_full_signed_url_by_default() -> None:
+def test_bulltard_inspect_recap_redacts_signed_url_by_default() -> None:
     result = CliRunner().invoke(app, ["bulltard", "inspect-recap", str(FIXTURE_DIR / "recap.html")])
+
+    assert result.exit_code == 0
+    assert "jamesbulltard.substack.com/redirect" in result.output
+    assert "token=redacted" in result.output
+    assert "fixture-secret" not in result.output
+
+
+def test_bulltard_inspect_recap_can_show_full_signed_url() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "bulltard",
+            "inspect-recap",
+            str(FIXTURE_DIR / "recap.html"),
+            "--show-secret-url",
+        ],
+    )
 
     assert result.exit_code == 0
     assert "jamesbulltard.substack.com/redirect" in result.output
@@ -1488,9 +1505,10 @@ def test_bulltard_inspect_recap_unwraps_gmail_tracking_redirect() -> None:
 
     assert result.exit_code == 0
     assert (
-        "https://substack.com/redirect/00000000-0000-4000-8000-000000000000?j=fixture-jwt"
+        "https://substack.com/redirect/00000000-0000-4000-8000-000000000000?j=redacted"
         in result.output
     )
+    assert "fixture-jwt" not in result.output
     assert "google.com/url" not in result.output
 
 
@@ -1537,7 +1555,8 @@ def test_bulltard_ingest_retrieves_first_view(
     assert "view=ranked-option-trades" in result.output
     assert "route_path=/ranked_option_trades" in result.output
     assert "jamesbulltard.substack.com/redirect" in result.output
-    assert "fixture-secret" in result.output
+    assert "token=redacted" in result.output
+    assert "fixture-secret" not in result.output
     assert "final_url=https://app.jamesbulltard.com/ranked_option_trades" in result.output
     assert "status_code=200" in result.output
     assert "byte_count=42" in result.output
@@ -1600,7 +1619,8 @@ def test_bulltard_ticker_fetches_detail_page(
 
     assert result.exit_code == 0
     assert "symbol=INTC" in result.output
-    assert "fixture-secret" in result.output
+    assert "token=redacted" in result.output
+    assert "fixture-secret" not in result.output
     assert "final_url=https://app.jamesbulltard.com/tickers/INTC" in result.output
     assert "status_code=200" in result.output
     assert "byte_count=123" in result.output

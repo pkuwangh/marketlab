@@ -25,6 +25,23 @@ def signal_time_value(signal_time: SignalTime | str) -> str:
     return signal_time.value if isinstance(signal_time, SignalTime) else str(signal_time)
 
 
+def require_eod_signal_time(
+    signal_time: SignalTime | str,
+    *,
+    workflow: str,
+) -> str:
+    """Return normalized EOD signal time or reject date-level provisional timing."""
+
+    signal_time_text = signal_time_value(signal_time)
+    if signal_time_text != SignalTime.EOD.value:
+        raise ValueError(
+            f"{workflow} supports only signal_time=eod for date-level observations; "
+            f"got {signal_time_text!r}. Add timestamp-aware inputs before using "
+            "prior_close or intraday_preview."
+        )
+    return signal_time_text
+
+
 def default_snapshot_version(
     signal_date: date,
     *,
@@ -81,6 +98,14 @@ def resolve_snapshot_path(
         artifact_version=artifact_version,
         filename=filename,
     )
+    if len(candidates) > 1 and artifact_version is None:
+        versions = ", ".join(path.parent.name for path in candidates)
+        raise ValueError(
+            "Multiple snapshot artifact versions found for "
+            f"{snapshot_root} {source_date.isoformat()} "
+            f"{signal_time_value(signal_time)} {filename}: {versions}. "
+            "Specify artifact_version explicitly."
+        )
     if candidates:
         return candidates[-1]
 

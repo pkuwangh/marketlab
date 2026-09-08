@@ -18,6 +18,7 @@ from marketlab.snapshots.models import utc_timestamp
 DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT = Path("data/observations/market/series")
 FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 HTTP_TIMEOUT_SECONDS = 30.0
+FRED_CURRENT_VINTAGE_MODE = "current_vintage_backfill"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ class MarketSeriesObservation:
     availability_date: date
     value: float
     unit: str
+    vintage_mode: str = FRED_CURRENT_VINTAGE_MODE
     retrieved_at: str | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +82,7 @@ class MarketSeriesObservation:
             "availability_date": self.availability_date.isoformat(),
             "value": self.value,
             "unit": self.unit,
+            "vintage_mode": self.vintage_mode,
             "retrieved_at": self.retrieved_at,
         }
 
@@ -346,6 +349,7 @@ def _observation_from_dict(row: dict[str, Any]) -> MarketSeriesObservation:
         availability_date=date.fromisoformat(str(row["availability_date"])),
         value=float(row["value"]),
         unit=str(row["unit"]),
+        vintage_mode=str(row.get("vintage_mode", FRED_CURRENT_VINTAGE_MODE)),
         retrieved_at=_optional_str(row.get("retrieved_at")),
     )
 

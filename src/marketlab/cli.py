@@ -39,7 +39,11 @@ from marketlab.bulltard.outcomes import (
     CandidateOutcomeResult,
     compute_bulltard_outcomes,
 )
-from marketlab.bulltard.recaps import SignedSourceUrlError, extract_signed_source_url
+from marketlab.bulltard.recaps import (
+    SignedSourceUrlError,
+    extract_signed_source_url,
+    redact_capability_url,
+)
 from marketlab.bulltard.validation import (
     CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
     DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -406,11 +410,11 @@ def daily_run(
         help="Refresh FRED market series before computing the regime snapshot.",
     ),
     replace_regime_snapshot: bool = typer.Option(
-        True,
+        False,
         "--replace-regime/--no-replace-regime",
         help=(
-            "Replace same-version daily regime snapshots if refreshed sources change "
-            "derived content."
+            "Replace same-version daily regime snapshots when intentionally refreshing "
+            "research history. Derived market-signal artifacts are always replaceable."
         ),
     ),
     fetch_ticker_details: bool = typer.Option(
@@ -568,7 +572,7 @@ def daily_run(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for snapshots.",
+        help="Signal timing label. Regime date-level workflows currently support only eod.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
@@ -1175,7 +1179,7 @@ def regime_snapshot(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for the snapshot.",
+        help="Signal timing label. Regime date-level workflows currently support only eod.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
@@ -1188,11 +1192,11 @@ def regime_snapshot(
         help="Write the market regime snapshot.",
     ),
     overwrite_snapshot: bool = typer.Option(
-        True,
-        "--overwrite/--no-overwrite",
+        False,
+        "--overwrite",
         help=(
-            "Replace existing same-version derived regime snapshots when content differs; "
-            "market signal artifacts are always replaceable."
+            "Replace an existing same-version regime snapshot. Derived market-signal "
+            "artifacts are always replaceable."
         ),
     ),
 ) -> None:
@@ -1326,7 +1330,7 @@ def regime_backfill(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for written snapshots.",
+        help="Signal timing label. Regime date-level workflows currently support only eod.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
@@ -1350,8 +1354,8 @@ def regime_backfill(
         False,
         "--overwrite",
         help=(
-            "Replace existing same-version derived regime snapshots when recomputed content "
-            "differs. Market signal artifacts are always replaceable. Implies "
+            "Replace existing same-version regime snapshots when recomputed content differs. "
+            "Derived market-signal artifacts are always replaceable. Implies "
             "--recompute-existing."
         ),
     ),
@@ -2191,6 +2195,11 @@ def inspect_recap(
         readable=True,
         help="Local recap text or HTML file.",
     ),
+    show_secret_url: bool = typer.Option(
+        False,
+        "--show-secret-url",
+        help="Print the full temporary signed URL instead of a redacted copy.",
+    ),
 ) -> None:
     """Extract the signed Bulltard source URL from a local recap."""
 
@@ -2200,8 +2209,11 @@ def inspect_recap(
     except SignedSourceUrlError as exc:
         raise typer.BadParameter(str(exc), param_hint="recap_path") from exc
 
-    typer.echo(signed_url)
-    logger.bind(path=str(recap_path), url=signed_url).success("Inspected Bulltard recap")
+    output_url = signed_url if show_secret_url else redact_capability_url(signed_url)
+    typer.echo(output_url)
+    logger.bind(path=str(recap_path), url=redact_capability_url(signed_url)).success(
+        "Inspected Bulltard recap"
+    )
 
 
 @bulltard_app.command("ingest", no_args_is_help=True)
@@ -2254,8 +2266,8 @@ def ingest(
 
     typer.echo(f"view={plan.view.value}")
     typer.echo(f"route_path={plan.view.route_path}")
-    typer.echo(f"signed_url={plan.signed_url}")
-    typer.echo(f"final_url={result.fetched_view.final_url}")
+    typer.echo(f"signed_url={redact_capability_url(plan.signed_url)}")
+    typer.echo(f"final_url={redact_capability_url(result.fetched_view.final_url)}")
     typer.echo(f"status_code={result.fetched_view.status_code}")
     typer.echo(f"byte_count={result.fetched_view.byte_count}")
     typer.echo(f"debug_path={result.fetched_view.debug_path}")
@@ -2317,8 +2329,8 @@ def ticker(
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"symbol={result.fetched_page.symbol}")
-    typer.echo(f"signed_url={result.fetched_page.signed_url}")
-    typer.echo(f"final_url={result.fetched_page.final_url}")
+    typer.echo(f"signed_url={redact_capability_url(result.fetched_page.signed_url)}")
+    typer.echo(f"final_url={redact_capability_url(result.fetched_page.final_url)}")
     typer.echo(f"status_code={result.fetched_page.status_code}")
     typer.echo(f"byte_count={result.fetched_page.byte_count}")
     typer.echo(f"debug_path={result.fetched_page.debug_path}")

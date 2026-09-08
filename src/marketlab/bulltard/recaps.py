@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from html import unescape
 from html.parser import HTMLParser
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
 
@@ -20,6 +20,16 @@ _TRADE_OF_INTEREST_ITEM_RE = re.compile(
 _TRAILING_PUNCTUATION = ".,);]"
 _BULLTARD_APP_HOST = "app.jamesbulltard.com"
 _CONTEXT_CHARS = 500
+_SENSITIVE_QUERY_KEYS = {
+    "access_token",
+    "auth_token",
+    "j",
+    "jwt",
+    "sig",
+    "signature",
+    "token",
+}
+_REDACTED_VALUE = "redacted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,19 +239,54 @@ def extract_signed_source_url(text_or_html: str) -> str:
         selected = _select_database_candidate(candidates)
         if selected is not None:
             logger.bind(
-                url=selected.url,
+                url=redact_capability_url(selected.url),
                 label=selected.label,
             ).info("Selected signed Bulltard source URL from database-link context")
             return selected.url
 
         raise SignedSourceUrlError(
             "Expected one signed source URL, found "
-            f"{len(candidates)}: {', '.join(candidate.url for candidate in candidates)}"
+            f"{len(candidates)}: "
+            f"{', '.join(redact_capability_url(candidate.url) or '' for candidate in candidates)}"
         )
 
     signed_url = candidates[0].url
-    logger.bind(url=signed_url).info("Selected signed Bulltard source URL")
+    logger.bind(url=redact_capability_url(signed_url)).info("Selected signed Bulltard source URL")
     return signed_url
+
+
+def redact_capability_url(url: str | None) -> str | None:
+    """Redact temporary URL capability tokens while keeping debugging context."""
+
+    if url is None:
+        return None
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+
+    redacted_pairs: list[tuple[str, str]] = []
+    changed = False
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() in _SENSITIVE_QUERY_KEYS:
+            redacted_pairs.append((key, _REDACTED_VALUE))
+            changed = True
+            continue
+        nested = redact_capability_url(value) if _looks_like_url(value) else value
+        if nested != value:
+            changed = True
+        redacted_pairs.append((key, nested or ""))
+
+    if not changed:
+        return url
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urlencode(redacted_pairs, doseq=True),
+            parts.fragment,
+        )
+    )
 
 
 def looks_like_signed_source_url(url: str) -> bool:
@@ -333,6 +378,11 @@ def _clean_url(url: str) -> str | None:
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         return None
     return cleaned
+
+
+def _looks_like_url(value: str) -> bool:
+    parts = urlsplit(value)
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
 
 
 def _select_database_candidate(candidates: list[_UrlCandidate]) -> _UrlCandidate | None:

@@ -205,6 +205,8 @@ Time consistency is a first-class requirement. A model run must never mean "fetc
 
 Inputs have different natural timestamps. Market prices, VIX/VVIX, breadth, macro data, and Bulltard commentary must therefore retain both observation time and availability time. Bulltard recaps may arrive during the trading session and discuss same-day conditions; the system must not accidentally combine that narrative with a data cutoff that implies it was known earlier. Research datasets should enforce point-in-time availability when backtesting to avoid look-ahead bias.
 
+FRED market-series rows fetched without a historical-vintage API are current-vintage local history. They can support exploratory regime research, but any backtest that depends on macro revisions must label this limitation until true vintage data is added.
+
 ## Immutable snapshots and version identifiers
 
 | Field            | Example                        | Meaning                                         |
@@ -219,6 +221,8 @@ Inputs have different natural timestamps. Market prices, VIX/VVIX, breadth, macr
 | policy_version   | exposure_v2                    | Exact mapping from regime to portfolio posture. |
 
 Historical snapshots should never be silently overwritten. If a vendor corrects data, universe membership changes, or a bug is fixed, create a new snapshot, universe, feature, regime-model, or opportunity-model version and preserve the old result for auditability. This makes it possible to distinguish "what the system knew then" from "what we know now."
+
+During active local iteration, replacement can still be allowed for a same-date, same-version research artifact, but only through an explicit command option. Derived inspection artifacts, such as market-signal JSONL rows generated from observations, are rebuildable and may be replaced by their producing workflow.
 
 # 5. Market Regime Model
 
@@ -239,7 +243,7 @@ Because these inputs use different units, the regime engine should not combine t
 - Convert each raw feature into a percentile versus the trailing as-of sample that would have been known on that date.
 - Map the percentile into stretch pressure, washout pressure, or both based on the feature's economic meaning.
 - Aggregate within each signal family first, then aggregate family scores so one dense family does not overwhelm sparse but important evidence.
-- Use top pressure percentiles for calibration/backtests, while keeping any hard-threshold action classifier as a transparent baseline comparator rather than the final policy.
+- Use top pressure percentiles for calibration/backtests, while keeping action rules compact and interpretable enough to improve or replace without carrying stale benchmark code.
 
 | **Family**              | **Candidate inputs**                                                               | **Question answered**                                                           |
 |-------------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
@@ -275,11 +279,11 @@ reweighted, or retired.
   - Put/call ratios, fund-flow data, CTA positioning, and dealer/gamma positioning are candidates only if the source has clear historical availability and licensing.
 
 - Policy-modeling theory:
-  - Keep the current hard-threshold policy as the baseline comparator because it is simple, inspectable, and hard to overfit accidentally.
-  - Study smoother alternatives only if the threshold model proves too jumpy or leaves obvious forward-return/drawdown separation unused.
-  - A better model does not have to be a separate forecast layer. It could be a small scored-state model, percentile-bucket lookup, or regularized utility score that directly maps evidence to `maintain`, `protect`, or `redeploy`.
-  - Any replacement must reduce operational ambiguity: fewer arbitrary knobs, clearer state transitions, lower churn, and better walk-forward outcomes after realistic friction.
-  - If a model needs many hand-tuned parameters to beat the threshold baseline, reject it.
+  - Avoid a vague extra forecast layer between market evidence and action. The useful split is directional regime, setup pressure, and action evidence.
+  - Setup pressure captures whether the tape is stretched enough to consider protecting or washed out enough to consider redeploying.
+  - Action evidence captures whether the setup is actually turning: deterioration for protect decisions and stabilization for redeploy decisions.
+  - A better model should directly map evidence to `maintain`, `protect`, or `redeploy` with fewer arbitrary knobs, clearer state transitions, lower churn, and better walk-forward outcomes after realistic friction.
+  - If a model needs many hand-tuned parameters to look better, reject it.
 
 - Admission standard:
   - Do not add a signal just because it is famous. Add it only when source availability, update lag, history length, and licensing are clear enough for replay.
@@ -407,7 +411,7 @@ This ingester is deterministic infrastructure, **not an agent browsing task**. P
 
 ### Credential and source handling
 
-The original signed Substack URL and scanner token should be treated as short-lived capabilities. They must never be committed to Git or exposed in generated public reports. Local operational logs may show exact temporary URLs when useful for debugging; redaction belongs in public/exported artifacts or explicit commands, not as a default feature that obscures local bring-up.
+The original signed Substack URL and scanner token should be treated as short-lived capabilities. They must never be committed to Git or exposed in generated public reports. Normal CLI output and logs should redact capability tokens by default; exact temporary URLs are only for explicit local debugging commands.
 
 The v0 local layout is:
 

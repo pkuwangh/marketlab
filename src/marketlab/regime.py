@@ -42,6 +42,7 @@ from marketlab.snapshots.models import (
     SignalTime,
     current_code_revision,
     default_snapshot_version,
+    require_eod_signal_time,
     resolve_snapshot_path,
     signal_time_value,
     snapshot_source_dates,
@@ -55,17 +56,30 @@ DEFAULT_REGIME_PRICE_SYMBOLS = ("SPY", "QQQ", "IWM", "RSP", "HYG", "TLT", "^VIX"
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v1"
-REGIME_ACTION_VERSION = "regime_action_v0"
+REGIME_ACTION_VERSION = "regime_action_v1"
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
 REGIME_PRESSURE_VERSION = "regime_pressure_v1"
 REGIME_SNAPSHOT_FILENAME = "regime.json"
 PRESSURE_LOOKBACK_SAMPLES = 252
 MIN_PRESSURE_FEATURE_SAMPLES = 20
 MIN_PRESSURE_BUCKET_SAMPLES = 20
+ACTION_STRENGTH_THRESHOLD = 0.55
+ACTION_STRENGTH_MARGIN = 0.15
 
 
 class RegimeError(ValueError):
     """Raised when a market regime workflow cannot run."""
+
+
+def _require_eod_signal_time(
+    signal_time: SignalTime | str,
+    *,
+    workflow: str,
+) -> str:
+    try:
+        return require_eod_signal_time(signal_time, workflow=workflow)
+    except ValueError as exc:
+        raise RegimeError(str(exc)) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +193,26 @@ class RegimePressureSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimeActionFeature:
+    """One modular turn feature used to gate protect/redeploy action."""
+
+    family: str
+    name: str
+    deterioration_score: float
+    stabilization_score: float
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "family": self.family,
+            "name": self.name,
+            "deterioration_score": self.deterioration_score,
+            "stabilization_score": self.stabilization_score,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RegimeSnapshot:
     """Point-in-time market regime snapshot."""
 
@@ -208,8 +242,14 @@ class RegimeSnapshot:
     action_state: str = "no_change"
     stretch_score: int = 0
     washout_score: int = 0
+    deterioration_score: float = 0.0
+    stabilization_score: float = 0.0
+    protect_strength: float = 0.0
+    redeploy_strength: float = 0.0
+    action_score: float = 0.0
     action_confidence: str = "low"
     action_reason: str = "Action state not computed"
+    action_features: tuple[RegimeActionFeature, ...] = ()
     pressure_version: str = REGIME_PRESSURE_VERSION
     stretch_pressure_score: float | None = None
     washout_pressure_score: float | None = None
@@ -266,8 +306,14 @@ class RegimeSnapshot:
             "action_state": self.action_state,
             "stretch_score": self.stretch_score,
             "washout_score": self.washout_score,
+            "deterioration_score": self.deterioration_score,
+            "stabilization_score": self.stabilization_score,
+            "protect_strength": self.protect_strength,
+            "redeploy_strength": self.redeploy_strength,
+            "action_score": self.action_score,
             "action_confidence": self.action_confidence,
             "action_reason": self.action_reason,
+            "action_features": [feature.to_dict() for feature in self.action_features],
             "pressure_version": self.pressure_version,
             "stretch_pressure_score": self.stretch_pressure_score,
             "washout_pressure_score": self.washout_pressure_score,
@@ -281,7 +327,7 @@ class RegimeSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class RegimeActionState:
-    """Rare-action portfolio posture derived from one regime snapshot."""
+    """Rare-action portfolio posture derived from setup and turn evidence."""
 
     source_date: date
     action_version: str
@@ -291,6 +337,12 @@ class RegimeActionState:
     confidence: str
     reason: str
     evidence: tuple[str, ...]
+    deterioration_score: float = 0.0
+    stabilization_score: float = 0.0
+    protect_strength: float = 0.0
+    redeploy_strength: float = 0.0
+    action_score: float = 0.0
+    action_features: tuple[RegimeActionFeature, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -299,9 +351,15 @@ class RegimeActionState:
             "state": self.state,
             "stretch_score": self.stretch_score,
             "washout_score": self.washout_score,
+            "deterioration_score": self.deterioration_score,
+            "stabilization_score": self.stabilization_score,
+            "protect_strength": self.protect_strength,
+            "redeploy_strength": self.redeploy_strength,
+            "action_score": self.action_score,
             "confidence": self.confidence,
             "reason": self.reason,
             "evidence": list(self.evidence),
+            "action_features": [feature.to_dict() for feature in self.action_features],
         }
 
 
@@ -752,6 +810,7 @@ def compute_regime_snapshot(
 ) -> RegimeSnapshotResult:
     """Compute and optionally persist one market regime snapshot."""
 
+    signal_time = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
     histories = _load_histories(symbols=DEFAULT_REGIME_PRICE_SYMBOLS, price_root=price_root)
     market_series_histories = _load_market_series_histories(
         series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
@@ -786,6 +845,7 @@ def compute_regime_backfill(
 ) -> RegimeBackfillResult:
     """Compute market regime snapshots for each SPY observation date in a range."""
 
+    signal_time = _require_eod_signal_time(signal_time, workflow="Market regime backfill")
     if end_date < start_date:
         raise RegimeError("Backfill end date must be on or after start date")
 
@@ -891,7 +951,7 @@ def _compute_regime_snapshot_from_histories(
     overwrite_snapshot: bool,
     pressure_feature_history: dict[str, tuple[_PressureFeatureSample, ...]] | None = None,
 ) -> RegimeSnapshotResult:
-    signal_time_text = signal_time_value(signal_time)
+    signal_time_text = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
         signal_time=signal_time_text,
@@ -967,8 +1027,9 @@ def _compute_regime_snapshot_from_histories(
         score=snapshot.score,
         confidence=snapshot.confidence,
         action_state=action.state,
-        stretch_score=action.stretch_score,
-        washout_score=action.washout_score,
+        protect_strength=action.protect_strength,
+        redeploy_strength=action.redeploy_strength,
+        action_score=action.action_score,
         action_confidence=action.confidence,
         stretch_pressure_score=pressure.stretch_pressure_score,
         washout_pressure_score=pressure.washout_pressure_score,
@@ -1317,7 +1378,11 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
     rows.append(
         [
             "action",
-            action.state,
+            (
+                f"{action.state}; protect {_format_pressure_score(action.protect_strength)} / "
+                f"redeploy {_format_pressure_score(action.redeploy_strength)}; "
+                f"net {action.action_score:+.2f}"
+            ),
             f"{action.confidence} confidence; {action.reason}",
         ]
     )
@@ -1702,7 +1767,10 @@ def _fred_signal(
     reason: str,
     details: dict[str, Any] | None = None,
 ) -> MarketSignal:
-    signal_details = {name: row.value}
+    signal_details = {
+        name: row.value,
+        "vintage_mode": row.vintage_mode,
+    }
     if details is not None:
         signal_details.update(details)
     return MarketSignal(
@@ -1921,35 +1989,73 @@ def derive_regime_action_state(
     snapshot: RegimeSnapshot,
     signals: tuple[MarketSignal, ...] = (),
 ) -> RegimeActionState:
-    """Derive the rare-action state from one point-in-time regime snapshot."""
+    """Derive rare-action state from setup pressure and turn evidence."""
 
     stretch_evidence = _stretch_evidence(snapshot=snapshot, signals=signals)
     washout_evidence = _washout_evidence(snapshot=snapshot, signals=signals)
-    stretch_score = len(stretch_evidence)
-    washout_score = len(washout_evidence)
+    stretch_setup_score = _action_setup_score(
+        snapshot.stretch_pressure_score,
+        fallback_evidence_count=len(stretch_evidence),
+    )
+    washout_setup_score = _action_setup_score(
+        snapshot.washout_pressure_score,
+        fallback_evidence_count=len(washout_evidence),
+    )
+    stretch_score = _action_setup_bucket(stretch_setup_score)
+    washout_score = _action_setup_bucket(washout_setup_score)
+    action_features = _action_turn_features(snapshot=snapshot, signals=signals)
+    deterioration_score = _action_feature_average(
+        action_features,
+        field_name="deterioration_score",
+    )
+    stabilization_score = _action_feature_average(
+        action_features,
+        field_name="stabilization_score",
+    )
+    protect_strength = math.sqrt(stretch_setup_score * deterioration_score)
+    redeploy_strength = math.sqrt(washout_setup_score * stabilization_score)
+    action_score = redeploy_strength - protect_strength
     severe_funding_stress = _severe_funding_stress(signals)
 
-    if stretch_score >= 3 and washout_score >= 3:
+    if (
+        redeploy_strength >= ACTION_STRENGTH_THRESHOLD
+        and redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
+        and severe_funding_stress
+    ):
+        state = "no_change"
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        )
+        reason = "Redeploy setup present, but credit and liquidity stress block aggressive re-risk"
+    elif (
+        redeploy_strength >= ACTION_STRENGTH_THRESHOLD
+        and redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
+    ):
+        state = "scale_up_redeploy"
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        )
+        reason = "Washout setup plus stabilization evidence supports staged redeploy"
+    elif (
+        protect_strength >= ACTION_STRENGTH_THRESHOLD
+        and protect_strength - redeploy_strength >= ACTION_STRENGTH_MARGIN
+    ):
+        state = "scale_down_protect"
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="deterioration_score",
+        )
+        reason = "Stretch setup plus deterioration evidence supports protection"
+    elif max(stretch_setup_score, washout_setup_score) >= 0.65:
         state = "no_change"
         evidence = stretch_evidence + washout_evidence
-        reason = "Conflicting stretch and washout evidence; maintain current posture"
-    elif washout_score >= 3 and not severe_funding_stress:
-        state = "scale_up_redeploy"
-        evidence = washout_evidence
-        reason = "Washout/re-risk threshold crossed"
-    elif stretch_score >= 3:
-        state = "scale_down_protect"
-        evidence = stretch_evidence
-        reason = "Stretched/de-risk threshold crossed"
+        reason = "Setup pressure present, but turn evidence is not strong enough"
     else:
         state = "no_change"
         evidence = stretch_evidence + washout_evidence
-        reason = "No rare-action threshold crossed; maintain current posture"
-
-    if severe_funding_stress and washout_score >= 3:
-        state = "no_change"
-        evidence = washout_evidence
-        reason = "Washout present, but credit and liquidity stress block aggressive re-risk"
+        reason = "No actionable setup; maintain current posture"
 
     return RegimeActionState(
         source_date=snapshot.source_date,
@@ -1959,12 +2065,18 @@ def derive_regime_action_state(
         washout_score=washout_score,
         confidence=_action_confidence(
             state=state,
-            stretch_score=stretch_score,
-            washout_score=washout_score,
+            protect_strength=protect_strength,
+            redeploy_strength=redeploy_strength,
             signals=signals,
         ),
         reason=_action_reason(reason=reason, evidence=evidence),
         evidence=evidence,
+        deterioration_score=deterioration_score,
+        stabilization_score=stabilization_score,
+        protect_strength=protect_strength,
+        redeploy_strength=redeploy_strength,
+        action_score=action_score,
+        action_features=action_features,
     )
 
 
@@ -1979,9 +2091,240 @@ def _snapshot_with_action(
         action_state=action.state,
         stretch_score=action.stretch_score,
         washout_score=action.washout_score,
+        deterioration_score=action.deterioration_score,
+        stabilization_score=action.stabilization_score,
+        protect_strength=action.protect_strength,
+        redeploy_strength=action.redeploy_strength,
+        action_score=action.action_score,
         action_confidence=action.confidence,
         action_reason=action.reason,
+        action_features=action.action_features,
     )
+
+
+def _action_setup_score(
+    pressure_score: float | None,
+    *,
+    fallback_evidence_count: int,
+) -> float:
+    if pressure_score is not None:
+        return _clamp(pressure_score, 0.0, 1.0)
+    return _clamp(fallback_evidence_count / 5.0, 0.0, 1.0)
+
+
+def _action_setup_bucket(score: float) -> int:
+    return int(round(_clamp(score, 0.0, 1.0) * 5))
+
+
+def _action_feature_average(
+    features: tuple[RegimeActionFeature, ...],
+    *,
+    field_name: str,
+) -> float:
+    scores = tuple(
+        score
+        for score in sorted((getattr(feature, field_name) for feature in features), reverse=True)
+        if score > 0.0
+    )
+    if not scores:
+        return 0.0
+    top_scores = scores[:3]
+    return sum(top_scores) / len(top_scores)
+
+
+def _action_feature_evidence(
+    features: tuple[RegimeActionFeature, ...],
+    *,
+    field_name: str,
+) -> tuple[str, ...]:
+    return tuple(
+        feature.reason
+        for feature in sorted(features, key=lambda item: getattr(item, field_name), reverse=True)
+        if getattr(feature, field_name) >= 0.25
+    )
+
+
+def _action_turn_features(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> tuple[RegimeActionFeature, ...]:
+    features = [
+        _trend_turn_feature(snapshot=snapshot),
+        _vix_turn_feature(signals=signals),
+        _vvix_turn_feature(snapshot=snapshot, signals=signals),
+        _breadth_turn_feature(signals=signals),
+        _hyg_tlt_turn_feature(signals=signals),
+        _credit_spread_turn_feature(signals=signals),
+        _financial_conditions_turn_feature(signals=signals),
+    ]
+    return tuple(feature for feature in features if feature is not None)
+
+
+def _trend_turn_feature(*, snapshot: RegimeSnapshot) -> RegimeActionFeature | None:
+    deterioration = _average_scores(
+        (
+            _negative_change_score(snapshot.spy_return_20d, full_at=0.08),
+            _negative_change_score(snapshot.qqq_return_20d, full_at=0.10),
+        )
+    )
+    stabilization = _average_scores(
+        (
+            _positive_change_score(snapshot.spy_return_20d, full_at=0.08),
+            _positive_change_score(snapshot.qqq_return_20d, full_at=0.10),
+        )
+    )
+    if deterioration is None and stabilization is None:
+        return None
+    return RegimeActionFeature(
+        family="trend",
+        name="short_momentum",
+        deterioration_score=deterioration or 0.0,
+        stabilization_score=stabilization or 0.0,
+        reason=(
+            "SPY/QQQ 20d momentum "
+            f"{_format_percent(snapshot.spy_return_20d)}/{_format_percent(snapshot.qqq_return_20d)}"
+        ),
+    )
+
+
+def _vix_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="volatility", name="price_proxy")
+    vix_return_5d = _signal_detail_float(signal, "vix_return_5d")
+    if vix_return_5d is None:
+        return None
+    return RegimeActionFeature(
+        family="volatility",
+        name="vix_turn",
+        deterioration_score=_positive_change_score(vix_return_5d, full_at=0.15),
+        stabilization_score=_negative_change_score(vix_return_5d, full_at=0.15),
+        reason=f"VIX 5d move {_format_percent(vix_return_5d)}",
+    )
+
+
+def _vvix_turn_feature(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="volatility", name="vol_of_vol")
+    vvix_return_5d = _signal_detail_float(signal, "vvix_return_5d")
+    if vvix_return_5d is None:
+        return None
+    quiet_market_boost = (
+        1.2 if snapshot.vix_close is not None and snapshot.vix_close <= 16.0 else 1.0
+    )
+    raw_deterioration = _positive_change_score(vvix_return_5d, full_at=0.12) or 0.0
+    deterioration = _clamp(
+        raw_deterioration * quiet_market_boost,
+        0.0,
+        1.0,
+    )
+    return RegimeActionFeature(
+        family="volatility",
+        name="vvix_turn",
+        deterioration_score=deterioration,
+        stabilization_score=_negative_change_score(vvix_return_5d, full_at=0.12),
+        reason=f"VVIX 5d move {_format_percent(vvix_return_5d)}",
+    )
+
+
+def _breadth_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="breadth", name="price_proxy")
+    rsp_relative_5d = _signal_detail_float(signal, "rsp_spy_relative_5d")
+    iwm_relative_5d = _signal_detail_float(signal, "iwm_spy_relative_5d")
+    deterioration = _average_scores(
+        (
+            _negative_change_score(rsp_relative_5d, full_at=0.025),
+            _negative_change_score(iwm_relative_5d, full_at=0.035),
+        )
+    )
+    stabilization = _average_scores(
+        (
+            _positive_change_score(rsp_relative_5d, full_at=0.025),
+            _positive_change_score(iwm_relative_5d, full_at=0.035),
+        )
+    )
+    if deterioration is None and stabilization is None:
+        return None
+    return RegimeActionFeature(
+        family="breadth",
+        name="participation_turn",
+        deterioration_score=deterioration or 0.0,
+        stabilization_score=stabilization or 0.0,
+        reason=(
+            "RSP/SPY and IWM/SPY 5d relative moves "
+            f"{_format_percent(rsp_relative_5d)}/{_format_percent(iwm_relative_5d)}"
+        ),
+    )
+
+
+def _hyg_tlt_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="credit", name="price_proxy")
+    relative_5d = _signal_detail_float(signal, "hyg_tlt_relative_5d")
+    if relative_5d is None:
+        return None
+    return RegimeActionFeature(
+        family="credit",
+        name="hyg_tlt_turn",
+        deterioration_score=_negative_change_score(relative_5d, full_at=0.03),
+        stabilization_score=_positive_change_score(relative_5d, full_at=0.03),
+        reason=f"HYG/TLT 5d relative move {_format_percent(relative_5d)}",
+    )
+
+
+def _credit_spread_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="credit", name="credit_spread")
+    change_5d = _signal_detail_float(signal, "credit_spread_change_5d")
+    if change_5d is None:
+        return None
+    return RegimeActionFeature(
+        family="credit",
+        name="credit_spread_turn",
+        deterioration_score=_positive_change_score(change_5d, full_at=0.30),
+        stabilization_score=_negative_change_score(change_5d, full_at=0.30),
+        reason=f"HY OAS 5d change {change_5d:+.2f}pp",
+    )
+
+
+def _financial_conditions_turn_feature(
+    *,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    signal = _signal_by_name(signals, family="liquidity", name="financial_conditions")
+    change_4w = _signal_detail_float(signal, "financial_conditions_change_4w")
+    if change_4w is None:
+        return None
+    return RegimeActionFeature(
+        family="liquidity",
+        name="financial_conditions_turn",
+        deterioration_score=_positive_change_score(change_4w, full_at=0.15),
+        stabilization_score=_negative_change_score(change_4w, full_at=0.15),
+        reason=f"NFCI 4w change {change_4w:+.2f}",
+    )
+
+
+def _positive_change_score(value: float | None, *, full_at: float) -> float | None:
+    if value is None:
+        return None
+    if value <= 0.0:
+        return 0.0
+    return _clamp(value / full_at, 0.0, 1.0)
+
+
+def _negative_change_score(value: float | None, *, full_at: float) -> float | None:
+    if value is None:
+        return None
+    if value >= 0.0:
+        return 0.0
+    return _clamp(abs(value) / full_at, 0.0, 1.0)
+
+
+def _average_scores(scores: tuple[float | None, ...]) -> float | None:
+    usable_scores = tuple(score for score in scores if score is not None)
+    if not usable_scores:
+        return None
+    return sum(usable_scores) / len(usable_scores)
 
 
 def _stretch_evidence(
@@ -2088,14 +2431,15 @@ def _funding_backdrop_not_broken(signals: tuple[MarketSignal, ...]) -> bool:
 def _action_confidence(
     *,
     state: str,
-    stretch_score: int,
-    washout_score: int,
+    protect_strength: float,
+    redeploy_strength: float,
     signals: tuple[MarketSignal, ...],
 ) -> str:
+    strongest = max(protect_strength, redeploy_strength)
     if state == "no_change":
-        confidence = "high" if max(stretch_score, washout_score) <= 1 else "medium"
+        confidence = "high" if strongest < 0.35 else "medium"
     else:
-        confidence = "high" if max(stretch_score, washout_score) >= 4 else "medium"
+        confidence = "high" if strongest >= 0.70 else "medium"
 
     if not signals:
         return _downgrade_confidence(confidence, steps=1)
@@ -2855,6 +3199,12 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         confidence=snapshot.action_confidence,
         reason=snapshot.action_reason,
         evidence=(),
+        deterioration_score=snapshot.deterioration_score,
+        stabilization_score=snapshot.stabilization_score,
+        protect_strength=snapshot.protect_strength,
+        redeploy_strength=snapshot.redeploy_strength,
+        action_score=snapshot.action_score,
+        action_features=snapshot.action_features,
     )
 
 
@@ -4003,6 +4353,9 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         if "pressure_modules" in row
         else _pressure_modules(source_date=source_date, features=pressure_features)
     )
+    action_features = tuple(
+        _action_feature_from_dict(feature) for feature in row.get("action_features", ())
+    )
     return RegimeSnapshot(
         source_date=source_date,
         feature_version=str(row["feature_version"]),
@@ -4030,8 +4383,14 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         action_state=str(row.get("action_state", "no_change")),
         stretch_score=int(row.get("stretch_score", 0)),
         washout_score=int(row.get("washout_score", 0)),
+        deterioration_score=_optional_float(row.get("deterioration_score")) or 0.0,
+        stabilization_score=_optional_float(row.get("stabilization_score")) or 0.0,
+        protect_strength=_optional_float(row.get("protect_strength")) or 0.0,
+        redeploy_strength=_optional_float(row.get("redeploy_strength")) or 0.0,
+        action_score=_optional_float(row.get("action_score")) or 0.0,
         action_confidence=str(row.get("action_confidence", "low")),
         action_reason=str(row.get("action_reason", "Action state not computed")),
+        action_features=action_features,
         pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),
         stretch_pressure_score=_optional_float(row.get("stretch_pressure_score")),
         washout_pressure_score=_optional_float(row.get("washout_pressure_score")),
@@ -4044,6 +4403,16 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         market_signal_snapshot_version=_optional_str(row.get("market_signal_snapshot_version")),
         created_at=_optional_str(row.get("created_at")),
         code_revision=_optional_str(row.get("code_revision")),
+    )
+
+
+def _action_feature_from_dict(row: dict[str, Any]) -> RegimeActionFeature:
+    return RegimeActionFeature(
+        family=str(row["family"]),
+        name=str(row["name"]),
+        deterioration_score=float(row["deterioration_score"]),
+        stabilization_score=float(row["stabilization_score"]),
+        reason=str(row["reason"]),
     )
 
 

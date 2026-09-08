@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from marketlab.market_series import (
+    FRED_CURRENT_VINTAGE_MODE,
     MarketSeriesError,
     MarketSeriesObservation,
     fetch_and_write_fred_series,
@@ -25,6 +26,7 @@ def test_parse_fred_graph_csv_skips_missing_values_and_sets_availability() -> No
     assert [row.value for row in rows] == [2.69, 2.67]
     assert rows[0].series_id == "BAMLH0A0HYM2"
     assert rows[0].unit == "percent_level"
+    assert rows[0].vintage_mode == FRED_CURRENT_VINTAGE_MODE
     assert rows[0].availability_date == date(2026, 8, 25)
 
 

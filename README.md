@@ -28,7 +28,7 @@ then independently validate and measure it.
 
 - Market regime and portfolio posture, primary pillar:
   - Refreshes SPY/QQQ, VIX/VVIX, RSP/IWM, HYG/TLT, and FRED credit/liquidity/rates observations.
-  - Computes daily regime, stretch/washout pressure, and rare action states: `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
+  - Computes daily directional regime, stretch/washout setup pressure, deterioration/stabilization action evidence, and rare action states: `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
   - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
   - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
   - Renders the daily policy report and regime chart from saved point-in-time snapshots.
@@ -47,7 +47,7 @@ then independently validate and measure it.
 
 Current limitations:
 
-- Portfolio policy is a provisional rule layer: it maps regime states into beta/cash/overlay posture, but the thresholds and position bands still need longer-history calibration and anti-churn rules.
+- Portfolio policy is a provisional rule layer: it maps regime action states into beta/cash/overlay posture, but the action evidence, thresholds, and position bands still need longer-history calibration and anti-churn rules.
 - Bulltard candidate handling currently stops at research triage. Real options-liquidity, fundamental viability, instrument suitability, lifecycle episodes, thesis, and invalidation modeling are still future work before a candidate can become a complete opportunity.
 - Market-signal production still uses hard-coded v0 feature thresholds; richer calibrated signal families are future work.
 
@@ -64,8 +64,9 @@ market-signal and regime snapshots, derives the portfolio policy, and renders th
 policy report and regime chart. When read-only Gmail credentials exist, it then fetches the
 Bulltard recap from Gmail, validates captured candidates, and refreshes the local DuckDB
 store for outcome review.
-Daily mode replaces same-version regime artifacts by default when refreshed source data changes
-the derived output; use `--no-replace-regime` to make that strict.
+Daily mode regenerates replaceable derived market-signal artifacts, but it does not replace
+same-version regime snapshots unless you pass `--replace-regime`. Use that only when you
+intentionally want a research-date snapshot to reflect changed source data or model code.
 
 For a specific date:
 
@@ -90,9 +91,11 @@ Compute the market regime directly:
 the regime snapshot. The lower-level `--fetch-prices` and `--fetch-market-series` flags remain
 available for partial diagnostics, but routine one-off regime runs should refresh both source
 families together. Overlapping Yahoo/Stooq refreshes replace existing rows for the same symbol/date
-because vendors can revise adjusted prices; saved policy and candidate snapshots remain the frozen
-research record. Index symbols keep their source symbol in each row, but use filesystem-safe cache
-names such as `INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
+because vendors can revise adjusted prices; saved regime, policy, and candidate snapshots remain
+the frozen research record unless replacement is explicit. Index symbols keep their source symbol
+in each row, but use filesystem-safe cache names such as `INDEX_VIX.jsonl` and `INDEX_VVIX.jsonl`.
+FRED market-series backfills use the current available local vintage; they are useful for research,
+but they are not true historical FRED vintages.
 Regime computation always starts from local price/FRED observations. Market-signal rows are
 replaceable derived artifacts under `data/derived/market/signals`; they are for inspection and
 outcome replay, not immutable snapshots and not an input cache.
@@ -142,7 +145,7 @@ Render the daily human-facing report:
 ./bin/marketlab report daily --date 2026-08-28
 ```
 
-Backfill and replay policy snapshots against the fixed v0 benchmark proxy:
+Backfill and replay policy snapshots:
 
 ```bash
 ./bin/marketlab policy backfill --start 2025-01-02 --end 2026-08-28
@@ -220,11 +223,13 @@ link, and leaves the existing Bulltard parser/ingester to do the rest.
 Routine use should go through `./bin/marketlab daily`. The commands in this section are lower-level
 debugging and manual-fallback surfaces for a specific saved recap file.
 
-Inspect a local recap and print the signed source URL:
+Inspect a local recap and print the redacted signed source URL:
 
 ```bash
 ./bin/marketlab bulltard inspect-recap tests/fixtures/bulltard/recap.html
 ```
+
+To reveal the full temporary capability URL for local debugging, pass `--show-secret-url`.
 
 Retrieve and parse the first targeted view:
 
@@ -308,7 +313,7 @@ By default these write `reports/regime-START-END.html` and
 `reports/opportunity-SYMBOL-DATE.html`.
 
 The regime chart shows indexed SPY/QQQ price, regime action-state shading, stretch/washout
-pressure, component scores, market-signal family scores, and the latest market-signal table.
+pressure, market-signal family scores, and the latest market-signal table.
 The opportunity chart shows the candidate versus SPY/QQQ, Bulltard flow-premium event bars,
 20d relative strength, the point-in-time validation snapshot, and a separate forward-outcome
 table that stays marked `waiting` until enough future local price rows exist.

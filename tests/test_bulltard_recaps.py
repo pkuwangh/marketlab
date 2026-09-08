@@ -9,6 +9,7 @@ from marketlab.bulltard.recaps import (
     extract_trades_of_interest,
     extract_urls,
     looks_like_signed_source_url,
+    redact_capability_url,
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -30,6 +31,22 @@ def test_extract_urls_deduplicates_text_and_html_urls() -> None:
     """
 
     assert extract_urls(text) == ("https://jamesbulltard.substack.com/redirect?token=abc",)
+
+
+def test_redact_capability_url_masks_signed_and_nested_tokens() -> None:
+    redacted = redact_capability_url(
+        "https://jamesbulltard.substack.com/redirect?"
+        "url=https%3A%2F%2Fapp.jamesbulltard.com%2Fscanner%2F%3Faccess_token%3Dscanner-secret"
+        "&token=fixture-secret&expires=2026-08-24T21%3A00%3A00Z"
+    )
+
+    assert redacted == (
+        "https://jamesbulltard.substack.com/redirect?"
+        "url=https%3A%2F%2Fapp.jamesbulltard.com%2Fscanner%2F%3Faccess_token%3Dredacted"
+        "&token=redacted&expires=2026-08-24T21%3A00%3A00Z"
+    )
+    assert "fixture-secret" not in redacted
+    assert "scanner-secret" not in redacted
 
 
 def test_extract_signed_source_url_unwraps_gmail_tracking_redirect() -> None:

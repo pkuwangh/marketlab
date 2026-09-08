@@ -23,6 +23,7 @@ from marketlab.bulltard.recaps import (
     SignedSourceUrlError,
     extract_signed_source_url,
     extract_trades_of_interest,
+    redact_capability_url,
 )
 from marketlab.snapshots.models import utc_timestamp, write_immutable_payload
 
@@ -157,7 +158,7 @@ def fetch_ingest_view(
         logger.bind(
             source_date=plan.source_date.isoformat(),
             view=plan.view.value,
-            signed_url=plan.signed_url,
+            signed_url=redact_capability_url(plan.signed_url),
         ).info("Bootstrapping Bulltard access")
         bootstrap = _get(active_client, plan.signed_url, purpose="bootstrap access")
         _require_app_access(bootstrap)
@@ -186,7 +187,7 @@ def fetch_ingest_view(
         logger.bind(
             source_date=plan.source_date.isoformat(),
             view=plan.view.value,
-            final_url=result.final_url,
+            final_url=redact_capability_url(result.final_url),
             status_code=result.status_code,
             byte_count=result.byte_count,
             debug_path=str(result.debug_path),
@@ -277,7 +278,7 @@ def fetch_ticker_page(
         logger.bind(
             source_date=source_date.isoformat(),
             symbol=normalized_symbol,
-            signed_url=signed_url,
+            signed_url=redact_capability_url(signed_url),
         ).info("Bootstrapping Bulltard ticker access")
         bootstrap = _get(active_client, signed_url, purpose="bootstrap access")
         _require_app_access(bootstrap)
@@ -308,7 +309,7 @@ def fetch_ticker_page(
         logger.bind(
             source_date=source_date.isoformat(),
             symbol=normalized_symbol,
-            final_url=result.final_url,
+            final_url=redact_capability_url(result.final_url),
             status_code=result.status_code,
             byte_count=result.byte_count,
             debug_path=str(result.debug_path),
@@ -559,7 +560,9 @@ def _get(client: httpx.Client, url: str, *, purpose: str) -> httpx.Response:
     try:
         return client.get(url)
     except httpx.HTTPError as exc:
-        raise IngestError(f"Failed to retrieve Bulltard {purpose}: {exc}") from exc
+        redacted_url = redact_capability_url(url) or url
+        message = str(exc).replace(url, redacted_url)
+        raise IngestError(f"Failed to retrieve Bulltard {purpose}: {message}") from exc
 
 
 def _require_app_access(response: httpx.Response) -> None:
@@ -567,7 +570,8 @@ def _require_app_access(response: httpx.Response) -> None:
     parts = urlsplit(str(response.url))
     if parts.scheme != "https" or parts.netloc.lower() != APP_HOST:
         raise IngestError(
-            f"Signed URL did not establish Bulltard app access; ended at {response.url}"
+            "Signed URL did not establish Bulltard app access; ended at "
+            f"{redact_capability_url(str(response.url))}"
         )
 
 

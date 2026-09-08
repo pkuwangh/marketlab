@@ -337,6 +337,7 @@ def _refresh_market_series(
         ("availability_date", "DATE"),
         ("value", "DOUBLE"),
         ("unit", "VARCHAR"),
+        ("vintage_mode", "VARCHAR"),
         ("retrieved_at", "VARCHAR"),
     )
     rows = tuple(
@@ -348,6 +349,7 @@ def _refresh_market_series(
             _optional_date(row.get("availability_date")),
             _optional_float(row.get("value")),
             _optional_str(row.get("unit")),
+            _optional_str(row.get("vintage_mode")),
             _optional_str(row.get("retrieved_at")),
         )
         for row in _read_jsonl_files(root)
@@ -383,6 +385,11 @@ def _refresh_regime_snapshots(
         ("action_state", "VARCHAR"),
         ("stretch_score", "INTEGER"),
         ("washout_score", "INTEGER"),
+        ("deterioration_score", "DOUBLE"),
+        ("stabilization_score", "DOUBLE"),
+        ("protect_strength", "DOUBLE"),
+        ("redeploy_strength", "DOUBLE"),
+        ("action_score", "DOUBLE"),
         ("action_confidence", "VARCHAR"),
         ("action_reason", "VARCHAR"),
         ("pressure_version", "VARCHAR"),
@@ -410,6 +417,11 @@ def _refresh_regime_snapshots(
             _optional_str(row.get("action_state")),
             _optional_int(row.get("stretch_score")),
             _optional_int(row.get("washout_score")),
+            _optional_float(row.get("deterioration_score")),
+            _optional_float(row.get("stabilization_score")),
+            _optional_float(row.get("protect_strength")),
+            _optional_float(row.get("redeploy_strength")),
+            _optional_float(row.get("action_score")),
             _optional_str(row.get("action_confidence")),
             _optional_str(row.get("action_reason")),
             _optional_str(row.get("pressure_version")),

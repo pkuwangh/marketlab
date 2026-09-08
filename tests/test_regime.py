@@ -44,6 +44,31 @@ def test_write_regime_snapshot_refuses_different_same_date(tmp_path: Path) -> No
         )
 
 
+def test_compute_regime_snapshot_rejects_non_eod_signal_time(tmp_path: Path) -> None:
+    with pytest.raises(RegimeError, match="supports only signal_time=eod"):
+        compute_regime_snapshot(
+            source_date=date(2026, 8, 28),
+            price_root=tmp_path / "prices",
+            market_series_root=tmp_path / "market_series",
+            snapshot_root=tmp_path / "snapshots",
+            signal_snapshot_root=tmp_path / "signals",
+            signal_time="intraday_preview",
+        )
+
+
+def test_compute_regime_backfill_rejects_non_eod_signal_time(tmp_path: Path) -> None:
+    with pytest.raises(RegimeError, match="supports only signal_time=eod"):
+        compute_regime_backfill(
+            start_date=date(2026, 8, 28),
+            end_date=date(2026, 8, 29),
+            price_root=tmp_path / "prices",
+            market_series_root=tmp_path / "market_series",
+            snapshot_root=tmp_path / "snapshots",
+            signal_snapshot_root=tmp_path / "signals",
+            signal_time="prior_close",
+        )
+
+
 def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> None:
     source_date = date(2026, 8, 15)
     price_root = tmp_path / "prices"
@@ -153,11 +178,13 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.action is not None
     assert result.action.state == "no_change"
     assert result.snapshot.action_state == "no_change"
-    assert result.snapshot.stretch_score == 1
-    assert result.snapshot.washout_score == 0
     assert result.pressure is not None
     assert result.snapshot.stretch_pressure_score is not None
     assert result.snapshot.washout_pressure_score is not None
+    assert result.snapshot.stretch_score == int(round(result.snapshot.stretch_pressure_score * 5))
+    assert result.snapshot.washout_score == int(round(result.snapshot.washout_pressure_score * 5))
+    assert result.snapshot.protect_strength < 0.55
+    assert result.snapshot.redeploy_strength < 0.55
     assert len(result.pressure.features) == 14
     assert [module.name for module in result.pressure.modules] == [
         "trend_extension",
@@ -328,6 +355,9 @@ def test_compute_regime_snapshot_includes_fred_change_details(tmp_path: Path) ->
     signals = {(signal.family, signal.name): signal for signal in result.signals}
     assert signals[("credit", "credit_spread")].details["credit_spread_change_5d"] == (
         pytest.approx(0.05)
+    )
+    assert signals[("credit", "credit_spread")].details["vintage_mode"] == (
+        "current_vintage_backfill"
     )
     assert signals[("credit", "credit_spread")].details["credit_spread_change_20d"] == (
         pytest.approx(0.20)
@@ -586,6 +616,8 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
         qqq_ma50_distance=0.08,
         vix_close=12.5,
         vvix_close=82.0,
+        stretch_pressure_score=0.88,
+        washout_pressure_score=0.02,
     )
 
     action = derive_regime_action_state(
@@ -594,10 +626,20 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
             _market_signal(
                 source_date=snapshot.source_date,
                 family="volatility",
+                name="price_proxy",
+                status="calm",
+                score=1,
+                value="VIX 12.5",
+                details={"vix_return_5d": 0.08},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
                 name="vol_of_vol",
                 status="calm",
                 score=1,
                 value=82.0,
+                details={"vvix_return_5d": 0.14},
             ),
         ),
     )
@@ -605,7 +647,10 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
     assert action.state == "scale_down_protect"
     assert action.stretch_score >= 3
     assert action.washout_score == 0
-    assert "Stretched/de-risk threshold crossed" in action.reason
+    assert action.protect_strength >= 0.55
+    assert action.redeploy_strength < action.protect_strength
+    assert "Stretch setup plus deterioration evidence" in action.reason
+    assert "VVIX 5d move" in action.reason
 
 
 def test_write_regime_snapshot_keeps_signal_times_separate(tmp_path: Path) -> None:
@@ -898,6 +943,8 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
         qqq_ma50_distance=-0.10,
         vix_close=34.0,
         vvix_close=130.0,
+        stretch_pressure_score=0.05,
+        washout_pressure_score=0.90,
     )
 
     action = derive_regime_action_state(
@@ -906,10 +953,20 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
             _market_signal(
                 source_date=snapshot.source_date,
                 family="volatility",
+                name="price_proxy",
+                status="stressed",
+                score=-1,
+                value="VIX 34.0",
+                details={"vix_return_5d": -0.18},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
                 name="vol_of_vol",
                 status="stressed",
                 score=-1,
                 value=130.0,
+                details={"vvix_return_5d": -0.15},
             ),
             _market_signal(
                 source_date=snapshot.source_date,
@@ -918,6 +975,7 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
                 status="mixed",
                 score=0,
                 value=4.2,
+                details={"credit_spread_change_5d": -0.20},
             ),
             _market_signal(
                 source_date=snapshot.source_date,
@@ -926,6 +984,7 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
                 status="neutral",
                 score=0,
                 value=0.0,
+                details={"financial_conditions_change_4w": -0.10},
             ),
         ),
     )
@@ -933,7 +992,9 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
     assert action.state == "scale_up_redeploy"
     assert action.washout_score >= 3
     assert action.stretch_score == 0
-    assert "Washout/re-risk threshold crossed" in action.reason
+    assert action.redeploy_strength >= 0.55
+    assert action.protect_strength < action.redeploy_strength
+    assert "Washout setup plus stabilization evidence" in action.reason
 
 
 def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None:
@@ -955,6 +1016,8 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
         qqq_ma50_distance=-0.10,
         vix_close=34.0,
         vvix_close=130.0,
+        stretch_pressure_score=0.05,
+        washout_pressure_score=0.90,
     )
 
     action = derive_regime_action_state(
@@ -963,10 +1026,20 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
             _market_signal(
                 source_date=snapshot.source_date,
                 family="volatility",
+                name="price_proxy",
+                status="stressed",
+                score=-1,
+                value="VIX 34.0",
+                details={"vix_return_5d": -0.18},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
                 name="vol_of_vol",
                 status="stressed",
                 score=-1,
                 value=130.0,
+                details={"vvix_return_5d": -0.15},
             ),
             _market_signal(
                 source_date=snapshot.source_date,
@@ -975,6 +1048,7 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
                 status="stressed",
                 score=-1,
                 value=6.5,
+                details={"credit_spread_change_5d": -0.20},
             ),
             _market_signal(
                 source_date=snapshot.source_date,
@@ -983,12 +1057,14 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
                 status="tight",
                 score=-1,
                 value=0.4,
+                details={"financial_conditions_change_4w": -0.10},
             ),
         ),
     )
 
     assert action.state == "no_change"
     assert action.washout_score >= 3
+    assert action.redeploy_strength >= 0.55
     assert "block aggressive re-risk" in action.reason
 
 
@@ -1349,6 +1425,8 @@ def _snapshot(
     action_reason: str = "No rare-action threshold crossed",
     stretch_score: int = 0,
     washout_score: int = 0,
+    stretch_pressure_score: float | None = None,
+    washout_pressure_score: float | None = None,
     model_version: str = "fixture_model",
     signal_time: str = "eod",
     snapshot_version: str | None = None,
@@ -1389,6 +1467,8 @@ def _snapshot(
         action_reason=action_reason,
         stretch_score=stretch_score,
         washout_score=washout_score,
+        stretch_pressure_score=stretch_pressure_score,
+        washout_pressure_score=washout_pressure_score,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
     )
