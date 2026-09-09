@@ -43,7 +43,7 @@ def test_write_market_signal_snapshot_rejects_mixed_dates(tmp_path: Path) -> Non
         write_market_signal_snapshot((first, second), snapshot_root=tmp_path)
 
 
-def test_write_market_signal_snapshot_replaces_changed_artifact_by_default(
+def test_write_market_signal_snapshot_overwrites_changed_snapshot_by_default(
     tmp_path: Path,
 ) -> None:
     source_date = date(2026, 8, 28)
@@ -325,7 +325,6 @@ def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path
         snapshot_root
         / source_date_value
         / "eod"
-        / f"{source_date_value}_eod"
-        / "market_signals_model_v1"
+        / "v0"
         / "market-signals.jsonl"
     )

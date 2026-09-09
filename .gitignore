@@ -33,3 +33,7 @@ credentials/
 *.pem
 *.key
 *.token
+
+/output
+/output-*
+

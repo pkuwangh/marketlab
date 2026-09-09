@@ -49,7 +49,12 @@ from marketlab.regime import (
     RegimeSnapshot,
     load_regime_snapshot,
 )
-from marketlab.snapshots.models import SignalTime, snapshot_source_dates
+from marketlab.snapshots.models import (
+    SignalTime,
+    default_snapshot_version,
+    signal_time_value,
+    snapshot_source_dates,
+)
 
 DEFAULT_CHART_REPORT_ROOT = Path("reports")
 REGIME_CHART_VERSION = "regime_chart_v0"
@@ -191,6 +196,8 @@ def render_regime_chart(
     resolved_output_path = output_path or _default_regime_chart_path(
         start_date=start_date,
         end_date=end_date,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     html = _render_regime_chart_html(
         start_date=start_date,
@@ -243,7 +250,7 @@ def render_opportunity_chart(
     snapshot_version: str | None = None,
     output_path: Path | None = None,
 ) -> OpportunityChartResult:
-    """Render a single-name opportunity chart from saved research artifacts."""
+    """Render a single-name opportunity chart from saved research snapshots."""
 
     if lookback_days < 0:
         raise ChartError("Opportunity chart lookback days must be non-negative")
@@ -300,6 +307,8 @@ def render_opportunity_chart(
     resolved_output_path = output_path or _default_opportunity_chart_path(
         source_date=source_date,
         symbol=normalized_symbol,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
     )
     html = _render_opportunity_chart_html(
         source_date=source_date,
@@ -2318,11 +2327,43 @@ def _text(
     )
 
 
-def _default_regime_chart_path(*, start_date: date, end_date: date) -> Path:
+def _default_regime_chart_path(
+    *,
+    start_date: date,
+    end_date: date,
+    signal_time: SignalTime | str,
+    snapshot_version: str | None,
+) -> Path:
+    date_key = (
+        start_date.isoformat()
+        if start_date == end_date
+        else f"{start_date.isoformat()}_to_{end_date.isoformat()}"
+    )
     return (
-        DEFAULT_CHART_REPORT_ROOT / f"regime-{start_date.isoformat()}-{end_date.isoformat()}.html"
+        DEFAULT_CHART_REPORT_ROOT
+        / "regime"
+        / "market"
+        / date_key
+        / signal_time_value(signal_time)
+        / (snapshot_version or default_snapshot_version(start_date, signal_time=signal_time))
+        / "chart.html"
     )
 
 
-def _default_opportunity_chart_path(*, source_date: date, symbol: str) -> Path:
-    return DEFAULT_CHART_REPORT_ROOT / f"opportunity-{symbol}-{source_date.isoformat()}.html"
+def _default_opportunity_chart_path(
+    *,
+    source_date: date,
+    symbol: str,
+    signal_time: SignalTime | str,
+    snapshot_version: str | None,
+) -> Path:
+    return (
+        DEFAULT_CHART_REPORT_ROOT
+        / "bulltard"
+        / "opportunity"
+        / symbol
+        / source_date.isoformat()
+        / signal_time_value(signal_time)
+        / (snapshot_version or default_snapshot_version(source_date, signal_time=signal_time))
+        / "chart.html"
+    )

@@ -25,7 +25,7 @@ from marketlab.bulltard.recaps import (
     extract_trades_of_interest,
     redact_capability_url,
 )
-from marketlab.snapshots.models import utc_timestamp, write_immutable_payload
+from marketlab.snapshots.models import utc_timestamp, write_snapshot_payload
 
 DEFAULT_OBSERVATIONS_ROOT = Path("data/observations/bulltard")
 DEFAULT_DEBUG_ROOT = Path("data/debug/bulltard")
@@ -214,7 +214,7 @@ def ingest_planned_view(
         view=plan.view.value,
     )
     payload = _observation_rows_payload(rows, ingest_id=ingest_id)
-    write_immutable_payload(
+    write_snapshot_payload(
         path=fetched_view.plan.observation_path,
         payload=payload,
         error_cls=IngestError,
@@ -358,7 +358,7 @@ def ingest_ticker_page(
         symbol=fetched_page.symbol,
     )
     payload = _observation_rows_payload(rows, ingest_id=ingest_id)
-    write_immutable_payload(
+    write_snapshot_payload(
         path=observation_path,
         payload=payload,
         error_cls=IngestError,
@@ -423,7 +423,7 @@ def ingest_trades_of_interest(
         view="trades-of-interest",
     )
     payload = _observation_rows_payload(rows, ingest_id=ingest_id)
-    write_immutable_payload(
+    write_snapshot_payload(
         path=observation_path,
         payload=payload,
         error_cls=IngestError,
@@ -532,7 +532,7 @@ def _write_ingest_metadata(
         )
         + "\n"
     )
-    write_immutable_payload(
+    write_snapshot_payload(
         path=metadata_path,
         payload=payload,
         error_cls=IngestError,

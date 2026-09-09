@@ -31,7 +31,7 @@ from marketlab.snapshots.models import (
     signal_time_value,
     utc_timestamp,
     versioned_snapshot_path,
-    write_immutable_payload,
+    write_snapshot_payload,
 )
 
 DEFAULT_CANDIDATE_SNAPSHOT_ROOT = Path("data/snapshots/bulltard/candidates")
@@ -270,7 +270,7 @@ def write_candidate_validation_snapshots(
     source_date: date,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> Path:
     """Write one date's candidate validation snapshots."""
 
@@ -307,10 +307,6 @@ def write_candidate_validation_snapshots(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=_candidate_artifact_version(
-                model_version=model_version,
-                opportunity_version=opportunity_version,
-            ),
             filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
         )
     except ValueError as exc:
@@ -329,7 +325,7 @@ def write_candidate_validation_snapshots(
         + "\n"
         for snapshot in snapshots
     )
-    wrote = write_immutable_payload(
+    wrote = write_snapshot_payload(
         path=path,
         payload=payload,
         error_cls=CandidateValidationError,
@@ -355,19 +351,12 @@ def load_candidate_validation_snapshots(
 ) -> tuple[CandidateValidationSnapshot, ...]:
     """Load one date's candidate validation snapshots."""
 
-    artifact_version = None
-    if model_version is not None or opportunity_version is not None:
-        artifact_version = _candidate_artifact_version(
-            model_version=model_version or CANDIDATE_VALIDATION_MODEL_VERSION,
-            opportunity_version=opportunity_version or OPPORTUNITY_VERSION,
-        )
     try:
         path = resolve_snapshot_path(
             snapshot_root=snapshot_root,
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=artifact_version,
             filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
             legacy_suffix=".jsonl",
         )
@@ -376,11 +365,22 @@ def load_candidate_validation_snapshots(
     if path is None:
         return ()
     try:
-        return tuple(
+        snapshots = tuple(
             _snapshot_from_dict(json.loads(line))
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         )
+        if model_version is not None:
+            snapshots = tuple(
+                snapshot for snapshot in snapshots if snapshot.model_version == model_version
+            )
+        if opportunity_version is not None:
+            snapshots = tuple(
+                snapshot
+                for snapshot in snapshots
+                if snapshot.opportunity_version == opportunity_version
+            )
+        return snapshots
     except OSError as exc:
         raise CandidateValidationError(f"Failed to read candidate snapshots: {path}") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -719,10 +719,6 @@ def _snapshot_from_dict(row: dict[str, Any]) -> CandidateValidationSnapshot:
         created_at=_optional_str(row.get("created_at")),
         code_revision=_optional_str(row.get("code_revision")),
     )
-
-
-def _candidate_artifact_version(*, model_version: str, opportunity_version: str) -> str:
-    return f"{model_version}+{opportunity_version}"
 
 
 def _optional_float(value: object) -> float | None:

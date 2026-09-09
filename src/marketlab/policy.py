@@ -45,7 +45,7 @@ from marketlab.snapshots.models import (
     snapshot_source_dates,
     utc_timestamp,
     versioned_snapshot_path,
-    write_immutable_payload,
+    write_snapshot_payload,
 )
 
 DEFAULT_POLICY_SNAPSHOT_ROOT = Path("data/snapshots/portfolio/policy")
@@ -514,7 +514,7 @@ def write_portfolio_policy_snapshot(
     snapshot: PortfolioPolicySnapshot,
     *,
     snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> Path:
     """Write one portfolio policy snapshot."""
 
@@ -524,7 +524,6 @@ def write_portfolio_policy_snapshot(
             source_date=snapshot.source_date,
             signal_time=snapshot.signal_time,
             snapshot_version=snapshot.snapshot_version,
-            artifact_version=snapshot.policy_version,
             filename=POLICY_SNAPSHOT_FILENAME,
         )
     except ValueError as exc:
@@ -540,7 +539,7 @@ def write_portfolio_policy_snapshot(
         )
         + "\n"
     )
-    wrote = write_immutable_payload(
+    wrote = write_snapshot_payload(
         path=path,
         payload=payload,
         error_cls=PortfolioPolicyError,
@@ -571,7 +570,6 @@ def load_portfolio_policy_snapshot(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=policy_version,
             filename=POLICY_SNAPSHOT_FILENAME,
             legacy_suffix=".json",
         )
@@ -580,7 +578,10 @@ def load_portfolio_policy_snapshot(
     if path is None:
         return None
     try:
-        return _policy_snapshot_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        snapshot = _policy_snapshot_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        if policy_version is not None and snapshot.policy_version != policy_version:
+            return None
+        return snapshot
     except OSError as exc:
         raise PortfolioPolicyError(f"Failed to read portfolio policy snapshot: {path}") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:

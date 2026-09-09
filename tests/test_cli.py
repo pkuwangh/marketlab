@@ -33,19 +33,26 @@ from marketlab.charts import OpportunityChartResult, RegimeChartResult
 from marketlab.cli import (
     app,
     bulltard_app,
-    chart_app,
+    data_app,
     gmail_app,
     market_series_app,
-    policy_app,
     prices_app,
     regime_app,
-    report_app,
     store_app,
+    tools_app,
 )
 from marketlab.gmail import GmailAuthResult, GmailBulltardRecapResult
 from marketlab.market_series import MarketSeriesFetchResult
 from marketlab.market_signals import MarketSignal
-from marketlab.policy import DailyPolicyReportResult, PortfolioPolicySnapshot
+from marketlab.policy import (
+    DailyPolicyReportResult,
+    PortfolioPolicyForwardOutcome,
+    PortfolioPolicyFrequencyRow,
+    PortfolioPolicyOutcomeResult,
+    PortfolioPolicyOutcomeSummaryRow,
+    PortfolioPolicySnapshot,
+    PortfolioPolicySnapshotResult,
+)
 from marketlab.prices import PriceFetchResult
 from marketlab.regime import (
     MarketSignalForwardOutcome,
@@ -77,14 +84,13 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
 def test_typer_app_has_no_args_is_help_enabled() -> None:
     assert app.info.no_args_is_help is True
     assert bulltard_app.info.no_args_is_help is True
+    assert data_app.info.no_args_is_help is True
     assert prices_app.info.no_args_is_help is True
     assert market_series_app.info.no_args_is_help is True
+    assert tools_app.info.no_args_is_help is True
     assert gmail_app.info.no_args_is_help is True
     assert regime_app.info.no_args_is_help is True
     assert store_app.info.no_args_is_help is True
-    assert policy_app.info.no_args_is_help is True
-    assert report_app.info.no_args_is_help is True
-    assert chart_app.info.no_args_is_help is True
 
 
 def test_typer_no_args_shows_help_without_traceback() -> None:
@@ -94,6 +100,13 @@ def test_typer_no_args_shows_help_without_traceback() -> None:
     assert "MarketLab research workflow CLI." in result.output
     assert "--version" in result.output
     assert "daily" in result.output
+    assert "regime" in result.output
+    assert "bulltard" in result.output
+    assert "data" in result.output
+    assert "tools" in result.output
+    assert "policy" not in result.output
+    assert "report" not in result.output
+    assert "chart" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -484,7 +497,7 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         assert start_date == date(2026, 8, 31)
         assert end_date == date(2026, 8, 31)
         assert observations_root == Path("data/observations/bulltard")
-        assert regime_snapshot_root == Path("data/derived/regime/market")
+        assert regime_snapshot_root == Path("data/snapshots/regime/market")
         assert horizons == (1, 5, 20, 40, 65, 126)
         events.append("outcomes")
         return CandidateOutcomeResult(
@@ -745,14 +758,25 @@ def test_bulltard_no_args_shows_help_without_traceback() -> None:
     result = CliRunner().invoke(app, ["bulltard"])
 
     assert result.exit_code != 0
-    assert "Bulltard link extraction and ingest utilities." in result.output
+    assert "Bulltard option-flow and single-name candidate pillar." in result.output
     assert "inspect-recap" in result.output
     assert "ingest" in result.output
     assert "Traceback" not in result.output
 
 
-def test_prices_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["prices"])
+def test_data_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["data"])
+
+    assert result.exit_code != 0
+    assert "Raw data download/import and local query-store utilities." in result.output
+    assert "prices" in result.output
+    assert "market-series" in result.output
+    assert "store" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_data_prices_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["data", "prices"])
 
     assert result.exit_code != 0
     assert "Daily OHLCV price utilities." in result.output
@@ -760,8 +784,8 @@ def test_prices_no_args_shows_help_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
-def test_market_series_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["market-series"])
+def test_data_market_series_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["data", "market-series"])
 
     assert result.exit_code != 0
     assert "Scalar market series utilities." in result.output
@@ -769,8 +793,26 @@ def test_market_series_no_args_shows_help_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
-def test_gmail_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["gmail"])
+def test_data_store_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["data", "store"])
+
+    assert result.exit_code != 0
+    assert "Local research store utilities." in result.output
+    assert "refresh" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_tools_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["tools"])
+
+    assert result.exit_code != 0
+    assert "External integration and one-off helper utilities." in result.output
+    assert "gmail" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_tools_gmail_no_args_shows_help_without_traceback() -> None:
+    result = CliRunner().invoke(app, ["tools", "gmail"])
 
     assert result.exit_code != 0
     assert "Find Bulltard recap emails in Gmail" in result.output
@@ -780,7 +822,7 @@ def test_gmail_no_args_shows_help_without_traceback() -> None:
 
 
 def test_gmail_auth_no_args_shows_help_without_default_path_error() -> None:
-    result = CliRunner().invoke(app, ["gmail", "auth"])
+    result = CliRunner().invoke(app, ["tools", "gmail", "auth"])
 
     assert result.exit_code != 0
     assert "Authorize read-only Gmail access" in result.output
@@ -797,13 +839,13 @@ def test_gmail_auth_no_args_shows_help_without_default_path_error() -> None:
 
 
 def test_gmail_bulltard_recap_no_args_shows_help_without_missing_date_error() -> None:
-    result = CliRunner().invoke(app, ["gmail", "bulltard-recap"])
+    result = CliRunner().invoke(app, ["tools", "gmail", "bulltard-recap"])
 
     assert result.exit_code != 0
     assert "cache it for Bulltard ingest" in result.output
     assert "--date" in result.output
     assert "Existing local Gmail token" in result.output
-    assert "marketlab gmail" in result.output
+    assert "marketlab tools" in result.output
     assert "auth" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
@@ -845,6 +887,7 @@ def test_gmail_auth_outputs_token_metadata(
     result = CliRunner().invoke(
         app,
         [
+            "tools",
             "gmail",
             "auth",
             "--client-secret",
@@ -917,6 +960,7 @@ def test_gmail_bulltard_recap_outputs_cached_recap_metadata(
     result = CliRunner().invoke(
         app,
         [
+            "tools",
             "gmail",
             "bulltard-recap",
             "--date",
@@ -946,51 +990,51 @@ def test_regime_no_args_shows_help_without_traceback() -> None:
     result = CliRunner().invoke(app, ["regime"])
 
     assert result.exit_code != 0
-    assert "Market regime utilities." in result.output
+    assert "Market regime pillar." in result.output
     assert "snapshot" in result.output
-    assert "Traceback" not in result.output
-
-
-def test_store_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["store"])
-
-    assert result.exit_code != 0
-    assert "Local research store utilities." in result.output
-    assert "refresh" in result.output
-    assert "Traceback" not in result.output
-
-
-def test_policy_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["policy"])
-
-    assert result.exit_code != 0
-    assert "Portfolio policy utilities." in result.output
-    assert "snapshot" in result.output
+    assert "backfill" in result.output
     assert "outcomes" in result.output
+    assert "policy" in result.output
+    assert "policy-backfill" in result.output
+    assert "report" in result.output
+    assert "chart" in result.output
+    assert "signal-outcomes" not in result.output
+    assert "action-outcomes" not in result.output
+    assert "pressure-outcomes" not in result.output
     assert "Traceback" not in result.output
 
 
-def test_report_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["report"])
+def test_removed_top_level_groups_are_not_callable() -> None:
+    removed_commands = (
+        (["prices"], "prices"),
+        (["prices", "fetch-yahoo"], "prices"),
+        (["market-series"], "market-series"),
+        (["market-series", "fetch-fred"], "market-series"),
+        (["gmail"], "gmail"),
+        (["gmail", "auth"], "gmail"),
+        (["store"], "store"),
+        (["store", "refresh"], "store"),
+        (["policy"], "policy"),
+        (["policy", "snapshot"], "policy"),
+        (["policy", "backfill"], "policy"),
+        (["policy", "outcomes"], "policy"),
+        (["report"], "report"),
+        (["report", "daily"], "report"),
+        (["chart"], "chart"),
+        (["chart", "regime"], "chart"),
+        (["chart", "opportunity"], "chart"),
+    )
 
-    assert result.exit_code != 0
-    assert "Human-readable research reports." in result.output
-    assert "daily" in result.output
-    assert "Traceback" not in result.output
+    for args, command_name in removed_commands:
+        result = CliRunner().invoke(app, args)
 
-
-def test_chart_no_args_shows_help_without_traceback() -> None:
-    result = CliRunner().invoke(app, ["chart"])
-
-    assert result.exit_code != 0
-    assert "Reproducible chart utilities." in result.output
-    assert "regime" in result.output
-    assert "opportunity" in result.output
-    assert "Traceback" not in result.output
+        assert result.exit_code != 0
+        assert f"No such command '{command_name}'" in result.output
+        assert "Traceback" not in result.output
 
 
 def test_prices_fetch_no_args_shows_help_without_missing_argument_error() -> None:
-    result = CliRunner().invoke(app, ["prices", "fetch"])
+    result = CliRunner().invoke(app, ["data", "prices", "fetch"])
 
     assert result.exit_code != 0
     assert "Fetch daily OHLCV observations." in result.output
@@ -1001,7 +1045,7 @@ def test_prices_fetch_no_args_shows_help_without_missing_argument_error() -> Non
 
 
 def test_prices_fetch_yahoo_no_args_shows_help_without_missing_argument_error() -> None:
-    result = CliRunner().invoke(app, ["prices", "fetch-yahoo"])
+    result = CliRunner().invoke(app, ["data", "prices", "fetch-yahoo"])
 
     assert result.exit_code != 0
     assert "Fetch daily OHLCV observations from Yahoo Finance" in result.output
@@ -1012,7 +1056,7 @@ def test_prices_fetch_yahoo_no_args_shows_help_without_missing_argument_error() 
 
 
 def test_market_series_fetch_fred_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["market-series", "fetch-fred"])
+    result = CliRunner().invoke(app, ["data", "market-series", "fetch-fred"])
 
     assert result.exit_code != 0
     assert "Fetch scalar market series observations from FRED" in result.output
@@ -1026,9 +1070,10 @@ def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> No
     result = CliRunner().invoke(app, ["regime", "snapshot"])
 
     assert result.exit_code != 0
-    assert "Compute a derived market regime artifact" in result.output
+    assert "Compute a market regime snapshot" in result.output
     assert "--date" in result.output
     assert "--fetch-prices" in result.output
+    assert "--detail" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
@@ -1037,7 +1082,7 @@ def test_regime_backfill_no_args_shows_help_without_missing_option_error() -> No
     result = CliRunner().invoke(app, ["regime", "backfill"])
 
     assert result.exit_code != 0
-    assert "Backfill daily market regime artifacts and market signal artifacts" in result.output
+    assert "Backfill daily market regime and market signal snapshots" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
     assert "Missing option" not in result.output
@@ -1051,41 +1096,18 @@ def test_regime_outcomes_no_args_shows_help_without_missing_option_error() -> No
     assert "Replay forward SPY/QQQ outcomes" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
+    assert "--by" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 
-def test_regime_signal_outcomes_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["regime", "signal-outcomes"])
+def test_removed_split_regime_outcome_commands_are_not_callable() -> None:
+    for command_name in ("signal-outcomes", "action-outcomes", "pressure-outcomes"):
+        result = CliRunner().invoke(app, ["regime", command_name])
 
-    assert result.exit_code != 0
-    assert "Replay forward SPY/QQQ outcomes" in result.output
-    assert "--start" in result.output
-    assert "--end" in result.output
-    assert "Missing option" not in result.output
-    assert "Traceback" not in result.output
-
-
-def test_regime_action_outcomes_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["regime", "action-outcomes"])
-
-    assert result.exit_code != 0
-    assert "Replay forward SPY/QQQ outcomes for rare regime action states" in result.output
-    assert "--start" in result.output
-    assert "--end" in result.output
-    assert "Missing option" not in result.output
-    assert "Traceback" not in result.output
-
-
-def test_regime_pressure_outcomes_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["regime", "pressure-outcomes"])
-
-    assert result.exit_code != 0
-    assert "Replay forward SPY/QQQ outcomes for normalized pressure buckets" in result.output
-    assert "--start" in result.output
-    assert "--end" in result.output
-    assert "Missing option" not in result.output
-    assert "Traceback" not in result.output
+        assert result.exit_code != 0
+        assert f"No such command '{command_name}'" in result.output
+        assert "Traceback" not in result.output
 
 
 def test_store_refresh_no_args_runs_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1099,7 +1121,7 @@ def test_store_refresh_no_args_runs_with_defaults(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr("marketlab.cli.refresh_research_store", fake_refresh_research_store)
 
-    result = CliRunner().invoke(app, ["store", "refresh"])
+    result = CliRunner().invoke(app, ["data", "store", "refresh"])
 
     assert result.exit_code == 0
     assert "research_db_path=marketlab.duckdb" in result.output
@@ -1108,7 +1130,7 @@ def test_store_refresh_no_args_runs_with_defaults(monkeypatch: pytest.MonkeyPatc
 
 
 def test_store_query_no_args_shows_help_without_missing_argument_error() -> None:
-    result = CliRunner().invoke(app, ["store", "query"])
+    result = CliRunner().invoke(app, ["data", "store", "query"])
 
     assert result.exit_code != 0
     assert "Run a read-only SQL query" in result.output
@@ -1117,18 +1139,19 @@ def test_store_query_no_args_shows_help_without_missing_argument_error() -> None
     assert "Traceback" not in result.output
 
 
-def test_policy_snapshot_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["policy", "snapshot"])
+def test_regime_policy_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "policy"])
 
     assert result.exit_code != 0
     assert "Compute a portfolio policy snapshot" in result.output
     assert "--date" in result.output
+    assert "--detail" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
 
 
-def test_policy_backfill_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["policy", "backfill"])
+def test_regime_policy_backfill_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "policy-backfill"])
 
     assert result.exit_code != 0
     assert "Backfill portfolio policy snapshots" in result.output
@@ -1138,19 +1161,8 @@ def test_policy_backfill_no_args_shows_help_without_missing_option_error() -> No
     assert "Traceback" not in result.output
 
 
-def test_policy_outcomes_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["policy", "outcomes"])
-
-    assert result.exit_code != 0
-    assert "Replay portfolio policy snapshots" in result.output
-    assert "--start" in result.output
-    assert "--end" in result.output
-    assert "Missing option" not in result.output
-    assert "Traceback" not in result.output
-
-
-def test_report_daily_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["report", "daily"])
+def test_regime_report_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "report"])
 
     assert result.exit_code != 0
     assert "Render the daily market regime and portfolio policy report" in result.output
@@ -1160,7 +1172,7 @@ def test_report_daily_no_args_shows_help_without_missing_option_error() -> None:
 
 
 def test_chart_regime_no_args_shows_help_without_missing_option_error() -> None:
-    result = CliRunner().invoke(app, ["chart", "regime"])
+    result = CliRunner().invoke(app, ["regime", "chart"])
 
     assert result.exit_code != 0
     assert "Render a reproducible market regime chart" in result.output
@@ -1171,7 +1183,7 @@ def test_chart_regime_no_args_shows_help_without_missing_option_error() -> None:
 
 
 def test_chart_opportunity_no_args_shows_help_without_missing_argument_error() -> None:
-    result = CliRunner().invoke(app, ["chart", "opportunity"])
+    result = CliRunner().invoke(app, ["bulltard", "chart"])
 
     assert result.exit_code != 0
     assert "Render a reproducible single-name opportunity chart" in result.output
@@ -1238,8 +1250,8 @@ def test_chart_regime_outputs_chart_metadata(
     result = CliRunner().invoke(
         app,
         [
-            "chart",
             "regime",
+            "chart",
             "--start",
             "2026-01-01",
             "--end",
@@ -1324,8 +1336,8 @@ def test_chart_opportunity_outputs_chart_metadata(
     result = CliRunner().invoke(
         app,
         [
+            "bulltard",
             "chart",
-            "opportunity",
             "MRVL",
             "--date",
             "2026-08-28",
@@ -1357,7 +1369,7 @@ def test_chart_opportunity_outputs_chart_metadata(
 
 
 def test_prices_import_csv_no_args_shows_help_without_missing_argument_error() -> None:
-    result = CliRunner().invoke(app, ["prices", "import-csv"])
+    result = CliRunner().invoke(app, ["data", "prices", "import-csv"])
 
     assert result.exit_code != 0
     assert "Import daily OHLCV observations" in result.output
@@ -1849,6 +1861,7 @@ def test_prices_fetch_outputs_written_observation_paths(
     result = CliRunner().invoke(
         app,
         [
+            "data",
             "prices",
             "fetch",
             "META,SPY",
@@ -1901,6 +1914,7 @@ def test_prices_fetch_yahoo_outputs_written_observation_paths(
     result = CliRunner().invoke(
         app,
         [
+            "data",
             "prices",
             "fetch-yahoo",
             "META,SPY",
@@ -1951,6 +1965,7 @@ def test_prices_import_csv_outputs_written_observation_path(
     result = CliRunner().invoke(
         app,
         [
+            "data",
             "prices",
             "import-csv",
             "META",
@@ -2004,6 +2019,7 @@ def test_market_series_fetch_fred_outputs_written_observation_paths(
     result = CliRunner().invoke(
         app,
         [
+            "data",
             "market-series",
             "fetch-fred",
             "BAMLH0A0HYM2,NFCI",
@@ -2181,10 +2197,11 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
             str(price_root),
             "--market-series-root",
             str(market_series_root),
-            "--artifact-root",
+            "--snapshot-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_snapshot_root),
+            "--detail",
         ],
     )
 
@@ -2194,14 +2211,20 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_price_success_count=1" in result.output
     assert "market_series_ids=BAMLH0A0HYM2" in result.output
     assert "market_series_success_count=1" in result.output
-    assert f"regime_artifact_path={snapshot_root / '2026-08-28.json'}" in result.output
+    assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
     assert (
-        f"market_signal_artifact_path={signal_snapshot_root / '2026-08-28.jsonl'}"
+        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}"
         in result.output
     )
     assert "market_signal_count=1" in result.output
     assert "trend   price_proxy  +2" in result.output
     assert "regime_date=2026-08-28" in result.output
+    assert "regime=risk_on" in result.output
+    assert "regime_score=5" in result.output
+    assert "regime_confidence=high" in result.output
+    assert "regime_action_state=no_change" in result.output
+    assert "regime_action_confidence=low" in result.output
+    assert "market_signal_contradiction_count=1" in result.output
     assert "signal" in result.output
     assert "value" in result.output
     assert "risk_on (+5)" in result.output
@@ -2212,19 +2235,132 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "medium confidence" in result.output
     assert "positive=trend/price_proxy:constructive negative=fixture" in result.output
     assert "trend   spy_return_20d  0.42" in result.output
-    assert "regime=risk_on" not in result.output
-    assert "regime_score=5" not in result.output
-    assert "action_state=no_change" not in result.output
     assert "no_change (stretch 1 / washout 0)" not in result.output
     assert "stretch_score=1" not in result.output
     assert "washout_score=0" not in result.output
-    assert "action_confidence=high" not in result.output
     assert "stretch_pressure_score=0.42" not in result.output
     assert "washout_pressure_score=0.08" not in result.output
     assert "pressure_confidence=medium" not in result.output
-    assert "market_signal_contradictions=" not in result.output
     assert "component  score  status" not in result.output
     assert "trend     +2     constructive" not in result.output
+
+
+def test_regime_snapshot_outputs_concise_metadata_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_root = tmp_path / "prices"
+    market_series_root = tmp_path / "market-series"
+    snapshot_root = tmp_path / "regime"
+    signal_snapshot_root = tmp_path / "signals"
+
+    def fake_compute_regime_snapshot(
+        *,
+        source_date: date,
+        price_root: Path,
+        market_series_root: Path,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+        overwrite_snapshot: bool,
+    ) -> RegimeSnapshotResult:
+        assert source_date == date(2026, 8, 28)
+        assert price_root == price_root_arg
+        assert market_series_root == market_series_root_arg
+        assert snapshot_root == snapshot_root_arg
+        assert signal_snapshot_root == signal_snapshot_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        assert write_snapshot is True
+        assert overwrite_snapshot is True
+        snapshot = _regime_snapshot(source_date=source_date)
+        signal = MarketSignal(
+            source_date=source_date,
+            feature_version="fixture",
+            family="trend",
+            name="price_proxy",
+            status="constructive",
+            score=2,
+            value="SPY fixture",
+            unit="text",
+            source="fixture",
+            observed_date=source_date,
+            availability_date=source_date,
+            reason="fixture signal",
+        )
+        return RegimeSnapshotResult(
+            source_date=source_date,
+            snapshot=snapshot,
+            snapshot_path=snapshot_root / "2026-08-28.json",
+            table="component  score  status\ntrend     +2     constructive",
+            signals=(signal,),
+            signal_snapshot_path=signal_snapshot_root / "2026-08-28.jsonl",
+            signal_table="family  signal       score\ntrend   price_proxy  +2",
+            contradictions=("positive=trend/price_proxy:constructive negative=fixture",),
+            action=RegimeActionState(
+                source_date=source_date,
+                action_version="fixture_action",
+                state="no_change",
+                stretch_score=1,
+                washout_score=0,
+                confidence="high",
+                reason="No rare-action threshold crossed; maintain current posture",
+                evidence=("strong SPY rally",),
+            ),
+            pressure=RegimePressureSnapshot(
+                source_date=source_date,
+                pressure_version="fixture_pressure",
+                stretch_pressure_score=0.42,
+                washout_pressure_score=0.08,
+                confidence="medium",
+                features=(),
+            ),
+            pressure_table="family  feature         stretch\ntrend   spy_return_20d  0.42",
+            action_table="family  module  score\ntrend   evidence  +1",
+        )
+
+    price_root_arg = price_root
+    market_series_root_arg = market_series_root
+    snapshot_root_arg = snapshot_root
+    signal_snapshot_root_arg = signal_snapshot_root
+    monkeypatch.setattr("marketlab.cli.compute_regime_snapshot", fake_compute_regime_snapshot)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "snapshot",
+            "--date",
+            "2026-08-28",
+            "--price-root",
+            str(price_root),
+            "--market-series-root",
+            str(market_series_root),
+            "--snapshot-root",
+            str(snapshot_root),
+            "--signal-root",
+            str(signal_snapshot_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
+    assert (
+        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}"
+        in result.output
+    )
+    assert "regime=risk_on" in result.output
+    assert "regime_score=5" in result.output
+    assert "regime_action_state=no_change" in result.output
+    assert "market_signal_contradiction_count=1" in result.output
+    assert "risk_on (+5)" not in result.output
+    assert "trend   price_proxy  +2" not in result.output
+    assert "positive=trend/price_proxy:constructive negative=fixture" not in result.output
+    assert "trend   spy_return_20d  0.42" not in result.output
+    assert "trend   evidence  +1" not in result.output
+    assert "component  score  status" not in result.output
 
 
 def test_regime_backfill_fetches_sources_once_and_outputs_summary(
@@ -2310,7 +2446,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
         assert signal_time == "eod"
         assert snapshot_version is None
         assert write_snapshot is True
-        assert skip_existing is True
+        assert skip_existing is False
         assert overwrite_snapshot is True
         events.append("backfill")
         return RegimeBackfillResult(
@@ -2355,7 +2491,7 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
             str(price_root),
             "--market-series-root",
             str(market_series_root),
-            "--artifact-root",
+            "--snapshot-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_snapshot_root),
@@ -2369,11 +2505,150 @@ def test_regime_backfill_fetches_sources_once_and_outputs_summary(
     assert "regime_backfill_date_count=2" in result.output
     assert "regime_backfill_first_date=2026-08-28" in result.output
     assert "regime_backfill_last_date=2026-08-29" in result.output
-    assert "regime_artifact_count=2" in result.output
-    assert "market_signal_artifact_count=2" in result.output
+    assert "regime_snapshot_count=2" in result.output
+    assert "market_signal_snapshot_count=2" in result.output
     assert "regime_backfill_skipped_existing_count=0" in result.output
     assert str(snapshot_root / "2026-08-29.json") in result.output
     assert str(signal_snapshot_root / "2026-08-29.jsonl") in result.output
+
+
+def test_regime_policy_outputs_concise_metadata_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regime_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    candidate_root = tmp_path / "candidates"
+    policy_root = tmp_path / "policy"
+
+    def fake_compute_portfolio_policy_snapshot(
+        *,
+        source_date: date,
+        regime_snapshot_root: Path,
+        market_signal_snapshot_root: Path,
+        candidate_snapshot_root: Path,
+        policy_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> PortfolioPolicySnapshotResult:
+        assert source_date == date(2026, 8, 28)
+        assert regime_snapshot_root == regime_root_arg
+        assert market_signal_snapshot_root == signal_root_arg
+        assert candidate_snapshot_root == candidate_root_arg
+        assert policy_snapshot_root == policy_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        assert write_snapshot is True
+        snapshot = _portfolio_policy_snapshot(source_date=source_date)
+        return PortfolioPolicySnapshotResult(
+            source_date=source_date,
+            snapshot=snapshot,
+            snapshot_path=policy_snapshot_root / "2026-08-28.json",
+            candidate_snapshots=(),
+            table=(
+                "field                  value\n"
+                "marginal_beta_range    0.95-1.05 tactical beta\n"
+                "long_delta_stance      no forced change"
+            ),
+        )
+
+    regime_root_arg = regime_root
+    signal_root_arg = signal_root
+    candidate_root_arg = candidate_root
+    policy_root_arg = policy_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_portfolio_policy_snapshot",
+        fake_compute_portfolio_policy_snapshot,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "policy",
+            "--date",
+            "2026-08-28",
+            "--regime-root",
+            str(regime_root),
+            "--signal-root",
+            str(signal_root),
+            "--candidate-root",
+            str(candidate_root),
+            "--policy-root",
+            str(policy_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"policy_snapshot_path={policy_root / '2026-08-28.json'}" in result.output
+    assert "policy_state=maintain" in result.output
+    assert "policy_confidence=medium" in result.output
+    assert "marginal_beta_target=1.00" in result.output
+    assert "regime=risk_on" in result.output
+    assert "regime_action_state=no_change" in result.output
+    assert "confirm_candidate_count=0" in result.output
+    assert "marginal_beta_range" not in result.output
+    assert "long_delta_stance" not in result.output
+
+
+def test_regime_policy_detail_outputs_policy_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy_root = tmp_path / "policy"
+
+    def fake_compute_portfolio_policy_snapshot(
+        *,
+        source_date: date,
+        regime_snapshot_root: Path,
+        market_signal_snapshot_root: Path,
+        candidate_snapshot_root: Path,
+        policy_snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+        write_snapshot: bool,
+    ) -> PortfolioPolicySnapshotResult:
+        assert source_date == date(2026, 8, 28)
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        assert write_snapshot is True
+        snapshot = _portfolio_policy_snapshot(source_date=source_date)
+        return PortfolioPolicySnapshotResult(
+            source_date=source_date,
+            snapshot=snapshot,
+            snapshot_path=policy_snapshot_root / "2026-08-28.json",
+            candidate_snapshots=(),
+            table=(
+                "field                  value\n"
+                "marginal_beta_range    0.95-1.05 tactical beta\n"
+                "long_delta_stance      no forced change"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.compute_portfolio_policy_snapshot",
+        fake_compute_portfolio_policy_snapshot,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "policy",
+            "--date",
+            "2026-08-28",
+            "--policy-root",
+            str(policy_root),
+            "--detail",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"policy_snapshot_path={policy_root / '2026-08-28.json'}" in result.output
+    assert "policy_state=maintain" in result.output
+    assert "marginal_beta_range" in result.output
+    assert "long_delta_stance      no forced change" in result.output
 
 
 def test_regime_outcomes_outputs_summary_table(
@@ -2441,7 +2716,7 @@ def test_regime_outcomes_outputs_summary_table(
             "2026-01-01",
             "--end",
             "2026-08-28",
-            "--artifact-root",
+            "--snapshot-root",
             str(snapshot_root),
             "--price-root",
             str(price_root),
@@ -2453,6 +2728,8 @@ def test_regime_outcomes_outputs_summary_table(
     assert result.exit_code == 0
     assert "regime_outcome_count=1" in result.output
     assert "available_regime_outcome_count=1" in result.output
+    assert "summary_table:" in result.output
+    assert "frequency_table:" not in result.output
     assert "regime:risk_on  20d" in result.output
 
 
@@ -2544,12 +2821,14 @@ def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
         app,
         [
             "regime",
-            "action-outcomes",
+            "outcomes",
+            "--by",
+            "action",
             "--start",
             "2026-01-01",
             "--end",
             "2026-08-28",
-            "--artifact-root",
+            "--snapshot-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_root),
@@ -2564,6 +2843,8 @@ def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
     assert "regime_action_count=1" in result.output
     assert "regime_action_outcome_count=1" in result.output
     assert "available_regime_action_outcome_count=1" in result.output
+    assert "frequency_table:" in result.output
+    assert "summary_table:" in result.output
     assert "scale_down_protect  1" in result.output
     assert "action:scale_down_protect  20d" in result.output
 
@@ -2649,12 +2930,14 @@ def test_regime_pressure_outcomes_outputs_summary_table(
         app,
         [
             "regime",
-            "pressure-outcomes",
+            "outcomes",
+            "--by",
+            "pressure",
             "--start",
             "2026-01-01",
             "--end",
             "2026-08-28",
-            "--artifact-root",
+            "--snapshot-root",
             str(snapshot_root),
             "--signal-root",
             str(signal_root),
@@ -2669,6 +2952,8 @@ def test_regime_pressure_outcomes_outputs_summary_table(
     assert "regime_pressure_count=1" in result.output
     assert "regime_pressure_outcome_count=1" in result.output
     assert "available_regime_pressure_outcome_count=1" in result.output
+    assert "summary_table:" in result.output
+    assert "frequency_table:" not in result.output
     assert "stretch:top_5  20d" in result.output
 
 
@@ -2738,7 +3023,9 @@ def test_regime_signal_outcomes_outputs_summary_table(
         app,
         [
             "regime",
-            "signal-outcomes",
+            "outcomes",
+            "--by",
+            "signal",
             "--start",
             "2026-01-01",
             "--end",
@@ -2755,7 +3042,112 @@ def test_regime_signal_outcomes_outputs_summary_table(
     assert result.exit_code == 0
     assert "market_signal_outcome_count=1" in result.output
     assert "available_market_signal_outcome_count=1" in result.output
+    assert "summary_table:" in result.output
+    assert "frequency_table:" not in result.output
     assert "signal:volatility/vol_of_vol/calm  20d" in result.output
+
+
+def test_regime_policy_outcomes_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy_root = tmp_path / "policy"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_portfolio_policy_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        policy_snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+    ) -> PortfolioPolicyOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert policy_snapshot_root == policy_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20, 65)
+        return PortfolioPolicyOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            policies=(_portfolio_policy_snapshot(source_date=date(2026, 8, 1)),),
+            outcomes=(
+                PortfolioPolicyForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    regime_price_date=date(2026, 8, 1),
+                    policy_state="maintain",
+                    marginal_beta_target=1.0,
+                    horizon_days=20,
+                    spy_return=0.05,
+                    qqq_return=0.08,
+                    benchmark_return=0.06,
+                    policy_proxy_return=0.06,
+                    excess_return=0.0,
+                    benchmark_max_drawdown=-0.02,
+                    policy_proxy_max_drawdown=-0.02,
+                ),
+            ),
+            frequency_rows=(
+                PortfolioPolicyFrequencyRow(
+                    policy_state="maintain",
+                    policy_count=1,
+                    share=1.0,
+                    avg_marginal_beta_target=1.0,
+                ),
+            ),
+            summary_rows=(
+                PortfolioPolicyOutcomeSummaryRow(
+                    bucket="policy:maintain",
+                    horizon_days=20,
+                    policy_count=1,
+                    available_count=1,
+                    avg_marginal_beta_target=1.0,
+                    avg_benchmark_return=0.06,
+                    avg_policy_proxy_return=0.06,
+                    avg_excess_return=0.0,
+                    avg_benchmark_max_drawdown=-0.02,
+                    avg_policy_proxy_max_drawdown=-0.02,
+                ),
+            ),
+            frequency_table="policy_state  count\nmaintain      1",
+            table="bucket           horizon\npolicy:maintain  20d",
+        )
+
+    policy_root_arg = policy_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_portfolio_policy_outcomes",
+        fake_compute_portfolio_policy_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--by",
+            "policy",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--policy-root",
+            str(policy_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20,65",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "portfolio_policy_count=1" in result.output
+    assert "portfolio_policy_outcome_count=1" in result.output
+    assert "available_portfolio_policy_outcome_count=1" in result.output
+    assert "frequency_table:" in result.output
+    assert "summary_table:" in result.output
+    assert "maintain      1" in result.output
+    assert "policy:maintain  20d" in result.output
 
 
 def test_bulltard_validate_outputs_snapshot_and_table(
@@ -3245,7 +3637,7 @@ def test_bulltard_daily_can_refresh_prices_validate_and_compute_outcomes(
     assert "price_success_count=2" in result.output
     assert "regime_price_symbols" not in result.output
     assert "regime_snapshot_path" not in result.output
-    assert "regime_artifact_path" not in result.output
+    assert "regime_snapshot_path" not in result.output
     assert "candidate_validation_count=1" in result.output
     assert "candidate_validation_summary=candidates:1 confirm:1 watch:0 avoid:0" in result.output
     assert "META    confirm" in result.output

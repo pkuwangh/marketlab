@@ -1,4 +1,4 @@
-"""Extract Bulltard source links from local recap artifacts."""
+"""Extract Bulltard source links from local recap files."""
 
 from __future__ import annotations
 
@@ -232,7 +232,7 @@ def extract_signed_source_url(text_or_html: str) -> str:
 
     if not candidates:
         raise SignedSourceUrlError(
-            "No signed Bulltard app bootstrap URL found. Save the recap artifact that contains "
+            "No signed Bulltard app bootstrap URL found. Save the recap file that contains "
             "the original database/app link, or copy that link into a local text file."
         )
     if len(candidates) > 1:

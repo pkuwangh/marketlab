@@ -150,8 +150,7 @@ def _candidate_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
         snapshot_root
         / source_date_value
         / "eod"
-        / f"{source_date_value}_eod"
-        / "bulltard_candidate_validation_rules_v0+candidate_validation_only_v0"
+        / "v0"
         / "candidate-validation.jsonl"
     )
 

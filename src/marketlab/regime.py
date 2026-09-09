@@ -1,4 +1,4 @@
-"""Market regime artifacts from daily price proxies."""
+"""Market regime snapshots from daily price proxies."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from marketlab.market_series import (
 from marketlab.market_signals import (
     DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     MARKET_SIGNAL_FEATURE_VERSION,
-    MARKET_SIGNAL_MODEL_VERSION,
     MARKET_SIGNAL_SNAPSHOT_FILENAME,
     MarketSignal,
     MarketSignalError,
@@ -49,10 +48,10 @@ from marketlab.snapshots.models import (
     snapshot_source_dates,
     utc_timestamp,
     versioned_snapshot_path,
-    write_immutable_payload,
+    write_snapshot_payload,
 )
 
-DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/derived/regime/market")
+DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
 DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS = (
     "SPY",
     "QQQ",
@@ -69,10 +68,10 @@ DEFAULT_REGIME_BREADTH_SYMBOLS = ("$S5FI", "$S5TH")
 DEFAULT_REGIME_PRICE_SYMBOLS = DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS + DEFAULT_REGIME_BREADTH_SYMBOLS
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
-REGIME_MODEL_VERSION = "market_regime_score_v1"
-REGIME_ACTION_VERSION = "regime_action_v1"
+REGIME_MODEL_VERSION = "market_regime_score_v0"
+REGIME_ACTION_VERSION = "regime_action_v0"
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
-REGIME_PRESSURE_VERSION = "regime_pressure_v1"
+REGIME_PRESSURE_VERSION = "regime_pressure_v0"
 REGIME_SNAPSHOT_FILENAME = "regime.json"
 PRESSURE_LOOKBACK_SAMPLES = 252
 MIN_PRESSURE_FEATURE_SAMPLES = 20
@@ -435,7 +434,7 @@ class RegimeSnapshotResult:
 
 @dataclass(frozen=True, slots=True)
 class RegimeBackfillResult:
-    """Result of computing market regime artifacts over a date range."""
+    """Result of computing market regime snapshots over a date range."""
 
     start_date: date
     end_date: date
@@ -959,7 +958,7 @@ def compute_regime_backfill(
     skip_existing: bool = True,
     overwrite_snapshot: bool = True,
 ) -> RegimeBackfillResult:
-    """Compute market regime artifacts for each SPY observation date in a range."""
+    """Compute market regime snapshots for each SPY observation date in a range."""
 
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime backfill")
     if end_date < start_date:
@@ -1153,7 +1152,7 @@ def _compute_regime_snapshot_from_histories(
         snapshot_path=str(snapshot_path) if snapshot_path else None,
         market_signal_count=len(signals),
         market_signal_contradiction_count=len(contradictions),
-        market_signal_artifact_path=str(signal_snapshot_path) if signal_snapshot_path else None,
+        market_signal_snapshot_path=str(signal_snapshot_path) if signal_snapshot_path else None,
     ).success("Computed market regime snapshot")
     return RegimeSnapshotResult(
         source_date=source_date,
@@ -1185,7 +1184,6 @@ def write_regime_snapshot(
             source_date=snapshot.source_date,
             signal_time=snapshot.signal_time,
             snapshot_version=snapshot.snapshot_version,
-            artifact_version=snapshot.model_version,
             filename=REGIME_SNAPSHOT_FILENAME,
         )
     except ValueError as exc:
@@ -1201,7 +1199,7 @@ def write_regime_snapshot(
         )
         + "\n"
     )
-    wrote = write_immutable_payload(
+    wrote = write_snapshot_payload(
         path=path,
         payload=payload,
         error_cls=RegimeError,
@@ -1231,7 +1229,6 @@ def load_regime_snapshot(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=model_version,
             filename=REGIME_SNAPSHOT_FILENAME,
             legacy_suffix=".json",
         )
@@ -1240,7 +1237,10 @@ def load_regime_snapshot(
     if path is None:
         return None
     try:
-        return _snapshot_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        snapshot = _snapshot_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        if model_version is not None and snapshot.model_version != model_version:
+            return None
+        return snapshot
     except OSError as exc:
         raise RegimeError(f"Failed to read market regime snapshot: {path}") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -1309,7 +1309,7 @@ def _regime_snapshot_from_market_signals(
     snapshot_version: str,
 ) -> RegimeSnapshot:
     if not signals:
-        raise RegimeError(f"No market signal artifact found for {source_date}")
+        raise RegimeError(f"No market signal snapshot found for {source_date}")
     _validate_market_signal_boundary(
         source_date=source_date,
         signals=signals,
@@ -3850,7 +3850,7 @@ def compute_regime_outcomes(
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
 ) -> RegimeOutcomeResult:
-    """Replay forward SPY/QQQ outcomes for saved market regime artifacts."""
+    """Replay forward SPY/QQQ outcomes for saved market regime snapshots."""
 
     if end_date < start_date:
         raise RegimeError("End date must be on or after start date")
@@ -3861,7 +3861,7 @@ def compute_regime_outcomes(
         snapshot_root=snapshot_root,
     )
     if not snapshots:
-        raise RegimeError(f"No market regime artifacts found from {start_date} to {end_date}")
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     outcomes = tuple(
@@ -3909,7 +3909,7 @@ def compute_market_signal_outcomes(
         signal_snapshot_root=signal_snapshot_root,
     )
     if not signals:
-        raise RegimeError(f"No market signal artifacts found from {start_date} to {end_date}")
+        raise RegimeError(f"No market signal snapshots found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     outcomes = tuple(
@@ -3958,7 +3958,7 @@ def compute_regime_action_outcomes(
         snapshot_root=snapshot_root,
     )
     if not snapshots:
-        raise RegimeError(f"No market regime artifacts found from {start_date} to {end_date}")
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
     snapshot_actions = tuple(
@@ -4040,7 +4040,7 @@ def compute_regime_pressure_outcomes(
         snapshot for snapshot in snapshots if start_date <= snapshot.source_date <= end_date
     )
     if not target_snapshots:
-        raise RegimeError(f"No market regime artifacts found from {start_date} to {end_date}")
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
 
     signals_by_date = _load_market_signals_by_source_date_through(
         end_date=end_date,
@@ -4591,7 +4591,6 @@ def _existing_regime_snapshot_path(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=REGIME_MODEL_VERSION,
             filename=REGIME_SNAPSHOT_FILENAME,
         )
     except ValueError as exc:
@@ -4612,7 +4611,6 @@ def _existing_market_signal_snapshot_path(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=MARKET_SIGNAL_MODEL_VERSION,
             filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
         )
     except ValueError as exc:

@@ -1,4 +1,4 @@
-"""Point-in-time snapshot identifiers and immutable snapshot helpers."""
+"""Point-in-time snapshot identifiers and snapshot file helpers."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Self
+
+DEFAULT_SNAPSHOT_VERSION = "v0"
 
 
 class SignalTime(StrEnum):
@@ -47,9 +49,10 @@ def default_snapshot_version(
     *,
     signal_time: SignalTime | str = SignalTime.EOD,
 ) -> str:
-    """Return the default official snapshot-version label for one signal date."""
+    """Return the default working snapshot-version label."""
 
-    return f"{signal_date.isoformat()}_{signal_time_value(signal_time)}"
+    _ = signal_date, signal_time
+    return DEFAULT_SNAPSHOT_VERSION
 
 
 def versioned_snapshot_path(
@@ -58,10 +61,9 @@ def versioned_snapshot_path(
     source_date: date,
     signal_time: SignalTime | str,
     snapshot_version: str | None,
-    artifact_version: str,
     filename: str,
 ) -> Path:
-    """Return the canonical versioned path for one snapshot artifact."""
+    """Return the canonical versioned path for one snapshot file."""
 
     signal_time_text = signal_time_value(signal_time)
     snapshot_version_text = snapshot_version or default_snapshot_version(
@@ -73,7 +75,6 @@ def versioned_snapshot_path(
         / source_date.isoformat()
         / _path_component(signal_time_text, field_name="signal_time")
         / _path_component(snapshot_version_text, field_name="snapshot_version")
-        / _path_component(artifact_version, field_name="artifact_version")
         / _path_component(filename, field_name="filename")
     )
 
@@ -84,7 +85,6 @@ def resolve_snapshot_path(
     source_date: date,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
-    artifact_version: str | None = None,
     filename: str,
     legacy_suffix: str,
 ) -> Path | None:
@@ -95,23 +95,13 @@ def resolve_snapshot_path(
         source_date=source_date,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
-        artifact_version=artifact_version,
         filename=filename,
     )
-    if len(candidates) > 1 and artifact_version is None:
-        versions = ", ".join(path.parent.name for path in candidates)
-        raise ValueError(
-            "Multiple snapshot artifact versions found for "
-            f"{snapshot_root} {source_date.isoformat()} "
-            f"{signal_time_value(signal_time)} {filename}: {versions}. "
-            "Specify artifact_version explicitly."
-        )
     if candidates:
         return candidates[-1]
 
     if (
         snapshot_version is None
-        and artifact_version is None
         and signal_time_value(signal_time) == SignalTime.EOD.value
     ):
         legacy_path = snapshot_root / f"{source_date.isoformat()}{legacy_suffix}"
@@ -126,7 +116,6 @@ def find_snapshot_paths(
     source_date: date,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
-    artifact_version: str | None = None,
     filename: str,
 ) -> tuple[Path, ...]:
     """Find canonical snapshot files for one date/version tuple."""
@@ -141,14 +130,8 @@ def find_snapshot_paths(
         / _path_component(signal_time_value(signal_time), field_name="signal_time")
         / _path_component(snapshot_version_text, field_name="snapshot_version")
     )
-    if artifact_version is not None:
-        path = (
-            base_path / _path_component(artifact_version, field_name="artifact_version") / filename
-        )
-        return (path,) if path.is_file() else ()
-    if not base_path.is_dir():
-        return ()
-    return tuple(sorted(path for path in base_path.glob(f"*/{filename}") if path.is_file()))
+    path = base_path / _path_component(filename, field_name="filename")
+    return (path,) if path.is_file() else ()
 
 
 def snapshot_source_dates(
@@ -209,18 +192,18 @@ def current_code_revision(*, repo_root: Path | None = None) -> str | None:
 VOLATILE_PROVENANCE_FIELDS = frozenset({"created_at", "retrieved_at", "code_revision"})
 
 
-def write_immutable_payload(
+def write_snapshot_payload(
     *,
     path: Path,
     payload: str,
     error_cls: type[Exception] = ValueError,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> bool:
-    """Write a snapshot payload without silently replacing different history.
+    """Write a snapshot payload.
 
-    Returns True when the file was written and False when an existing equivalent
-    payload was kept. The volatile creation timestamp is ignored for equivalence
-    so idempotent reruns do not rewrite the original timestamp.
+    Same-version overwrite is allowed by default during pre-debut research.
+    Passing overwrite=False preserves the old strict behavior for callers that
+    intentionally want a frozen file.
     """
 
     if path.is_file():

@@ -953,7 +953,9 @@ def test_write_regime_snapshot_keeps_signal_times_separate(tmp_path: Path) -> No
     assert preview.regime == "risk_off"
 
 
-def test_write_regime_snapshot_keeps_model_versions_separate(tmp_path: Path) -> None:
+def test_write_regime_snapshot_overwrites_same_snapshot_version_by_default(
+    tmp_path: Path,
+) -> None:
     source_date = date(2026, 8, 28)
     snapshot_root = tmp_path / "snapshots"
 
@@ -976,7 +978,8 @@ def test_write_regime_snapshot_keeps_model_versions_separate(tmp_path: Path) -> 
         snapshot_root=snapshot_root,
     )
 
-    assert v1_path != v2_path
+    assert v1_path == v2_path
+    latest = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
     v1 = load_regime_snapshot(
         source_date=source_date,
         snapshot_root=snapshot_root,
@@ -987,9 +990,10 @@ def test_write_regime_snapshot_keeps_model_versions_separate(tmp_path: Path) -> 
         snapshot_root=snapshot_root,
         model_version="fixture_model_v2",
     )
-    assert v1 is not None
+    assert latest is not None
+    assert latest.regime == "risk_off"
+    assert v1 is None
     assert v2 is not None
-    assert v1.regime == "risk_on"
     assert v2.regime == "risk_off"
 
 
@@ -1172,7 +1176,7 @@ def test_compute_regime_snapshot_ignores_saved_market_signal_boundary(tmp_path: 
     assert result.snapshot.spy_return_20d > 0.0
     assert result.snapshot.vix_close == 16.0
     assert result.snapshot.vvix_close == 85.0
-    assert result.snapshot.market_signal_snapshot_version == "2026-08-28_eod"
+    assert result.snapshot.market_signal_snapshot_version == "v0"
 
 
 def test_load_regime_snapshot_reads_legacy_flat_file(tmp_path: Path) -> None:
@@ -1783,8 +1787,7 @@ def _regime_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
         snapshot_root
         / source_date_value
         / "eod"
-        / f"{source_date_value}_eod"
-        / "market_regime_score_v1"
+        / "v0"
         / "regime.json"
     )
 
@@ -1795,8 +1798,7 @@ def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path
         snapshot_root
         / source_date_value
         / "eod"
-        / f"{source_date_value}_eod"
-        / "market_signals_model_v1"
+        / "v0"
         / "market-signals.jsonl"
     )
 

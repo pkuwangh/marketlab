@@ -1,4 +1,4 @@
-"""Point-in-time market signal artifacts."""
+"""Point-in-time market signal snapshots."""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from marketlab.snapshots.models import (
     signal_time_value,
     utc_timestamp,
     versioned_snapshot_path,
-    write_immutable_payload,
+    write_snapshot_payload,
 )
 
-DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT = Path("data/derived/market/signals")
+DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT = Path("data/snapshots/market/signals")
 MARKET_SIGNAL_FEATURE_VERSION = "market_signals_v0"
-MARKET_SIGNAL_MODEL_VERSION = "market_signals_model_v1"
+MARKET_SIGNAL_MODEL_VERSION = "market_signals_model_v0"
 MARKET_SIGNAL_SNAPSHOT_FILENAME = "market-signals.jsonl"
 MARKET_SIGNAL_FAMILY_ORDER = {
     "trend": 0,
@@ -45,7 +45,7 @@ MARKET_SIGNAL_NAME_ORDER = {
 
 
 class MarketSignalError(ValueError):
-    """Raised when market signal artifacts cannot be read or written."""
+    """Raised when market signal snapshots cannot be read or written."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,19 +118,19 @@ def write_market_signal_snapshot(
     """Write one date's replaceable market signal rows."""
 
     if not signals:
-        raise MarketSignalError("Cannot write an empty market signal artifact")
+        raise MarketSignalError("Cannot write an empty market signal snapshot")
     source_date = signals[0].source_date
     if any(signal.source_date != source_date for signal in signals):
-        raise MarketSignalError("Market signal artifact must contain one source date")
+        raise MarketSignalError("Market signal snapshot must contain one source date")
     signal_time = signals[0].signal_time
     if any(signal.signal_time != signal_time for signal in signals):
-        raise MarketSignalError("Market signal artifact must contain one signal time")
+        raise MarketSignalError("Market signal snapshot must contain one signal time")
     snapshot_version = signals[0].snapshot_version
     if any(signal.snapshot_version != snapshot_version for signal in signals):
-        raise MarketSignalError("Market signal artifact must contain one snapshot version")
+        raise MarketSignalError("Market signal snapshot must contain one snapshot version")
     model_version = signals[0].model_version
     if any(signal.model_version != model_version for signal in signals):
-        raise MarketSignalError("Market signal artifact must contain one model version")
+        raise MarketSignalError("Market signal snapshot must contain one model version")
 
     try:
         path = versioned_snapshot_path(
@@ -138,7 +138,6 @@ def write_market_signal_snapshot(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=model_version,
             filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
         )
     except ValueError as exc:
@@ -157,7 +156,7 @@ def write_market_signal_snapshot(
         + "\n"
         for signal in signals
     )
-    wrote = write_immutable_payload(
+    wrote = write_snapshot_payload(
         path=path,
         payload=payload,
         error_cls=MarketSignalError,
@@ -168,7 +167,7 @@ def write_market_signal_snapshot(
         row_count=len(signals),
         snapshot_path=str(path),
         wrote=wrote,
-    ).success("Wrote market signal artifact")
+    ).success("Wrote market signal snapshot")
     return path
 
 
@@ -188,7 +187,6 @@ def load_market_signal_snapshot(
             source_date=source_date,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            artifact_version=model_version,
             filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
             legacy_suffix=".jsonl",
         )
@@ -199,15 +197,18 @@ def load_market_signal_snapshot(
     if not path.is_file():
         return ()
     try:
-        return tuple(
+        signals = tuple(
             _signal_from_dict(json.loads(line))
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         )
+        if model_version is not None:
+            signals = tuple(signal for signal in signals if signal.model_version == model_version)
+        return signals
     except OSError as exc:
-        raise MarketSignalError(f"Failed to read market signal artifact: {path}") from exc
+        raise MarketSignalError(f"Failed to read market signal snapshot: {path}") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise MarketSignalError(f"Invalid market signal artifact file: {path}") from exc
+        raise MarketSignalError(f"Invalid market signal snapshot file: {path}") from exc
 
 
 def format_market_signals(signals: tuple[MarketSignal, ...]) -> str:

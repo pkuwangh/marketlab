@@ -117,7 +117,7 @@ from marketlab.regime import (
     format_regime_key_signals,
     refresh_regime_prices,
 )
-from marketlab.snapshots.models import SignalTime, snapshot_source_dates
+from marketlab.snapshots.models import SignalTime, default_snapshot_version, snapshot_source_dates
 from marketlab.store import (
     DEFAULT_RESEARCH_DB_PATH,
     ResearchStoreError,
@@ -140,12 +140,24 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class RegimeOutcomeGroup(StrEnum):
+    REGIME = "regime"
+    SIGNAL = "signal"
+    ACTION = "action"
+    PRESSURE = "pressure"
+    POLICY = "policy"
+
+
 app = typer.Typer(
     help="MarketLab research workflow CLI.",
     no_args_is_help=True,
 )
 bulltard_app = typer.Typer(
-    help="Bulltard link extraction and ingest utilities.",
+    help="Bulltard option-flow and single-name candidate pillar.",
+    no_args_is_help=True,
+)
+data_app = typer.Typer(
+    help="Raw data download/import and local query-store utilities.",
     no_args_is_help=True,
 )
 prices_app = typer.Typer(
@@ -156,39 +168,30 @@ market_series_app = typer.Typer(
     help="Scalar market series utilities.",
     no_args_is_help=True,
 )
+tools_app = typer.Typer(
+    help="External integration and one-off helper utilities.",
+    no_args_is_help=True,
+)
 gmail_app = typer.Typer(
     help="Find Bulltard recap emails in Gmail and cache them for daily ingest.",
     no_args_is_help=True,
 )
 regime_app = typer.Typer(
-    help="Market regime utilities.",
+    help="Market regime pillar.",
     no_args_is_help=True,
 )
 store_app = typer.Typer(
     help="Local research store utilities.",
     no_args_is_help=True,
 )
-policy_app = typer.Typer(
-    help="Portfolio policy utilities.",
-    no_args_is_help=True,
-)
-report_app = typer.Typer(
-    help="Human-readable research reports.",
-    no_args_is_help=True,
-)
-chart_app = typer.Typer(
-    help="Reproducible chart utilities.",
-    no_args_is_help=True,
-)
 app.add_typer(bulltard_app, name="bulltard")
-app.add_typer(prices_app, name="prices")
-app.add_typer(market_series_app, name="market-series")
-app.add_typer(gmail_app, name="gmail")
+app.add_typer(data_app, name="data")
 app.add_typer(regime_app, name="regime")
-app.add_typer(store_app, name="store")
-app.add_typer(policy_app, name="policy")
-app.add_typer(report_app, name="report")
-app.add_typer(chart_app, name="chart")
+app.add_typer(tools_app, name="tools")
+data_app.add_typer(prices_app, name="prices")
+data_app.add_typer(market_series_app, name="market-series")
+data_app.add_typer(store_app, name="store")
+tools_app.add_typer(gmail_app, name="gmail")
 
 DEFAULT_DAILY_PRICE_LOOKBACK_DAYS = 550
 DEFAULT_OUTCOME_HORIZONS_VALUE = "1,5,20,40,65,126"
@@ -316,7 +319,7 @@ def gmail_bulltard_recap(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Existing local Gmail token created by marketlab gmail auth.",
+        help="Existing local Gmail token created by marketlab tools gmail auth.",
     ),
     output_root: Path = typer.Option(
         DEFAULT_GMAIL_RECAP_CACHE_ROOT,
@@ -407,7 +410,7 @@ def daily_run(
     refresh_market_series_flag: bool = typer.Option(
         True,
         "--market-series/--no-market-series",
-        help="Refresh FRED market series before computing the regime artifact.",
+        help="Refresh FRED market series before computing the regime snapshot.",
     ),
     fetch_ticker_details: bool = typer.Option(
         True,
@@ -524,7 +527,7 @@ def daily_run(
         DEFAULT_GMAIL_TOKEN_PATH,
         "--gmail-token",
         dir_okay=False,
-        help="Local Gmail token path created by marketlab gmail auth.",
+        help="Local Gmail token path created by marketlab tools gmail auth.",
     ),
     gmail_query: str | None = typer.Option(
         None,
@@ -535,13 +538,13 @@ def daily_run(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory for derived market regime artifacts.",
+        help="Root directory for market regime snapshots.",
     ),
     market_signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory for derived market signal artifacts.",
+        help="Root directory for market signal snapshots.",
     ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -568,8 +571,8 @@ def daily_run(
     ),
     snapshot_version: str | None = typer.Option(
         None,
-        "--artifact-version",
-        help="Explicit regime artifact version. Defaults to DATE_SIGNALTIME.",
+        "--snapshot-version",
+        help="Snapshot version. Defaults to v0.",
     ),
 ) -> None:
     """Run the normal daily MarketLab research cycle."""
@@ -599,7 +602,11 @@ def daily_run(
 
     typer.echo(f"daily_date={source_date.isoformat()}")
     typer.echo(f"signal_time={signal_time}")
-    typer.echo(f"regime_artifact_version={snapshot_version or ''}")
+    resolved_snapshot_version = snapshot_version or default_snapshot_version(
+        source_date,
+        signal_time=signal_time,
+    )
+    typer.echo(f"snapshot_version={resolved_snapshot_version}")
     typer.echo("")
 
     if refresh_prices_flag:
@@ -656,9 +663,9 @@ def daily_run(
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
     if regime_result.snapshot_path is not None:
-        typer.echo(f"regime_artifact_path={regime_result.snapshot_path}")
+        typer.echo(f"regime_snapshot_path={regime_result.snapshot_path}")
     if regime_result.signal_snapshot_path is not None:
-        typer.echo(f"market_signal_artifact_path={regime_result.signal_snapshot_path}")
+        typer.echo(f"market_signal_snapshot_path={regime_result.signal_snapshot_path}")
     typer.echo(f"regime={regime_result.snapshot.regime}")
     typer.echo(f"action_state={regime_result.snapshot.action_state}")
     typer.echo(f"regime_confidence={regime_result.snapshot.confidence}")
@@ -1158,15 +1165,15 @@ def regime_snapshot(
     ),
     snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
-        "--artifact-root",
+        "--snapshot-root",
         file_okay=False,
-        help="Root directory for derived market regime artifacts.",
+        help="Root directory for market regime snapshots.",
     ),
     signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory for derived market signal artifacts.",
+        help="Root directory for market signal snapshots.",
     ),
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
@@ -1175,11 +1182,19 @@ def regime_snapshot(
     ),
     snapshot_version: str | None = typer.Option(
         None,
-        "--artifact-version",
-        help="Explicit regime artifact version. Defaults to DATE_SIGNALTIME.",
+        "--snapshot-version",
+        help="Snapshot version. Defaults to v0.",
+    ),
+    show_detail: bool = typer.Option(
+        False,
+        "--detail/--no-detail",
+        help=(
+            "Print detailed regime evidence tables. "
+            "Defaults to concise snapshot metadata; use regime report for daily review."
+        ),
     ),
 ) -> None:
-    """Compute a derived market regime artifact from market source observations."""
+    """Compute a market regime snapshot from market source observations."""
 
     source_date = _parse_source_date(source_date_value)
     refresh_prices = refresh_sources_flag or fetch_prices_flag
@@ -1244,7 +1259,7 @@ def regime_snapshot(
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    _echo_regime_snapshot_result(result)
+    _echo_regime_snapshot_result(result, show_detail=show_detail)
 
 
 @regime_app.command("backfill", no_args_is_help=True)
@@ -1264,12 +1279,12 @@ def regime_backfill(
     fetch_prices_flag: bool = typer.Option(
         False,
         "--fetch-prices",
-        help="Refresh only Yahoo daily prices for regime proxies before computing artifacts.",
+        help="Refresh only Yahoo daily prices for regime proxies before computing snapshots.",
     ),
     fetch_market_series_flag: bool = typer.Option(
         False,
         "--fetch-market-series",
-        help="Refresh only FRED market series before computing artifacts.",
+        help="Refresh only FRED market series before computing snapshots.",
     ),
     refresh_sources_flag: bool = typer.Option(
         False,
@@ -1296,15 +1311,15 @@ def regime_backfill(
     ),
     snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
-        "--artifact-root",
+        "--snapshot-root",
         file_okay=False,
-        help="Root directory for derived market regime artifacts.",
+        help="Root directory for market regime snapshots.",
     ),
     signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory for derived market signal artifacts.",
+        help="Root directory for market signal snapshots.",
     ),
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
@@ -1313,19 +1328,18 @@ def regime_backfill(
     ),
     snapshot_version: str | None = typer.Option(
         None,
-        "--artifact-version",
-        help="Explicit regime artifact version. Defaults to DATE_SIGNALTIME for each date.",
+        "--snapshot-version",
+        help="Snapshot version. Defaults to v0.",
     ),
-    skip_existing: bool = typer.Option(
+    recompute_existing: bool = typer.Option(
         True,
-        "--skip-existing/--recompute-existing",
+        "--recompute-existing/--skip-existing",
         help=(
-            "Skip existing same-version regime artifacts during backfill. "
-            "Use --recompute-existing to recompute and replace them."
+            "Recompute and overwrite existing same-version regime snapshots during backfill."
         ),
     ),
 ) -> None:
-    """Backfill daily market regime artifacts and market signal artifacts."""
+    """Backfill daily market regime and market signal snapshots."""
 
     start_date = _parse_date_option(start_date_value, option_name="--start")
     end_date = _parse_date_option(end_date_value, option_name="--end")
@@ -1368,7 +1382,7 @@ def regime_backfill(
             signal_time=signal_time,
             snapshot_version=snapshot_version,
             write_snapshot=True,
-            skip_existing=skip_existing,
+            skip_existing=not recompute_existing,
             overwrite_snapshot=True,
         )
     except RegimeError as exc:
@@ -1383,19 +1397,31 @@ def regime_outcomes(
         ...,
         "--start",
         metavar="YYYY-MM-DD",
-        help="First market regime artifact date to replay.",
+        help="First market regime snapshot date to replay.",
     ),
     end_date_value: str = typer.Option(
         ...,
         "--end",
         metavar="YYYY-MM-DD",
-        help="Last market regime artifact date to replay.",
+        help="Last market regime snapshot date to replay.",
     ),
     snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
-        "--artifact-root",
+        "--snapshot-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
+        help="Root directory containing market regime snapshots.",
+    ),
+    signal_snapshot_root: Path = typer.Option(
+        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
+        "--signal-root",
+        file_okay=False,
+        help="Root directory containing market signal snapshots.",
+    ),
+    policy_snapshot_root: Path = typer.Option(
+        DEFAULT_POLICY_SNAPSHOT_ROOT,
+        "--policy-root",
+        file_okay=False,
+        help="Root directory containing portfolio policy snapshots.",
     ),
     price_root: Path = typer.Option(
         DEFAULT_PRICE_OBSERVATIONS_ROOT,
@@ -1408,187 +1434,83 @@ def regime_outcomes(
         "--horizons",
         help="Comma-separated forward trading-day horizons.",
     ),
+    outcome_group: RegimeOutcomeGroup = typer.Option(
+        RegimeOutcomeGroup.REGIME,
+        "--by",
+        help="Outcome grouping to replay: regime, signal, action, pressure, or policy.",
+    ),
 ) -> None:
-    """Replay forward SPY/QQQ outcomes for saved market regime artifacts."""
+    """Replay forward SPY/QQQ outcomes for market-regime research buckets."""
 
     start_date = _parse_date_option(start_date_value, option_name="--start")
     end_date = _parse_date_option(end_date_value, option_name="--end")
+    horizons = _parse_horizons(horizons_value)
+    if outcome_group == RegimeOutcomeGroup.SIGNAL:
+        try:
+            signal_result = compute_market_signal_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                signal_snapshot_root=signal_snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_market_signal_outcome_result(signal_result)
+        return
+    if outcome_group == RegimeOutcomeGroup.ACTION:
+        try:
+            action_result = compute_regime_action_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                signal_snapshot_root=signal_snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_regime_action_outcome_result(action_result)
+        return
+    if outcome_group == RegimeOutcomeGroup.PRESSURE:
+        try:
+            pressure_result = compute_regime_pressure_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                signal_snapshot_root=signal_snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_regime_pressure_outcome_result(pressure_result)
+        return
+    if outcome_group == RegimeOutcomeGroup.POLICY:
+        try:
+            policy_result = compute_portfolio_policy_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                policy_snapshot_root=policy_snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+            )
+        except PortfolioPolicyError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _echo_policy_outcome_result(policy_result)
+        return
     try:
         result = compute_regime_outcomes(
             start_date=start_date,
             end_date=end_date,
             snapshot_root=snapshot_root,
             price_root=price_root,
-            horizons=_parse_horizons(horizons_value),
+            horizons=horizons,
         )
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     _echo_regime_outcome_result(result)
-
-
-@regime_app.command("signal-outcomes", no_args_is_help=True)
-def regime_signal_outcomes(
-    start_date_value: str = typer.Option(
-        ...,
-        "--start",
-        metavar="YYYY-MM-DD",
-        help="First market signal artifact date to replay.",
-    ),
-    end_date_value: str = typer.Option(
-        ...,
-        "--end",
-        metavar="YYYY-MM-DD",
-        help="Last market signal artifact date to replay.",
-    ),
-    signal_snapshot_root: Path = typer.Option(
-        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
-        "--signal-root",
-        file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
-    ),
-    price_root: Path = typer.Option(
-        DEFAULT_PRICE_OBSERVATIONS_ROOT,
-        "--price-root",
-        file_okay=False,
-        help="Root directory containing daily price observations.",
-    ),
-    horizons_value: str = typer.Option(
-        DEFAULT_OUTCOME_HORIZONS_VALUE,
-        "--horizons",
-        help="Comma-separated forward trading-day horizons.",
-    ),
-) -> None:
-    """Replay forward SPY/QQQ outcomes for saved market signal rows."""
-
-    start_date = _parse_date_option(start_date_value, option_name="--start")
-    end_date = _parse_date_option(end_date_value, option_name="--end")
-    try:
-        result = compute_market_signal_outcomes(
-            start_date=start_date,
-            end_date=end_date,
-            signal_snapshot_root=signal_snapshot_root,
-            price_root=price_root,
-            horizons=_parse_horizons(horizons_value),
-        )
-    except RegimeError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    _echo_market_signal_outcome_result(result)
-
-
-@regime_app.command("action-outcomes", no_args_is_help=True)
-def regime_action_outcomes(
-    start_date_value: str = typer.Option(
-        ...,
-        "--start",
-        metavar="YYYY-MM-DD",
-        help="First market regime artifact date to replay.",
-    ),
-    end_date_value: str = typer.Option(
-        ...,
-        "--end",
-        metavar="YYYY-MM-DD",
-        help="Last market regime artifact date to replay.",
-    ),
-    snapshot_root: Path = typer.Option(
-        DEFAULT_REGIME_SNAPSHOT_ROOT,
-        "--artifact-root",
-        file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
-    ),
-    signal_snapshot_root: Path = typer.Option(
-        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
-        "--signal-root",
-        file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
-    ),
-    price_root: Path = typer.Option(
-        DEFAULT_PRICE_OBSERVATIONS_ROOT,
-        "--price-root",
-        file_okay=False,
-        help="Root directory containing daily price observations.",
-    ),
-    horizons_value: str = typer.Option(
-        DEFAULT_OUTCOME_HORIZONS_VALUE,
-        "--horizons",
-        help="Comma-separated forward trading-day horizons.",
-    ),
-) -> None:
-    """Replay forward SPY/QQQ outcomes for rare regime action states."""
-
-    start_date = _parse_date_option(start_date_value, option_name="--start")
-    end_date = _parse_date_option(end_date_value, option_name="--end")
-    try:
-        result = compute_regime_action_outcomes(
-            start_date=start_date,
-            end_date=end_date,
-            snapshot_root=snapshot_root,
-            signal_snapshot_root=signal_snapshot_root,
-            price_root=price_root,
-            horizons=_parse_horizons(horizons_value),
-        )
-    except RegimeError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    _echo_regime_action_outcome_result(result)
-
-
-@regime_app.command("pressure-outcomes", no_args_is_help=True)
-def regime_pressure_outcomes(
-    start_date_value: str = typer.Option(
-        ...,
-        "--start",
-        metavar="YYYY-MM-DD",
-        help="First market regime artifact date to replay.",
-    ),
-    end_date_value: str = typer.Option(
-        ...,
-        "--end",
-        metavar="YYYY-MM-DD",
-        help="Last market regime artifact date to replay.",
-    ),
-    snapshot_root: Path = typer.Option(
-        DEFAULT_REGIME_SNAPSHOT_ROOT,
-        "--artifact-root",
-        file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
-    ),
-    signal_snapshot_root: Path = typer.Option(
-        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
-        "--signal-root",
-        file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
-    ),
-    price_root: Path = typer.Option(
-        DEFAULT_PRICE_OBSERVATIONS_ROOT,
-        "--price-root",
-        file_okay=False,
-        help="Root directory containing daily price observations.",
-    ),
-    horizons_value: str = typer.Option(
-        DEFAULT_OUTCOME_HORIZONS_VALUE,
-        "--horizons",
-        help="Comma-separated forward trading-day horizons.",
-    ),
-) -> None:
-    """Replay forward SPY/QQQ outcomes for normalized pressure buckets."""
-
-    start_date = _parse_date_option(start_date_value, option_name="--start")
-    end_date = _parse_date_option(end_date_value, option_name="--end")
-    try:
-        result = compute_regime_pressure_outcomes(
-            start_date=start_date,
-            end_date=end_date,
-            snapshot_root=snapshot_root,
-            signal_snapshot_root=signal_snapshot_root,
-            price_root=price_root,
-            horizons=_parse_horizons(horizons_value),
-        )
-    except RegimeError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    _echo_regime_pressure_outcome_result(result)
 
 
 @store_app.command("refresh")
@@ -1615,13 +1537,13 @@ def store_refresh(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
+        help="Root directory containing market regime snapshots.",
     ),
     market_signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
+        help="Root directory containing market signal snapshots.",
     ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -1718,7 +1640,7 @@ def store_query(
     typer.echo(format_query_result(result, limit=limit))
 
 
-@policy_app.command("snapshot", no_args_is_help=True)
+@regime_app.command("policy", no_args_is_help=True)
 def policy_snapshot(
     source_date_value: str = typer.Option(
         ...,
@@ -1730,13 +1652,13 @@ def policy_snapshot(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
+        help="Root directory containing market regime snapshots.",
     ),
     market_signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
+        help="Root directory containing market signal snapshots.",
     ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -1753,17 +1675,25 @@ def policy_snapshot(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for upstream regime artifacts and snapshots.",
+        help="Signal timing label for upstream regime snapshots.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Explicit upstream artifact/snapshot version. Defaults to DATE_SIGNALTIME.",
+        help="Snapshot version. Defaults to v0.",
     ),
     write_snapshot: bool = typer.Option(
         True,
         "--write/--no-write",
         help="Write the portfolio policy snapshot.",
+    ),
+    show_detail: bool = typer.Option(
+        False,
+        "--detail/--no-detail",
+        help=(
+            "Print the policy posture table. "
+            "Defaults to concise snapshot metadata; use regime report for daily review."
+        ),
     ),
 ) -> None:
     """Compute a portfolio policy snapshot."""
@@ -1783,10 +1713,10 @@ def policy_snapshot(
     except PortfolioPolicyError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    _echo_policy_snapshot_result(result)
+    _echo_policy_snapshot_result(result, show_detail=show_detail)
 
 
-@policy_app.command("backfill", no_args_is_help=True)
+@regime_app.command("policy-backfill", no_args_is_help=True)
 def policy_backfill(
     start_date_value: str = typer.Option(
         ...,
@@ -1804,13 +1734,13 @@ def policy_backfill(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
+        help="Root directory containing market regime snapshots.",
     ),
     market_signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
+        help="Root directory containing market signal snapshots.",
     ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -1827,14 +1757,13 @@ def policy_backfill(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for upstream regime artifacts and snapshots.",
+        help="Signal timing label for upstream regime snapshots.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
         help=(
-            "Explicit upstream artifact/snapshot version. "
-            "Defaults to DATE_SIGNALTIME for each date."
+            "Snapshot version. Defaults to v0 for each date."
         ),
     ),
     write_snapshot: bool = typer.Option(
@@ -1843,7 +1772,7 @@ def policy_backfill(
         help="Write portfolio policy snapshots.",
     ),
 ) -> None:
-    """Backfill portfolio policy snapshots from saved regime artifacts."""
+    """Backfill portfolio policy snapshots from saved regime snapshots."""
 
     start_date = _parse_date_option(start_date_value, option_name="--start")
     end_date = _parse_date_option(end_date_value, option_name="--end")
@@ -1865,57 +1794,7 @@ def policy_backfill(
     _echo_policy_backfill_result(result)
 
 
-@policy_app.command("outcomes", no_args_is_help=True)
-def policy_outcomes(
-    start_date_value: str = typer.Option(
-        ...,
-        "--start",
-        metavar="YYYY-MM-DD",
-        help="First policy snapshot date to replay.",
-    ),
-    end_date_value: str = typer.Option(
-        ...,
-        "--end",
-        metavar="YYYY-MM-DD",
-        help="Last policy snapshot date to replay.",
-    ),
-    policy_snapshot_root: Path = typer.Option(
-        DEFAULT_POLICY_SNAPSHOT_ROOT,
-        "--policy-root",
-        file_okay=False,
-        help="Root directory containing portfolio policy snapshots.",
-    ),
-    price_root: Path = typer.Option(
-        DEFAULT_PRICE_OBSERVATIONS_ROOT,
-        "--price-root",
-        file_okay=False,
-        help="Root directory containing daily price observations.",
-    ),
-    horizons_value: str = typer.Option(
-        DEFAULT_OUTCOME_HORIZONS_VALUE,
-        "--horizons",
-        help="Comma-separated forward trading-day horizons.",
-    ),
-) -> None:
-    """Replay portfolio policy snapshots against a fixed benchmark."""
-
-    start_date = _parse_date_option(start_date_value, option_name="--start")
-    end_date = _parse_date_option(end_date_value, option_name="--end")
-    try:
-        result = compute_portfolio_policy_outcomes(
-            start_date=start_date,
-            end_date=end_date,
-            policy_snapshot_root=policy_snapshot_root,
-            price_root=price_root,
-            horizons=_parse_horizons(horizons_value),
-        )
-    except PortfolioPolicyError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    _echo_policy_outcome_result(result)
-
-
-@report_app.command("daily", no_args_is_help=True)
+@regime_app.command("report", no_args_is_help=True)
 def report_daily(
     source_date_value: str = typer.Option(
         ...,
@@ -1927,13 +1806,13 @@ def report_daily(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
+        help="Root directory containing market regime snapshots.",
     ),
     market_signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
+        help="Root directory containing market signal snapshots.",
     ),
     candidate_snapshot_root: Path = typer.Option(
         DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
@@ -1950,12 +1829,12 @@ def report_daily(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for upstream regime artifacts and snapshots.",
+        help="Signal timing label for upstream regime snapshots.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Explicit upstream artifact/snapshot version. Defaults to DATE_SIGNALTIME.",
+        help="Snapshot version. Defaults to v0.",
     ),
     write_snapshot: bool = typer.Option(
         True,
@@ -1983,7 +1862,7 @@ def report_daily(
     _echo_daily_policy_report_result(result)
 
 
-@chart_app.command("regime", no_args_is_help=True)
+@regime_app.command("chart", no_args_is_help=True)
 def chart_regime(
     start_date_value: str = typer.Option(
         ...,
@@ -2017,13 +1896,13 @@ def chart_regime(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts.",
+        help="Root directory containing market regime snapshots.",
     ),
     market_signal_snapshot_root: Path = typer.Option(
         DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
         "--signal-root",
         file_okay=False,
-        help="Root directory containing derived market signal artifacts.",
+        help="Root directory containing market signal snapshots.",
     ),
     policy_snapshot_root: Path = typer.Option(
         DEFAULT_POLICY_SNAPSHOT_ROOT,
@@ -2034,18 +1913,18 @@ def chart_regime(
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
         "--signal-time",
-        help="Signal timing label for artifacts/snapshots used in the chart.",
+        help="Signal timing label for snapshots used in the chart.",
     ),
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Explicit artifact/snapshot version to render. Defaults to DATE_SIGNALTIME.",
+        help="Snapshot version to render. Defaults to v0.",
     ),
     output_path: Path | None = typer.Option(
         None,
         "--output",
         dir_okay=False,
-        help="HTML chart path. Defaults to reports/regime-START-END.html.",
+        help="HTML chart path. Defaults under reports/regime/market/DATE/eod/v0/.",
     ),
 ) -> None:
     """Render a reproducible market regime chart."""
@@ -2072,7 +1951,7 @@ def chart_regime(
     _echo_regime_chart_result(result)
 
 
-@chart_app.command("opportunity", no_args_is_help=True)
+@bulltard_app.command("chart", no_args_is_help=True)
 def chart_opportunity(
     symbol: str = typer.Argument(
         ...,
@@ -2123,13 +2002,13 @@ def chart_opportunity(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Explicit candidate snapshot version. Defaults to DATE_SIGNALTIME.",
+        help="Candidate snapshot version. Defaults to v0.",
     ),
     output_path: Path | None = typer.Option(
         None,
         "--output",
         dir_okay=False,
-        help="HTML chart path. Defaults to reports/opportunity-SYMBOL-DATE.html.",
+        help="HTML chart path. Defaults under reports/bulltard/opportunity/SYMBOL/DATE/eod/v0/.",
     ),
 ) -> None:
     """Render a reproducible single-name opportunity chart."""
@@ -2401,7 +2280,7 @@ def validate_candidates(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Explicit snapshot version. Defaults to DATE_SIGNALTIME.",
+        help="Snapshot version. Defaults to v0.",
     ),
     write_snapshot: bool = typer.Option(
         True,
@@ -2532,7 +2411,7 @@ def outcomes(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
-        help="Root directory containing derived market regime artifacts for regime cohorts.",
+        help="Root directory containing market regime snapshots for regime cohorts.",
     ),
     horizons_value: str = typer.Option(
         DEFAULT_OUTCOME_HORIZONS_VALUE,
@@ -2708,7 +2587,7 @@ def daily(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Explicit candidate validation snapshot version. Defaults to DATE_SIGNALTIME.",
+        help="Candidate validation snapshot version. Defaults to v0.",
     ),
     compute_outcomes_flag: bool = typer.Option(
         False,
@@ -2991,19 +2870,31 @@ def _echo_market_series_fetch_results(results: tuple[MarketSeriesFetchResult, ..
         )
 
 
-def _echo_regime_snapshot_result(result: RegimeSnapshotResult) -> None:
+def _echo_regime_snapshot_result(
+    result: RegimeSnapshotResult,
+    *,
+    show_detail: bool = False,
+) -> None:
     if result.snapshot_path is not None:
-        typer.echo(f"regime_artifact_path={result.snapshot_path}")
+        typer.echo(f"regime_snapshot_path={result.snapshot_path}")
     if result.signal_snapshot_path is not None:
-        typer.echo(f"market_signal_artifact_path={result.signal_snapshot_path}")
+        typer.echo(f"market_signal_snapshot_path={result.signal_snapshot_path}")
     typer.echo(f"market_signal_count={len(result.signals)}")
     snapshot = result.snapshot
     typer.echo(f"regime_date={snapshot.source_date.isoformat()}")
     typer.echo(
         f"regime_price_date={snapshot.price_date.isoformat() if snapshot.price_date else ''}"
     )
+    typer.echo(f"regime={snapshot.regime}")
+    typer.echo(f"regime_score={snapshot.score}")
+    typer.echo(f"regime_confidence={snapshot.confidence}")
+    typer.echo(f"regime_action_state={snapshot.action_state}")
+    typer.echo(f"regime_action_confidence={snapshot.action_confidence}")
     if result.pressure is not None:
         typer.echo(f"pressure_feature_count={len(result.pressure.features)}")
+    typer.echo(f"market_signal_contradiction_count={len(result.contradictions)}")
+    if not show_detail:
+        return
     typer.echo("")
     typer.echo(format_regime_key_signals(result))
     if result.action_table:
@@ -3029,44 +2920,78 @@ def _echo_regime_backfill_result(result: RegimeBackfillResult) -> None:
         "regime_backfill_last_date="
         f"{result.source_dates[-1].isoformat() if result.source_dates else ''}"
     )
-    typer.echo(f"regime_artifact_count={len(result.snapshot_paths)}")
-    typer.echo(f"market_signal_artifact_count={len(result.signal_snapshot_paths)}")
+    typer.echo(f"regime_snapshot_count={len(result.snapshot_paths)}")
+    typer.echo(f"market_signal_snapshot_count={len(result.signal_snapshot_paths)}")
     typer.echo(f"regime_backfill_skipped_existing_count={len(result.skipped_snapshot_paths)}")
     if result.snapshot_paths:
-        typer.echo(f"first_regime_artifact_path={result.snapshot_paths[0]}")
-        typer.echo(f"last_regime_artifact_path={result.snapshot_paths[-1]}")
+        typer.echo(f"first_regime_snapshot_path={result.snapshot_paths[0]}")
+        typer.echo(f"last_regime_snapshot_path={result.snapshot_paths[-1]}")
     if result.signal_snapshot_paths:
-        typer.echo(f"first_market_signal_artifact_path={result.signal_snapshot_paths[0]}")
-        typer.echo(f"last_market_signal_artifact_path={result.signal_snapshot_paths[-1]}")
+        typer.echo(f"first_market_signal_snapshot_path={result.signal_snapshot_paths[0]}")
+        typer.echo(f"last_market_signal_snapshot_path={result.signal_snapshot_paths[-1]}")
+
+
+def _echo_cli_fields(fields: tuple[tuple[str, object], ...]) -> None:
+    for name, value in fields:
+        typer.echo(f"{name}={value}")
+
+
+def _echo_table_section(title: str, table: str | None) -> None:
+    if not table:
+        return
+    typer.echo("")
+    typer.echo(f"{title}:")
+    typer.echo(table)
+
+
+def _echo_outcome_tables(
+    fields: tuple[tuple[str, object], ...],
+    *,
+    summary_table: str,
+    frequency_table: str | None = None,
+) -> None:
+    _echo_cli_fields(fields)
+    _echo_table_section("frequency_table", frequency_table)
+    _echo_table_section("summary_table", summary_table)
 
 
 def _echo_regime_outcome_result(result: RegimeOutcomeResult) -> None:
-    typer.echo(f"regime_outcome_count={len(result.outcomes)}")
-    typer.echo(f"available_regime_outcome_count={_available_regime_outcome_count(result)}")
-    typer.echo("")
-    typer.echo(result.table)
+    _echo_outcome_tables(
+        (
+            ("regime_outcome_count", len(result.outcomes)),
+            ("available_regime_outcome_count", _available_regime_outcome_count(result)),
+        ),
+        summary_table=result.table,
+    )
 
 
 def _echo_regime_action_outcome_result(result: RegimeActionOutcomeResult) -> None:
-    typer.echo(f"regime_action_count={len(result.actions)}")
-    typer.echo(f"regime_action_outcome_count={len(result.outcomes)}")
-    typer.echo(
-        f"available_regime_action_outcome_count={_available_regime_action_outcome_count(result)}"
+    _echo_outcome_tables(
+        (
+            ("regime_action_count", len(result.actions)),
+            ("regime_action_outcome_count", len(result.outcomes)),
+            (
+                "available_regime_action_outcome_count",
+                _available_regime_action_outcome_count(result),
+            ),
+        ),
+        frequency_table=result.frequency_table,
+        summary_table=result.table,
     )
-    typer.echo("")
-    typer.echo(result.frequency_table)
-    typer.echo("")
-    typer.echo(result.table)
 
 
 def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) -> None:
-    typer.echo(f"regime_pressure_count={len(result.pressures)}")
-    typer.echo(f"regime_pressure_outcome_count={len(result.outcomes)}")
-    typer.echo(
-        f"available_regime_pressure_outcome_count={_available_regime_pressure_outcome_count(result)}"
+    _echo_outcome_tables(
+        (
+            ("regime_pressure_count", len(result.pressures)),
+            ("regime_pressure_outcome_count", len(result.outcomes)),
+            (
+                "available_regime_pressure_outcome_count",
+                _available_regime_pressure_outcome_count(result),
+            ),
+        ),
+        summary_table=result.table,
     )
-    typer.echo("")
-    typer.echo(result.table)
 
 
 def _echo_store_refresh_result(result: StoreRefreshResult) -> None:
@@ -3076,7 +3001,11 @@ def _echo_store_refresh_result(result: StoreRefreshResult) -> None:
     typer.echo(format_store_refresh_result(result))
 
 
-def _echo_policy_snapshot_result(result: PortfolioPolicySnapshotResult) -> None:
+def _echo_policy_snapshot_result(
+    result: PortfolioPolicySnapshotResult,
+    *,
+    show_detail: bool = False,
+) -> None:
     if result.snapshot_path is not None:
         typer.echo(f"policy_snapshot_path={result.snapshot_path}")
     snapshot = result.snapshot
@@ -3088,6 +3017,8 @@ def _echo_policy_snapshot_result(result: PortfolioPolicySnapshotResult) -> None:
     typer.echo(f"regime_action_state={snapshot.regime_action_state}")
     typer.echo(f"candidate_count={snapshot.candidate_count}")
     typer.echo(f"confirm_candidate_count={snapshot.confirm_candidate_count}")
+    if not show_detail:
+        return
     typer.echo("")
     typer.echo(result.table)
 
@@ -3111,15 +3042,18 @@ def _echo_policy_backfill_result(result: PortfolioPolicyBackfillResult) -> None:
 
 
 def _echo_policy_outcome_result(result: PortfolioPolicyOutcomeResult) -> None:
-    typer.echo(f"portfolio_policy_count={len(result.policies)}")
-    typer.echo(f"portfolio_policy_outcome_count={len(result.outcomes)}")
-    typer.echo(
-        f"available_portfolio_policy_outcome_count={_available_policy_outcome_count(result)}"
+    _echo_outcome_tables(
+        (
+            ("portfolio_policy_count", len(result.policies)),
+            ("portfolio_policy_outcome_count", len(result.outcomes)),
+            (
+                "available_portfolio_policy_outcome_count",
+                _available_policy_outcome_count(result),
+            ),
+        ),
+        frequency_table=result.frequency_table,
+        summary_table=result.table,
     )
-    typer.echo("")
-    typer.echo(result.frequency_table)
-    typer.echo("")
-    typer.echo(result.table)
 
 
 def _echo_daily_policy_report_result(result: DailyPolicyReportResult) -> None:
@@ -3156,12 +3090,16 @@ def _echo_opportunity_chart_result(result: OpportunityChartResult) -> None:
 
 
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:
-    typer.echo(f"market_signal_outcome_count={len(result.outcomes)}")
-    typer.echo(
-        f"available_market_signal_outcome_count={_available_market_signal_outcome_count(result)}"
+    _echo_outcome_tables(
+        (
+            ("market_signal_outcome_count", len(result.outcomes)),
+            (
+                "available_market_signal_outcome_count",
+                _available_market_signal_outcome_count(result),
+            ),
+        ),
+        summary_table=result.table,
     )
-    typer.echo("")
-    typer.echo(result.table)
 
 
 def _available_candidate_outcome_count(result: CandidateOutcomeResult) -> int:
