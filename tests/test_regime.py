@@ -265,31 +265,53 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     ]
     assert "price_proxy" in result.signal_table
     assert "vol_of_vol" in result.signal_table
-    assert "term_structure" in result.signal_table
+    assert "VIX9D/VIX" in result.signal_table
+    assert "VIX/VIX3M" in result.signal_table
     assert "value" in result.signal_table
     assert "current" not in result.signal_table
     assert "recent" not in result.signal_table
     assert "context" not in result.signal_table
-    assert "VIX 16.00; 5,20d move +0.0%, +0.0%; SPY rv20" in result.signal_table
-    assert "VVIX 85.00; 5,20d move +0.0%, +0.0%" in result.signal_table
-    assert "VIX9D/VIX 0.94; 5,20d move +0.0%, +0.0%" in result.signal_table
-    assert "VIX/VIX3M 0.84; 5,20d move +0.0%, +0.0%" in result.signal_table
+    assert "VIX 16.00; 5,20d chg +0.00/+0.00; SPY rv20" in result.signal_table
+    assert "VVIX 85.00; 5,20d chg +0.00/+0.00" in result.signal_table
+    assert "0.94; 5,20d chg +0.00/+0.00" in result.signal_table
+    assert "0.84; 5,20d chg +0.00/+0.00" in result.signal_table
     assert "SPX >50/>200 65.0/70.0%; 5d chg +0.0/+0.0pp" in result.signal_table
-    assert "SPY/QQQ: 20,60d" in result.signal_table
+    assert "trend       SPY" in result.signal_table
+    assert "trend       QQQ" in result.signal_table
+    assert "20,60d" in result.signal_table
     assert "MA50,200" in result.signal_table
-    assert "RSP/SPY: 5,20d" in result.signal_table
-    assert "IWM/SPY: 5d,20d" in result.signal_table
+    assert "RSP/SPY" in result.signal_table
+    assert "IWM/SPY" in result.signal_table
     assert "HYG/TLT: 5,20d" in result.signal_table
     assert "credit_spread" in result.signal_table
     assert "financial_conditions" in result.signal_table
     assert "yield_curve" in result.signal_table
-    assert "cross_factor_relationships" in result.action_table
-    assert "No active action evidence" in result.action_table
+    assert "protect" in result.action_table
+    assert "redeploy" in result.action_table
+    assert "signal" in result.action_table
+    assert "signal_pair" not in result.action_table
+    assert "vvix_vs_vix" in result.action_table
+    assert "price_vs_breadth" in result.action_table
+    assert "equity_vs_credit" in result.action_table
     summary_table = format_regime_key_signals(result)
     assert "regime" in summary_table
     assert "risk_on (+5)" in summary_table
+    assert any(
+        f"{level} stretch /" in summary_table
+        for level in ("low", "noticeable", "elevated", "high", "extreme")
+    )
+    assert any(
+        f"/ {level} washout;" in summary_table
+        for level in ("low", "noticeable", "elevated", "high", "extreme")
+    )
     assert "action" in summary_table
-    assert "no_change" in summary_table
+    assert "protect" in summary_table
+    assert "redeploy" in summary_table
+    assert "contradictions" not in summary_table
+    assert "action          no_change;" not in summary_table
+    assert "below action threshold" in summary_table
+    assert "maintain" in summary_table
+    assert "No actionable setup; maintain current posture" not in summary_table
     assert "no_change (stretch 1 / washout 0)" not in summary_table
     assert "input_gaps" in summary_table
     assert "none" in summary_table
@@ -775,10 +797,10 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
     assert action.protect_strength >= 0.55
     assert action.redeploy_strength < action.protect_strength
     assert "Stretch setup plus deterioration evidence" in action.reason
-    assert "VVIX 5d move" in action.reason
+    assert "VVIX 5d chg" in action.reason
 
 
-def test_derive_regime_action_state_detects_cross_factor_divergence() -> None:
+def test_derive_regime_action_state_detects_paired_divergence_inside_turn_modules() -> None:
     snapshot = _snapshot(
         source_date=date(2026, 1, 1),
         regime="risk_on",
@@ -837,22 +859,20 @@ def test_derive_regime_action_state_detects_cross_factor_divergence() -> None:
         ),
     )
 
-    cross_features = {
-        feature.name: feature
-        for feature in action.action_features
-        if feature.family == "cross_factor"
-    }
+    features = {feature.name: feature for feature in action.action_features}
     assert action.state == "scale_down_protect"
-    assert cross_features["price_breadth_divergence"].evidence_kind == "divergence"
-    assert cross_features["price_breadth_divergence"].deterioration_score > 0.0
-    assert cross_features["equity_credit_divergence"].evidence_kind == "divergence"
-    assert cross_features["equity_credit_divergence"].deterioration_score > 0.0
-    cross_module = next(
-        module for module in action.action_modules if module.family == "cross_factor"
-    )
-    assert "price_breadth_divergence" in cross_module.feature_names
-    assert "equity_credit_divergence" in cross_module.feature_names
-    assert cross_module.deterioration_score > 0.0
+    assert features["price_breadth_divergence"].family == "breadth"
+    assert features["price_breadth_divergence"].evidence_kind == "divergence"
+    assert features["price_breadth_divergence"].deterioration_score > 0.0
+    assert features["equity_credit_divergence"].family == "credit"
+    assert features["equity_credit_divergence"].evidence_kind == "divergence"
+    assert features["equity_credit_divergence"].deterioration_score > 0.0
+    breadth_module = next(module for module in action.action_modules if module.family == "breadth")
+    credit_module = next(module for module in action.action_modules if module.family == "credit")
+    assert "price_breadth_divergence" in breadth_module.feature_names
+    assert "equity_credit_divergence" in credit_module.feature_names
+    assert breadth_module.deterioration_score > 0.0
+    assert credit_module.deterioration_score > 0.0
 
 
 def test_action_modules_bound_each_family_contribution() -> None:
@@ -1274,6 +1294,103 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
     assert "Washout setup plus stabilization evidence" in action.reason
 
 
+def test_vvix_vs_vix_redeploys_when_vix_is_high_and_vvix_cools() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_off",
+        score=-5,
+        vix_close=32.0,
+        vvix_close=125.0,
+        stretch_pressure_score=0.05,
+        washout_pressure_score=0.80,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="price_proxy",
+                status="stressed",
+                score=-1,
+                value="VIX 32.0",
+                details={"vix_return_5d": -0.02},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="stressed",
+                score=-1,
+                value=125.0,
+                details={"vvix_return_5d": -0.12},
+            ),
+        ),
+    )
+
+    feature = next(feature for feature in action.action_features if feature.name == "vvix_vs_vix")
+
+    assert feature.family == "volatility"
+    assert feature.deterioration_score == 0.0
+    assert feature.stabilization_score > 0.0
+    assert "high-VIX gate 1.00" in feature.reason
+
+
+def test_vol_normalization_requires_term_improvement_not_just_vvix_cooling() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_off",
+        score=-5,
+        vix_close=32.0,
+        vvix_close=125.0,
+        stretch_pressure_score=0.05,
+        washout_pressure_score=0.80,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="price_proxy",
+                status="stressed",
+                score=-1,
+                value="VIX 32.0",
+                details={"vix_return_5d": -0.02},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="stressed",
+                score=-1,
+                value=125.0,
+                details={"vvix_return_5d": -0.12},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="term_structure",
+                status="inverted",
+                score=-1,
+                value=1.05,
+                details={
+                    "vix9d_vix_ratio_change_5d": 0.02,
+                    "vix_vix3m_ratio_change_5d": 0.03,
+                },
+            ),
+        ),
+    )
+
+    features = {feature.name: feature for feature in action.action_features}
+
+    assert features["vvix_vs_vix"].stabilization_score > 0.0
+    assert features["volatility_normalization_confirmation"].family == "volatility"
+    assert features["volatility_normalization_confirmation"].stabilization_score == 0.0
+
+
 def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None:
     snapshot = _snapshot(
         source_date=date(2026, 1, 1),
@@ -1347,6 +1464,7 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
 
 def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
     calls: list[str] = []
+    cboe_urls: list[str] = []
     eoddata_urls: list[str] = []
 
     def downloader(ticker, **kwargs):  # noqa: ANN001, ARG001
@@ -1367,6 +1485,16 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         frame.index.name = "Date"
         return frame
 
+    def cboe_handler(request: httpx.Request) -> httpx.Response:
+        cboe_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            text=(
+                "DATE,OPEN,HIGH,LOW,CLOSE\n"
+                "08/14/2026,15.0,16.0,14.0,15.5\n"
+            ),
+        )
+
     def eoddata_handler(request: httpx.Request) -> httpx.Response:
         eoddata_urls.append(str(request.url))
         return httpx.Response(
@@ -1381,12 +1509,14 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
             ),
         )
 
+    cboe_client = httpx.Client(transport=httpx.MockTransport(cboe_handler))
     eoddata_client = httpx.Client(transport=httpx.MockTransport(eoddata_handler))
     result = refresh_regime_prices(
         start_date=date(2026, 8, 14),
         end_date=date(2026, 8, 14),
         price_root=tmp_path / "prices",
         downloader=downloader,
+        cboe_client=cboe_client,
         eoddata_client=eoddata_client,
     )
 
@@ -1404,7 +1534,13 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         "$S5FI",
         "$S5TH",
     )
-    assert calls == list(result.requested_symbols[:10])
+    assert calls == ["SPY", "QQQ", "IWM", "RSP", "HYG", "TLT"]
+    assert cboe_urls == [
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX9D_History.csv",
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX3M_History.csv",
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VVIX_History.csv",
+    ]
     assert len(eoddata_urls) == 2
     assert len(result.price_results) == 12
     assert result.price_results[-6].observation_path.name == "INDEX_VIX.jsonl"

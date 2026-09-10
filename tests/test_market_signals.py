@@ -65,9 +65,13 @@ def test_format_market_signals_outputs_compact_table() -> None:
     table = format_market_signals((signal,))
 
     assert "family" in table
+    assert "regime_pts" not in table
+    assert "score" in table
+    assert "source" not in table
     assert "trend" in table
     assert "+2" in table
     assert "fixture" in table
+    assert "+2 (regime)" in table
     assert "2026-08-28" in table
 
 
@@ -142,7 +146,7 @@ def test_format_market_signals_shows_compact_volatility_values() -> None:
         score=1,
         value=84.4,
         unit="index",
-        details={"vvix_return_5d": 0.12, "vvix_return_20d": -0.04},
+        details={"vvix_change_5d": 10.2, "vvix_change_20d": -3.4},
     )
 
     table = format_market_signals((signal,))
@@ -151,7 +155,38 @@ def test_format_market_signals_shows_compact_volatility_values() -> None:
     assert "current" not in table
     assert "recent" not in table
     assert "context" not in table
-    assert "VVIX 84.40; 5,20d move +12.0%, -4.0%" in table
+    assert "VVIX 84.40; 5,20d chg +10.20/-3.40" in table
+
+
+def test_format_market_signals_splits_vix_term_structure_values() -> None:
+    signal = _signal(
+        source_date=date(2026, 8, 28),
+        family="volatility",
+        name="term_structure",
+        score=1,
+        status="contango",
+        value=0.84,
+        unit="ratio",
+        details={
+            "vix9d_vix_ratio": 0.94,
+            "vix9d_vix_ratio_change_5d": 0.19,
+            "vix9d_vix_ratio_change_20d": 0.11,
+            "vix_vix3m_ratio": 0.85,
+            "vix_vix3m_ratio_change_5d": -0.08,
+            "vix_vix3m_ratio_change_20d": 0.05,
+        },
+    )
+
+    table = format_market_signals((signal,))
+
+    assert _row_index(table, "volatility", "VIX9D/VIX") < _row_index(
+        table,
+        "volatility",
+        "VIX/VIX3M",
+    )
+    assert "0.94; 5,20d chg +0.19/+0.11" in table
+    assert "0.85; 5,20d chg -0.08/+0.05" in table
+    assert "term_structure" not in table
 
 
 def test_format_market_signals_shows_compact_cross_asset_values() -> None:
@@ -166,6 +201,8 @@ def test_format_market_signals_shows_compact_cross_asset_values() -> None:
             "vix_close": 14.53,
             "vix_return_5d": 0.007,
             "vix_return_20d": -0.025,
+            "vix_change_5d": 0.10,
+            "vix_change_20d": -0.37,
             "spy_realized_vol_20d": 0.081,
         },
     )
@@ -196,8 +233,20 @@ def test_format_market_signals_shows_compact_cross_asset_values() -> None:
 
     table = format_market_signals((volatility, breadth, credit))
 
-    assert "VIX 14.53; 5,20d move +0.7%, -2.5%; SPY rv20 +8.1%" in table
-    assert "RSP/SPY: 5,20d +0.4/-0.1%; IWM/SPY: 5d,20d -0.3/-1.4%" in table
+    assert _row_columns(table, "volatility", "price_proxy")[2:4] == ["+1", "(regime)"]
+    assert "VIX 14.53; 5,20d chg +0.10/-0.37; SPY rv20 +8.1%" in table
+    assert _row_index(table, "breadth", "RSP/SPY") < _row_index(
+        table,
+        "breadth",
+        "IWM/SPY",
+    )
+    assert _row_columns(table, "breadth", "RSP/SPY")[2:4] == ["+1", "(regime)"]
+    assert _row_columns(table, "breadth", "IWM/SPY")[2] == "-"
+    assert "5,20d +0.4/-0.1%" in table
+    assert "5,20d -0.3/-1.4%" in table
+    assert "RSP/SPY: 5,20d" not in table
+    assert "IWM/SPY: 5d,20d" not in table
+    assert _row_columns(table, "credit", "price_proxy")[2:4] == ["+0", "(regime)"]
     assert "HYG/TLT: 5,20d +0.2%, +0.3%" in table
 
 
@@ -227,7 +276,7 @@ def test_format_market_signals_shows_breadth_participation_values() -> None:
     ) in table
 
 
-def test_format_market_signals_shows_paired_trend_values() -> None:
+def test_format_market_signals_splits_trend_values_by_symbol() -> None:
     signal = _signal(
         source_date=date(2026, 8, 28),
         details={
@@ -244,10 +293,17 @@ def test_format_market_signals_shows_paired_trend_values() -> None:
 
     table = format_market_signals((signal,))
 
-    assert (
-        "SPY/QQQ: 20,60d -0.4/-0.6%, +6.4/+5.2%; "
-        "MA50,200 +1.8/+1.1%, +8.5/+9.5%"
-    ) in table
+    assert _row_index(table, "trend", "SPY") < _row_index(table, "trend", "QQQ")
+    assert _row_columns(table, "trend", "SPY")[2:5] == [
+        "+2",
+        "(regime)",
+        "constructive",
+    ]
+    assert _row_columns(table, "trend", "QQQ")[2:4] == ["-", "-"]
+    assert "(regime)" not in _row_line(table, "trend", "QQQ")
+    assert "20,60d -0.4%, +6.4%; MA50,200 +1.8%, +8.5%" in table
+    assert "20,60d -0.6%, +5.2%; MA50,200 +1.1%, +9.5%" in table
+    assert "SPY/QQQ: 20,60d" not in table
 
 
 def test_format_market_signals_groups_rows_by_family_order() -> None:
@@ -262,7 +318,12 @@ def test_format_market_signals_groups_rows_by_family_order() -> None:
         )
     )
 
-    assert _row_index(table, "trend", "price_proxy") < _row_index(
+    assert _row_index(table, "trend", "SPY") < _row_index(
+        table,
+        "trend",
+        "QQQ",
+    )
+    assert _row_index(table, "trend", "QQQ") < _row_index(
         table,
         "volatility",
         "price_proxy",
@@ -292,11 +353,20 @@ def _row_index(table: str, family: str, name: str) -> int:
     raise AssertionError(f"Missing market signal row: {family}/{name}")
 
 
+def _row_columns(table: str, family: str, name: str) -> list[str]:
+    return _row_line(table, family, name).split()
+
+
+def _row_line(table: str, family: str, name: str) -> str:
+    return table.splitlines()[_row_index(table, family, name)]
+
+
 def _signal(
     *,
     source_date: date,
     family: str = "trend",
     name: str = "price_proxy",
+    status: str = "constructive",
     score: int = 2,
     value: float | str = "SPY/QQQ fixture",
     unit: str = "text",
@@ -307,7 +377,7 @@ def _signal(
         feature_version="fixture",
         family=family,
         name=name,
-        status="constructive",
+        status=status,
         score=score,
         value=value,
         unit=unit,

@@ -1055,6 +1055,17 @@ def test_prices_fetch_yahoo_no_args_shows_help_without_missing_argument_error() 
     assert "Traceback" not in result.output
 
 
+def test_prices_fetch_cboe_no_args_shows_help_without_missing_argument_error() -> None:
+    result = CliRunner().invoke(app, ["data", "prices", "fetch-cboe"])
+
+    assert result.exit_code != 0
+    assert "Fetch daily volatility index observations from CBOE" in result.output
+    assert "SYMBOL[,SYMBOL...]" in result.output
+    assert "--start" in result.output
+    assert "Missing argument" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_market_series_fetch_fred_no_args_shows_help_without_missing_option_error() -> None:
     result = CliRunner().invoke(app, ["data", "market-series", "fetch-fred"])
 
@@ -1932,6 +1943,57 @@ def test_prices_fetch_yahoo_outputs_written_observation_paths(
     assert str(output_root / "META.jsonl") in result.output
 
 
+def test_prices_fetch_cboe_outputs_written_observation_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "prices"
+
+    def fake_fetch_and_write_cboe_index_daily_prices(
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        output_root: Path,
+    ) -> tuple[PriceFetchResult, ...]:
+        assert symbols == ("^VIX9D", "^VIX3M")
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 9, 8)
+        return (
+            PriceFetchResult(
+                symbol="^VIX9D",
+                source_symbol="VIX9D",
+                observation_path=output_root / "INDEX_VIX9D.jsonl",
+                row_count=420,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "marketlab.cli.fetch_and_write_cboe_index_daily_prices",
+        fake_fetch_and_write_cboe_index_daily_prices,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "data",
+            "prices",
+            "fetch-cboe",
+            "^VIX9D,^VIX3M",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-09-08",
+            "--output-root",
+            str(output_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "symbol=^VIX9D source_symbol=VIX9D row_count=420" in result.output
+    assert str(output_root / "INDEX_VIX9D.jsonl") in result.output
+
+
 def test_prices_import_csv_outputs_written_observation_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2164,6 +2226,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
                 features=(),
             ),
             pressure_table="family  feature         stretch\ntrend   spy_return_20d  0.42",
+            action_table="family  signal    protect  redeploy\ntrend   evidence  0.42     0.00",
         )
 
     price_root_arg = price_root
@@ -2225,15 +2288,28 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_action_state=no_change" in result.output
     assert "regime_action_confidence=low" in result.output
     assert "market_signal_contradiction_count=1" in result.output
+    assert (
+        "overall: headline regime, pressure, input gaps, and final action"
+        in result.output
+    )
     assert "signal" in result.output
     assert "value" in result.output
     assert "risk_on (+5)" in result.output
+    assert "action_evidence: turn-signal evidence by family" in result.output
+    assert "protect" in result.output
+    assert "redeploy" in result.output
     assert "action" in result.output
     assert "no_change" in result.output
     assert "pressure_feature_count=0" in result.output
+    assert (
+        "market_signals: score cells marked (regime) feed the headline regime score"
+        in result.output
+    )
+    assert "other rows are supporting evidence" in result.output
+    assert "pressure_features: normalized stretch/washout setup inputs" in result.output
     assert "stretch 0.42 / washout 0.08" in result.output
     assert "medium confidence" in result.output
-    assert "positive=trend/price_proxy:constructive negative=fixture" in result.output
+    assert "positive=trend/price_proxy:constructive negative=fixture" not in result.output
     assert "trend   spy_return_20d  0.42" in result.output
     assert "no_change (stretch 1 / washout 0)" not in result.output
     assert "stretch_score=1" not in result.output
@@ -2243,6 +2319,9 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "pressure_confidence=medium" not in result.output
     assert "component  score  status" not in result.output
     assert "trend     +2     constructive" not in result.output
+    assert result.output.index("overall:") < result.output.index("market_signals:")
+    assert result.output.index("market_signals:") < result.output.index("pressure_features:")
+    assert result.output.index("pressure_features:") < result.output.index("action_evidence:")
 
 
 def test_regime_snapshot_outputs_concise_metadata_by_default(
@@ -2318,7 +2397,7 @@ def test_regime_snapshot_outputs_concise_metadata_by_default(
                 features=(),
             ),
             pressure_table="family  feature         stretch\ntrend   spy_return_20d  0.42",
-            action_table="family  module  score\ntrend   evidence  +1",
+            action_table="family  signal    protect  redeploy\ntrend   evidence  0.42     0.00",
         )
 
     price_root_arg = price_root
@@ -2355,11 +2434,15 @@ def test_regime_snapshot_outputs_concise_metadata_by_default(
     assert "regime_score=5" in result.output
     assert "regime_action_state=no_change" in result.output
     assert "market_signal_contradiction_count=1" in result.output
+    assert "overall:" not in result.output
+    assert "action_evidence:" not in result.output
+    assert "market_signals:" not in result.output
+    assert "pressure_features:" not in result.output
     assert "risk_on (+5)" not in result.output
     assert "trend   price_proxy  +2" not in result.output
     assert "positive=trend/price_proxy:constructive negative=fixture" not in result.output
     assert "trend   spy_return_20d  0.42" not in result.output
-    assert "trend   evidence  +1" not in result.output
+    assert "trend   evidence  0.42" not in result.output
     assert "component  score  status" not in result.output
 
 

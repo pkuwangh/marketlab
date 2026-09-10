@@ -94,6 +94,7 @@ from marketlab.policy import (
 from marketlab.prices import (
     DEFAULT_PRICE_OBSERVATIONS_ROOT,
     PriceDataError,
+    fetch_and_write_cboe_index_daily_prices,
     fetch_and_write_stooq_daily_prices,
     fetch_and_write_yahoo_daily_prices,
     import_daily_price_csv,
@@ -405,7 +406,7 @@ def daily_run(
     refresh_prices_flag: bool = typer.Option(
         True,
         "--prices/--no-prices",
-        help="Refresh Yahoo prices before computing daily outputs.",
+        help="Refresh market price sources before computing daily outputs.",
     ),
     refresh_market_series_flag: bool = typer.Option(
         True,
@@ -992,6 +993,59 @@ def prices_fetch_yahoo(
     ).success("Fetched Yahoo daily price observations")
 
 
+@prices_app.command("fetch-cboe", no_args_is_help=True)
+def prices_fetch_cboe(
+    symbols_value: str = typer.Argument(
+        ...,
+        metavar="SYMBOL[,SYMBOL...]",
+        help="Comma-separated CBOE volatility index symbols to fetch.",
+    ),
+    start_date_value: str = typer.Option(
+        ...,
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="First price date to fetch.",
+    ),
+    end_date_value: str = typer.Option(
+        ...,
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last price date to fetch.",
+    ),
+    output_root: Path = typer.Option(
+        DEFAULT_PRICE_OBSERVATIONS_ROOT,
+        "--output-root",
+        file_okay=False,
+        help="Root directory for daily price observations.",
+    ),
+) -> None:
+    """Fetch daily volatility index observations from CBOE historical CSVs."""
+
+    start_date = _parse_date_option(start_date_value, option_name="--start")
+    end_date = _parse_date_option(end_date_value, option_name="--end")
+    try:
+        results = fetch_and_write_cboe_index_daily_prices(
+            symbols=_parse_symbols(symbols_value),
+            start_date=start_date,
+            end_date=end_date,
+            output_root=output_root,
+        )
+    except PriceDataError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    for result in results:
+        typer.echo(
+            f"symbol={result.symbol} source_symbol={result.source_symbol} "
+            f"row_count={result.row_count} observation_path={result.observation_path}"
+        )
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        symbol_count=len(results),
+        output_root=str(output_root),
+    ).success("Fetched CBOE index price observations")
+
+
 @prices_app.command("import-csv", no_args_is_help=True)
 def prices_import_csv(
     symbol: str = typer.Argument(
@@ -1106,7 +1160,7 @@ def regime_snapshot(
     fetch_prices_flag: bool = typer.Option(
         False,
         "--fetch-prices",
-        help="Refresh only Yahoo daily prices for regime proxies before computing.",
+        help="Refresh only daily prices for regime proxies before computing.",
     ),
     fetch_market_series_flag: bool = typer.Option(
         False,
@@ -1116,7 +1170,7 @@ def regime_snapshot(
     refresh_sources_flag: bool = typer.Option(
         False,
         "--refresh-sources",
-        help="Refresh all market regime sources: Yahoo prices and FRED market series.",
+        help="Refresh all market regime sources: prices and FRED market series.",
     ),
     price_start_value: str | None = typer.Option(
         None,
@@ -1279,7 +1333,7 @@ def regime_backfill(
     fetch_prices_flag: bool = typer.Option(
         False,
         "--fetch-prices",
-        help="Refresh only Yahoo daily prices for regime proxies before computing snapshots.",
+        help="Refresh only daily prices for regime proxies before computing snapshots.",
     ),
     fetch_market_series_flag: bool = typer.Option(
         False,
@@ -1289,7 +1343,7 @@ def regime_backfill(
     refresh_sources_flag: bool = typer.Option(
         False,
         "--refresh-sources",
-        help="Refresh all market regime sources: Yahoo prices and FRED market series.",
+        help="Refresh all market regime sources: prices and FRED market series.",
     ),
     lookback_days: int = typer.Option(
         DEFAULT_DAILY_PRICE_LOOKBACK_DAYS,
@@ -2895,17 +2949,29 @@ def _echo_regime_snapshot_result(
     typer.echo(f"market_signal_contradiction_count={len(result.contradictions)}")
     if not show_detail:
         return
-    typer.echo("")
-    typer.echo(format_regime_key_signals(result))
-    if result.action_table:
-        typer.echo("")
-        typer.echo(result.action_table)
-    if result.signal_table:
-        typer.echo("")
-        typer.echo(result.signal_table)
-    if result.pressure_table:
-        typer.echo("")
-        typer.echo(result.pressure_table)
+    _echo_table_section(
+        "overall",
+        format_regime_key_signals(result),
+        caption="headline regime, pressure, input gaps, and final action",
+    )
+    _echo_table_section(
+        "market_signals",
+        result.signal_table,
+        caption=(
+            "score cells marked (regime) feed the headline regime score; "
+            "other rows are supporting evidence"
+        ),
+    )
+    _echo_table_section(
+        "pressure_features",
+        result.pressure_table,
+        caption="normalized stretch/washout setup inputs before action gating",
+    )
+    _echo_table_section(
+        "action_evidence",
+        result.action_table,
+        caption="turn-signal evidence by family before final protect/redeploy action",
+    )
 
 
 def _echo_regime_backfill_result(result: RegimeBackfillResult) -> None:
@@ -2936,11 +3002,12 @@ def _echo_cli_fields(fields: tuple[tuple[str, object], ...]) -> None:
         typer.echo(f"{name}={value}")
 
 
-def _echo_table_section(title: str, table: str | None) -> None:
+def _echo_table_section(title: str, table: str | None, *, caption: str | None = None) -> None:
     if not table:
         return
     typer.echo("")
-    typer.echo(f"{title}:")
+    heading = f"{title}: {caption}" if caption else f"{title}:"
+    typer.echo(heading)
     typer.echo(table)
 
 

@@ -9,15 +9,18 @@ import pytest
 from marketlab.prices import (
     DailyPriceObservation,
     PriceDataError,
+    fetch_and_write_cboe_index_daily_prices,
     fetch_and_write_eoddata_index_daily_prices,
     fetch_and_write_stooq_daily_prices,
     fetch_and_write_yahoo_daily_prices,
     import_daily_price_csv,
     load_price_history,
+    parse_cboe_index_daily_csv,
     parse_eoddata_index_daily_html,
     parse_stooq_daily_csv,
     parse_yahoo_daily_frame,
     price_observation_path,
+    to_cboe_index_symbol,
     to_eoddata_index_symbol,
     to_stooq_symbol,
     write_price_observations,
@@ -189,6 +192,47 @@ def test_parse_yahoo_daily_frame_skips_incomplete_trailing_row() -> None:
     assert [row.observed_date for row in rows] == [date(2026, 8, 24)]
 
 
+def test_parse_cboe_index_daily_csv_reads_ohlc_rows() -> None:
+    rows = parse_cboe_index_daily_csv(
+        "DATE,OPEN,HIGH,LOW,CLOSE\n"
+        "09/03/2026,13.10,13.80,12.90,13.20\n"
+        "09/04/2026,13.20,14.00,12.70,13.50\n",
+        symbol="^VIX9D",
+        source_symbol="VIX9D",
+        start_date=date(2026, 9, 4),
+        end_date=date(2026, 9, 4),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].source == "cboe"
+    assert rows[0].source_symbol == "VIX9D"
+    assert rows[0].symbol == "^VIX9D"
+    assert rows[0].observed_date == date(2026, 9, 4)
+    assert rows[0].open == 13.2
+    assert rows[0].high == 14.0
+    assert rows[0].low == 12.7
+    assert rows[0].close == 13.5
+    assert rows[0].volume == 0
+    assert rows[0].adjusted_close == 13.5
+
+
+def test_parse_cboe_index_daily_csv_reads_single_value_rows() -> None:
+    rows = parse_cboe_index_daily_csv(
+        "DATE,VVIX\n"
+        "2026-09-03,85.2\n"
+        "2026-09-04,86.4\n",
+        symbol="^VVIX",
+        source_symbol="VVIX",
+        start_date=date(2026, 9, 3),
+        end_date=date(2026, 9, 4),
+    )
+
+    assert [row.close for row in rows] == [85.2, 86.4]
+    assert rows[0].open == 85.2
+    assert rows[0].high == 85.2
+    assert rows[0].low == 85.2
+
+
 def test_parse_yahoo_daily_frame_rejects_incomplete_middle_row() -> None:
     frame = pd.DataFrame(
         {
@@ -246,6 +290,42 @@ def test_fetch_and_write_yahoo_daily_prices_uses_downloader(tmp_path: Path) -> N
     rows = load_price_history(symbol="META", price_root=tmp_path / "prices")
     assert rows[0].source == "yahoo"
     assert rows[0].adjusted_close == 103.5
+
+
+def test_fetch_and_write_cboe_index_daily_prices_uses_public_csv(
+    tmp_path: Path,
+) -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            text=(
+                "DATE,OPEN,HIGH,LOW,CLOSE\n"
+                "09/04/2026,13.20,14.00,12.70,13.50\n"
+            ),
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    results = fetch_and_write_cboe_index_daily_prices(
+        symbols=("VIX9D", "^VIX9D"),
+        start_date=date(2026, 9, 4),
+        end_date=date(2026, 9, 4),
+        output_root=tmp_path / "prices",
+        client=client,
+    )
+
+    assert len(results) == 1
+    assert results[0].symbol == "^VIX9D"
+    assert results[0].source_symbol == "VIX9D"
+    assert results[0].observation_path.name == "INDEX_VIX9D.jsonl"
+    assert requested_urls == [
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX9D_History.csv"
+    ]
+    rows = load_price_history(symbol="^VIX9D", price_root=tmp_path / "prices")
+    assert rows[0].source == "cboe"
+    assert rows[0].close == 13.5
 
 
 def test_parse_eoddata_index_daily_html_reads_recent_rows() -> None:
@@ -370,6 +450,15 @@ def test_to_stooq_symbol_adds_us_suffix_only_when_needed() -> None:
     assert to_stooq_symbol("BRK.B") == "brk.b.us"
     assert to_stooq_symbol("BMW.DE") == "bmw.de"
     assert to_stooq_symbol("^SPX") == "^spx"
+
+
+def test_to_cboe_index_symbol_maps_volatility_index_aliases() -> None:
+    assert to_cboe_index_symbol("^VIX") == "VIX"
+    assert to_cboe_index_symbol("vix9d") == "VIX9D"
+    assert to_cboe_index_symbol("^VIX3M") == "VIX3M"
+    assert to_cboe_index_symbol("VVIX") == "VVIX"
+    with pytest.raises(PriceDataError, match="Unsupported CBOE index symbol"):
+        to_cboe_index_symbol("SPY")
 
 
 def test_to_eoddata_index_symbol_maps_breadth_aliases() -> None:

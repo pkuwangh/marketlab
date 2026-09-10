@@ -21,6 +21,7 @@ from marketlab.snapshots.models import utc_timestamp
 DEFAULT_PRICE_OBSERVATIONS_ROOT = Path("data/observations/prices/daily")
 HTTP_TIMEOUT_SECONDS = 30.0
 STOOQ_DAILY_URL = "https://stooq.com/q/d/l/"
+CBOE_DAILY_INDEX_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{symbol}_History.csv"
 EODDATA_INDEX_QUOTE_URL = "https://www.eoddata.com/stockquote/INDEX/{symbol}.htm"
 EODDATA_REQUEST_HEADERS = {
     "User-Agent": (
@@ -49,6 +50,22 @@ EODDATA_INDEX_SYMBOLS = {
 EODDATA_STORAGE_SYMBOLS = {
     "S5FI": "$S5FI",
     "S5TH": "$S5TH",
+}
+CBOE_INDEX_SYMBOLS = {
+    "^VIX": "VIX",
+    "VIX": "VIX",
+    "^VIX9D": "VIX9D",
+    "VIX9D": "VIX9D",
+    "^VIX3M": "VIX3M",
+    "VIX3M": "VIX3M",
+    "^VVIX": "VVIX",
+    "VVIX": "VVIX",
+}
+CBOE_STORAGE_SYMBOLS = {
+    "VIX": "^VIX",
+    "VIX9D": "^VIX9D",
+    "VIX3M": "^VIX3M",
+    "VVIX": "^VVIX",
 }
 
 
@@ -340,6 +357,99 @@ def fetch_and_write_yahoo_daily_prices(
     return tuple(results)
 
 
+def fetch_cboe_index_daily_prices(
+    *,
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    client: httpx.Client | None = None,
+) -> tuple[DailyPriceObservation, ...]:
+    """Fetch daily CBOE volatility index observations from the public historical CSV."""
+
+    normalized_symbol = normalize_symbol(symbol)
+    if end_date < start_date:
+        raise PriceDataError("End date must be on or after start date")
+    source_symbol = to_cboe_index_symbol(normalized_symbol)
+    storage_symbol = CBOE_STORAGE_SYMBOLS[source_symbol]
+    url = CBOE_DAILY_INDEX_URL.format(symbol=source_symbol)
+
+    owns_client = client is None
+    active_client = client or httpx.Client(timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True)
+    try:
+        logger.bind(
+            symbol=storage_symbol,
+            source_symbol=source_symbol,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+        ).info("Fetching CBOE index price observations")
+        try:
+            response = active_client.get(url)
+        except httpx.HTTPError as exc:
+            raise PriceDataError(
+                f"Failed to fetch CBOE prices for {storage_symbol}: {exc}"
+            ) from exc
+        if response.status_code >= 400:
+            raise PriceDataError(
+                f"CBOE price fetch for {storage_symbol} failed with HTTP "
+                f"{response.status_code}"
+            )
+        rows = parse_cboe_index_daily_csv(
+            response.text,
+            symbol=storage_symbol,
+            source_symbol=source_symbol,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not rows:
+            raise PriceDataError(f"No CBOE daily price rows returned for {storage_symbol}")
+        retrieved_at = utc_timestamp()
+        rows = tuple(replace(row, retrieved_at=retrieved_at) for row in rows)
+        logger.bind(
+            symbol=storage_symbol,
+            source_symbol=source_symbol,
+            row_count=len(rows),
+            latest_price_date=rows[-1].observed_date.isoformat(),
+        ).success("Fetched CBOE index price observations")
+        return rows
+    finally:
+        if owns_client:
+            active_client.close()
+
+
+def fetch_and_write_cboe_index_daily_prices(
+    *,
+    symbols: tuple[str, ...],
+    start_date: date,
+    end_date: date,
+    output_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    client: httpx.Client | None = None,
+) -> tuple[PriceFetchResult, ...]:
+    """Fetch and persist daily CBOE volatility index observations."""
+
+    results: list[PriceFetchResult] = []
+    for symbol in dedupe_cboe_index_symbols(symbols):
+        rows = fetch_cboe_index_daily_prices(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            client=client,
+        )
+        observation_path = write_price_observations(
+            rows,
+            output_root=output_root,
+            overwrite=True,
+        )
+        results.append(
+            PriceFetchResult(
+                symbol=rows[0].symbol,
+                source_symbol=rows[0].source_symbol,
+                observation_path=observation_path,
+                row_count=len(rows),
+            )
+        )
+    return tuple(results)
+
+
 def fetch_eoddata_index_daily_prices(
     *,
     symbol: str,
@@ -552,6 +662,80 @@ def parse_yahoo_daily_frame(
     return tuple(rows)
 
 
+def parse_cboe_index_daily_csv(
+    text: str,
+    *,
+    symbol: str,
+    source_symbol: str,
+    start_date: date,
+    end_date: date,
+) -> tuple[DailyPriceObservation, ...]:
+    """Parse CBOE volatility index CSV text into price observations."""
+
+    reader = csv.DictReader(StringIO(text))
+    if not reader.fieldnames:
+        raise PriceDataError("CBOE price CSV must include a DATE column")
+    column_names = _csv_columns_by_uppercase(reader.fieldnames)
+    date_column = column_names.get("DATE")
+    if date_column is None:
+        raise PriceDataError("CBOE price CSV must include a DATE column")
+
+    normalized_symbol = normalize_symbol(symbol)
+    normalized_source_symbol = source_symbol.strip().upper().lstrip("^")
+    ohlc_columns = {
+        "open": column_names.get("OPEN"),
+        "high": column_names.get("HIGH"),
+        "low": column_names.get("LOW"),
+        "close": column_names.get("CLOSE"),
+    }
+    value_column = column_names.get(normalized_source_symbol)
+    has_ohlc = all(ohlc_columns.values())
+    if not has_ohlc and value_column is None:
+        raise PriceDataError(
+            "CBOE price CSV must include OPEN, HIGH, LOW, CLOSE columns "
+            f"or a {normalized_source_symbol} value column"
+        )
+
+    rows: list[DailyPriceObservation] = []
+    for row_number, row in enumerate(reader, start=2):
+        if not any((value or "").strip() for value in row.values()):
+            continue
+        try:
+            observed_date = _parse_cboe_date(_required(row, date_column))
+            if not start_date <= observed_date <= end_date:
+                continue
+            if has_ohlc:
+                open_value = _parse_float(row, ohlc_columns["open"] or "")
+                high_value = _parse_float(row, ohlc_columns["high"] or "")
+                low_value = _parse_float(row, ohlc_columns["low"] or "")
+                close_value = _parse_float(row, ohlc_columns["close"] or "")
+            else:
+                close_value = _parse_float(row, value_column or "")
+                open_value = close_value
+                high_value = close_value
+                low_value = close_value
+            rows.append(
+                DailyPriceObservation(
+                    source="cboe",
+                    source_symbol=normalized_source_symbol,
+                    symbol=normalized_symbol,
+                    observed_date=observed_date,
+                    availability_date=observed_date,
+                    open=open_value,
+                    high=high_value,
+                    low=low_value,
+                    close=close_value,
+                    volume=0,
+                    adjusted_close=close_value,
+                )
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PriceDataError(f"Invalid CBOE price CSV row {row_number}") from exc
+
+    rows.sort(key=lambda price: price.observed_date)
+    return tuple(rows)
+
+
 def parse_eoddata_index_daily_html(
     text: str,
     *,
@@ -695,6 +879,20 @@ def dedupe_eoddata_index_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(normalized_symbols)
 
 
+def dedupe_cboe_index_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize and deduplicate supported CBOE volatility index symbols."""
+
+    normalized_symbols: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        source_symbol = to_cboe_index_symbol(symbol)
+        storage_symbol = CBOE_STORAGE_SYMBOLS[source_symbol]
+        if storage_symbol not in seen:
+            seen.add(storage_symbol)
+            normalized_symbols.append(storage_symbol)
+    return tuple(normalized_symbols)
+
+
 def normalize_symbol(symbol: str) -> str:
     """Normalize a public market data symbol."""
 
@@ -755,6 +953,26 @@ def to_eoddata_index_symbol(symbol: str) -> str:
     if source_symbol is None:
         raise PriceDataError(f"Unsupported EODData index symbol: {symbol}")
     return source_symbol
+
+
+def to_cboe_index_symbol(symbol: str) -> str:
+    """Return the CBOE historical CSV symbol for a supported volatility index."""
+
+    normalized = normalize_symbol(symbol)
+    source_symbol = CBOE_INDEX_SYMBOLS.get(normalized)
+    if source_symbol is None:
+        raise PriceDataError(f"Unsupported CBOE index symbol: {symbol}")
+    return source_symbol
+
+
+def is_cboe_index_symbol(symbol: str) -> bool:
+    """Return whether a symbol has a supported CBOE historical CSV mapping."""
+
+    try:
+        to_cboe_index_symbol(symbol)
+    except PriceDataError:
+        return False
+    return True
 
 
 def _has_explicit_stooq_suffix(symbol: str) -> bool:
@@ -852,6 +1070,22 @@ def _parse_optional_float(row: dict[str, str | None], key: str) -> float | None:
 
 def _parse_int(row: dict[str, str | None], key: str) -> int:
     return int(float(_required(row, key).replace(",", "")))
+
+
+def _csv_columns_by_uppercase(fieldnames: list[str] | None) -> dict[str, str]:
+    if fieldnames is None:
+        return {}
+    return {field.strip().upper(): field for field in fieldnames if field is not None}
+
+
+def _parse_cboe_date(value: str) -> date:
+    text = value.strip()
+    for date_format in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(text, date_format).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid CBOE date: {value}")
 
 
 def _optional_float(value: object) -> float | None:

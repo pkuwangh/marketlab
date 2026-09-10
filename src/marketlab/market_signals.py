@@ -217,21 +217,140 @@ def format_market_signals(signals: tuple[MarketSignal, ...]) -> str:
     if not signals:
         return "No market signal rows found."
 
-    rows = [["family", "signal", "score", "status", "value", "source", "observed", "reason"]]
+    rows = [
+        [
+            "family",
+            "signal",
+            "score",
+            "status",
+            "value",
+            "observed",
+            "reason",
+        ]
+    ]
     for signal in sorted(signals, key=_market_signal_sort_key):
-        rows.append(
-            [
-                signal.family,
-                signal.name,
-                _format_score(signal.score),
-                signal.status,
-                _format_signal_value(signal),
-                signal.source,
-                signal.observed_date.isoformat() if signal.observed_date else "-",
-                signal.reason,
-            ]
-        )
+        rows.extend(_format_market_signal_rows(signal))
     return _format_table(rows)
+
+
+def _format_market_signal_rows(signal: MarketSignal) -> list[list[str]]:
+    if signal.family == "trend" and signal.name == "price_proxy":
+        return [
+            _format_market_signal_row(
+                signal,
+                signal_name="SPY",
+                contributes_to_regime=_contributes_to_regime_score(signal),
+                value=_format_trend_symbol_value(signal, symbol="spy")
+                or _format_value(signal.value, signal.unit),
+            ),
+            _format_market_signal_row(
+                signal,
+                signal_name="QQQ",
+                value=_format_trend_symbol_value(signal, symbol="qqq")
+                or _format_value(signal.value, signal.unit),
+                repeat_signal_metadata=False,
+            ),
+        ]
+    if signal.family == "volatility" and signal.name == "term_structure":
+        return [
+            _format_market_signal_row(
+                signal,
+                signal_name="VIX9D/VIX",
+                value=_format_term_structure_leg_value(
+                    signal,
+                    ratio_key="vix9d_vix_ratio",
+                    ratio_change_5d_key="vix9d_vix_ratio_change_5d",
+                    ratio_change_20d_key="vix9d_vix_ratio_change_20d",
+                )
+                or _format_value(signal.value, signal.unit),
+            ),
+            _format_market_signal_row(
+                signal,
+                signal_name="VIX/VIX3M",
+                value=_format_term_structure_leg_value(
+                    signal,
+                    ratio_key="vix_vix3m_ratio",
+                    ratio_change_5d_key="vix_vix3m_ratio_change_5d",
+                    ratio_change_20d_key="vix_vix3m_ratio_change_20d",
+                )
+                or _format_value(signal.value, signal.unit),
+                repeat_signal_metadata=False,
+            ),
+        ]
+    if signal.family == "breadth" and signal.name == "price_proxy":
+        return [
+            _format_market_signal_row(
+                signal,
+                signal_name="RSP/SPY",
+                contributes_to_regime=_contributes_to_regime_score(signal),
+                value=_format_breadth_relative_value(
+                    signal,
+                    relative_5d_key="rsp_spy_relative_5d",
+                    relative_20d_key="rsp_spy_relative_20d",
+                )
+                or _format_value(signal.value, signal.unit),
+            ),
+            _format_market_signal_row(
+                signal,
+                signal_name="IWM/SPY",
+                value=_format_breadth_relative_value(
+                    signal,
+                    relative_5d_key="iwm_spy_relative_5d",
+                    relative_20d_key="iwm_spy_relative_20d",
+                )
+                or _format_value(signal.value, signal.unit),
+                repeat_signal_metadata=False,
+            ),
+        ]
+    return [
+        _format_market_signal_row(
+            signal,
+            contributes_to_regime=_contributes_to_regime_score(signal),
+            value=_format_signal_value(signal),
+        )
+    ]
+
+
+def _format_market_signal_row(
+    signal: MarketSignal,
+    *,
+    value: str,
+    signal_name: str | None = None,
+    contributes_to_regime: bool = False,
+    repeat_signal_metadata: bool = True,
+) -> list[str]:
+    score = (
+        _format_market_signal_score(signal.score, contributes_to_regime=contributes_to_regime)
+        if repeat_signal_metadata
+        else "-"
+    )
+    status = signal.status if repeat_signal_metadata else "-"
+    reason = signal.reason if repeat_signal_metadata else "-"
+    return [
+        signal.family,
+        signal_name or signal.name,
+        score,
+        status,
+        value,
+        signal.observed_date.isoformat() if signal.observed_date else "-",
+        reason,
+    ]
+
+
+def _format_market_signal_score(score: int, *, contributes_to_regime: bool) -> str:
+    value = _format_score(score)
+    if contributes_to_regime:
+        return f"{value} (regime)"
+    return value
+
+
+def _contributes_to_regime_score(signal: MarketSignal) -> bool:
+    return signal.name == "price_proxy" and signal.family in {
+        "trend",
+        "volatility",
+        "breadth",
+        "credit",
+    }
 
 
 def _market_signal_sort_key(signal: MarketSignal) -> tuple[int, str, int, str]:
@@ -245,58 +364,14 @@ def _market_signal_sort_key(signal: MarketSignal) -> tuple[int, str, int, str]:
 
 def _format_signal_value(signal: MarketSignal) -> str:
     if signal.family == "trend" and signal.name == "price_proxy":
-        gain = _format_signal_value_values(
-            (
-                _format_detail_pair(
-                    signal.details,
-                    left_key="spy_return_20d",
-                    right_key="qqq_return_20d",
-                    unit="percent",
-                    compact_percent=True,
-                ),
-                _format_detail_pair(
-                    signal.details,
-                    left_key="spy_return_60d",
-                    right_key="qqq_return_60d",
-                    unit="percent",
-                    compact_percent=True,
-                ),
-            ),
-        )
-        moving_average_distance = _format_signal_value_values(
-            (
-                _format_detail_pair(
-                    signal.details,
-                    left_key="spy_ma50_distance",
-                    right_key="qqq_ma50_distance",
-                    unit="percent",
-                    compact_percent=True,
-                ),
-                _format_detail_pair(
-                    signal.details,
-                    left_key="spy_ma200_distance",
-                    right_key="qqq_ma200_distance",
-                    unit="percent",
-                    compact_percent=True,
-                ),
-            ),
-        )
-        value = _format_signal_value_sections(
-            (
-                ("SPY/QQQ: 20,60d", gain),
-                ("MA50,200", moving_average_distance),
-            ),
-            label_separator=" ",
-        )
-        return value or _format_value(signal.value, signal.unit)
+        return _format_trend_pair_value(signal) or _format_value(signal.value, signal.unit)
 
     if signal.family == "volatility" and signal.name == "price_proxy":
         vix = _format_detail_scalar(signal.details, key="vix_close", unit="index")
-        vix_move = _format_signal_value_values(
-            (
-                _format_detail_scalar(signal.details, key="vix_return_5d", unit="percent"),
-                _format_detail_scalar(signal.details, key="vix_return_20d", unit="percent"),
-            )
+        vix_change = _format_signed_decimal_change_pair(
+            signal.details,
+            left_key="vix_change_5d",
+            right_key="vix_change_20d",
         )
         spy_realized_volatility = _format_detail_scalar(
             signal.details,
@@ -306,7 +381,7 @@ def _format_signal_value(signal: MarketSignal) -> str:
         value = _format_signal_value_sections(
             (
                 ("VIX", vix or "-"),
-                ("5,20d move", vix_move),
+                ("5,20d chg", vix_change),
                 ("SPY rv20", spy_realized_volatility or "-"),
             ),
             label_separator=" ",
@@ -317,64 +392,41 @@ def _format_signal_value(signal: MarketSignal) -> str:
         current_vvix = _format_detail_scalar(signal.details, key="vvix_close", unit="index")
         if current_vvix is None:
             current_vvix = _format_value(signal.value, signal.unit)
-        vvix_move = _format_signal_value_values(
-            (
-                _format_detail_scalar(signal.details, key="vvix_return_5d", unit="percent"),
-                _format_detail_scalar(signal.details, key="vvix_return_20d", unit="percent"),
-            )
+        vvix_change = _format_signed_decimal_change_pair(
+            signal.details,
+            left_key="vvix_change_5d",
+            right_key="vvix_change_20d",
         )
         value = _format_signal_value_sections(
             (
                 ("VVIX", current_vvix),
-                ("5,20d move", vvix_move),
+                ("5,20d chg", vvix_change),
             ),
             label_separator=" ",
         )
         return value or _format_value(signal.value, signal.unit)
 
     if signal.family == "volatility" and signal.name == "term_structure":
-        vix9d_vix = _format_detail_scalar(
-            signal.details,
-            key="vix9d_vix_ratio",
-            unit="ratio",
-        )
-        vix9d_vix_move = _format_signal_value_values(
-            (
-                _format_detail_scalar(
-                    signal.details,
-                    key="vix9d_vix_ratio_change_5d",
-                    unit="percent",
-                ),
-                _format_detail_scalar(
-                    signal.details,
-                    key="vix9d_vix_ratio_change_20d",
-                    unit="percent",
-                ),
-            )
-        )
-        vix_vix3m = _format_detail_scalar(
-            signal.details,
-            key="vix_vix3m_ratio",
-            unit="ratio",
-        )
-        vix_vix3m_move = _format_signal_value_values(
-            (
-                _format_detail_scalar(
-                    signal.details,
-                    key="vix_vix3m_ratio_change_5d",
-                    unit="percent",
-                ),
-                _format_detail_scalar(
-                    signal.details,
-                    key="vix_vix3m_ratio_change_20d",
-                    unit="percent",
-                ),
-            )
-        )
         value = _format_signal_value_sections(
             (
-                ("VIX9D/VIX", _format_value_with_move(vix9d_vix, vix9d_vix_move)),
-                ("VIX/VIX3M", _format_value_with_move(vix_vix3m, vix_vix3m_move)),
+                (
+                    "VIX9D/VIX",
+                    _format_term_structure_leg_value(
+                        signal,
+                        ratio_key="vix9d_vix_ratio",
+                        ratio_change_5d_key="vix9d_vix_ratio_change_5d",
+                        ratio_change_20d_key="vix9d_vix_ratio_change_20d",
+                    ),
+                ),
+                (
+                    "VIX/VIX3M",
+                    _format_term_structure_leg_value(
+                        signal,
+                        ratio_key="vix_vix3m_ratio",
+                        ratio_change_5d_key="vix_vix3m_ratio_change_5d",
+                        ratio_change_20d_key="vix_vix3m_ratio_change_20d",
+                    ),
+                ),
             ),
             label_separator=" ",
         )
@@ -505,6 +557,126 @@ def _format_signal_value(signal: MarketSignal) -> str:
     return _format_value(signal.value, signal.unit)
 
 
+def _format_trend_symbol_value(signal: MarketSignal, *, symbol: str) -> str:
+    gain = _format_signal_value_values(
+        (
+            _format_detail_scalar(
+                signal.details,
+                key=f"{symbol}_return_20d",
+                unit="percent",
+            ),
+            _format_detail_scalar(
+                signal.details,
+                key=f"{symbol}_return_60d",
+                unit="percent",
+            ),
+        ),
+    )
+    moving_average_distance = _format_signal_value_values(
+        (
+            _format_detail_scalar(
+                signal.details,
+                key=f"{symbol}_ma50_distance",
+                unit="percent",
+            ),
+            _format_detail_scalar(
+                signal.details,
+                key=f"{symbol}_ma200_distance",
+                unit="percent",
+            ),
+        ),
+    )
+    value = _format_signal_value_sections(
+        (
+            ("20,60d", gain),
+            ("MA50,200", moving_average_distance),
+        ),
+        label_separator=" ",
+    )
+    return value
+
+
+def _format_trend_pair_value(signal: MarketSignal) -> str:
+    gain = _format_signal_value_values(
+        (
+            _format_detail_pair(
+                signal.details,
+                left_key="spy_return_20d",
+                right_key="qqq_return_20d",
+                unit="percent",
+                compact_percent=True,
+            ),
+            _format_detail_pair(
+                signal.details,
+                left_key="spy_return_60d",
+                right_key="qqq_return_60d",
+                unit="percent",
+                compact_percent=True,
+            ),
+        ),
+    )
+    moving_average_distance = _format_signal_value_values(
+        (
+            _format_detail_pair(
+                signal.details,
+                left_key="spy_ma50_distance",
+                right_key="qqq_ma50_distance",
+                unit="percent",
+                compact_percent=True,
+            ),
+            _format_detail_pair(
+                signal.details,
+                left_key="spy_ma200_distance",
+                right_key="qqq_ma200_distance",
+                unit="percent",
+                compact_percent=True,
+            ),
+        ),
+    )
+    return _format_signal_value_sections(
+        (
+            ("SPY/QQQ: 20,60d", gain),
+            ("MA50,200", moving_average_distance),
+        ),
+        label_separator=" ",
+    )
+
+
+def _format_term_structure_leg_value(
+    signal: MarketSignal,
+    *,
+    ratio_key: str,
+    ratio_change_5d_key: str,
+    ratio_change_20d_key: str,
+) -> str:
+    ratio = _format_detail_scalar(signal.details, key=ratio_key, unit="ratio")
+    change = _format_signed_decimal_change_pair(
+        signal.details,
+        left_key=ratio_change_5d_key,
+        right_key=ratio_change_20d_key,
+    )
+    return _format_value_with_change(ratio, change)
+
+
+def _format_breadth_relative_value(
+    signal: MarketSignal,
+    *,
+    relative_5d_key: str,
+    relative_20d_key: str,
+) -> str:
+    relative = _format_detail_pair(
+        signal.details,
+        left_key=relative_5d_key,
+        right_key=relative_20d_key,
+        unit="percent",
+        compact_percent=True,
+    )
+    return _format_signal_value_sections(
+        (("5,20d", relative),),
+        label_separator=" ",
+    )
+
+
 def _format_signal_value_sections(
     sections: tuple[tuple[str, str], ...],
     *,
@@ -522,12 +694,12 @@ def _format_signal_value_values(values: tuple[str | None, ...]) -> str:
     return ", ".join(available) if available else "-"
 
 
-def _format_value_with_move(value: str | None, move: str) -> str:
-    if value is None and move == "-":
+def _format_value_with_change(value: str | None, change: str) -> str:
+    if value is None and change == "-":
         return "-"
-    if move == "-":
+    if change == "-":
         return value or "-"
-    return f"{value or '-'}; 5,20d move {move}"
+    return f"{value or '-'}; 5,20d chg {change}"
 
 
 def _format_detail_pair(

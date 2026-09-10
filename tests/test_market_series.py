@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from marketlab.market_series import (
     MarketSeriesObservation,
     fetch_and_write_fred_series,
     load_market_series_history,
+    market_series_revision_log_path,
     parse_fred_graph_csv,
     write_market_series_observations,
 )
@@ -111,3 +113,80 @@ def test_write_market_series_observations_merges_by_observed_date(tmp_path: Path
     rows = load_market_series_history(series_id="NFCI", observations_root=output_root)
     assert [row.observed_date for row in rows] == [date(2026, 8, 14), date(2026, 8, 21)]
     assert [row.value for row in rows] == [-0.561, -0.566]
+
+
+def test_write_market_series_observations_replaces_revised_rows_by_default(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "series"
+    original = MarketSeriesObservation(
+        source="fred",
+        source_series_id="NFCI",
+        series_id="NFCI",
+        observed_date=date(2025, 3, 28),
+        availability_date=date(2025, 4, 2),
+        value=-0.501,
+        unit="index",
+    )
+    revised = MarketSeriesObservation(
+        source="fred",
+        source_series_id="NFCI",
+        series_id="NFCI",
+        observed_date=date(2025, 3, 28),
+        availability_date=date(2025, 4, 2),
+        value=-0.503,
+        unit="index",
+    )
+
+    write_market_series_observations((original,), output_root=output_root)
+    write_market_series_observations((revised,), output_root=output_root)
+
+    rows = load_market_series_history(series_id="NFCI", observations_root=output_root)
+    assert [row.value for row in rows] == [-0.503]
+    revision_log_path = market_series_revision_log_path(
+        series_id="NFCI",
+        observations_root=output_root,
+    )
+    revisions = [
+        json.loads(line)
+        for line in revision_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(revisions) == 1
+    assert revisions[0]["record_type"] == "market-series-revision"
+    assert revisions[0]["series_id"] == "NFCI"
+    assert revisions[0]["observed_date"] == "2025-03-28"
+    assert revisions[0]["previous"]["value"] == -0.501
+    assert revisions[0]["replacement"]["value"] == -0.503
+
+
+def test_write_market_series_observations_can_refuse_revised_rows(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "series"
+    original = MarketSeriesObservation(
+        source="fred",
+        source_series_id="NFCI",
+        series_id="NFCI",
+        observed_date=date(2025, 3, 28),
+        availability_date=date(2025, 4, 2),
+        value=-0.501,
+        unit="index",
+    )
+    revised = MarketSeriesObservation(
+        source="fred",
+        source_series_id="NFCI",
+        series_id="NFCI",
+        observed_date=date(2025, 3, 28),
+        availability_date=date(2025, 4, 2),
+        value=-0.503,
+        unit="index",
+    )
+
+    write_market_series_observations((original,), output_root=output_root)
+    with pytest.raises(MarketSeriesError, match="Refusing to overwrite"):
+        write_market_series_observations((revised,), output_root=output_root, overwrite=False)
+    revision_log_path = market_series_revision_log_path(
+        series_id="NFCI",
+        observations_root=output_root,
+    )
+    assert not revision_log_path.exists()

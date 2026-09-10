@@ -19,6 +19,7 @@ DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT = Path("data/observations/market/series"
 FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 HTTP_TIMEOUT_SECONDS = 30.0
 FRED_CURRENT_VINTAGE_MODE = "current_vintage_backfill"
+MARKET_SERIES_REVISION_LOG_DIR = "_revisions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,9 +237,9 @@ def write_market_series_observations(
     rows: tuple[MarketSeriesObservation, ...],
     *,
     output_root: Path = DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> Path:
-    """Write scalar market series observations, merging without silent corrections."""
+    """Write scalar market series observations, replacing current-history revisions."""
 
     if not rows:
         raise MarketSeriesError("Cannot write an empty market series observation set")
@@ -252,16 +253,33 @@ def write_market_series_observations(
         for row in load_market_series_history(series_id=series_id, observations_root=output_root)
     }
     merged_rows = dict(existing_rows)
+    revision_records: list[dict[str, Any]] = []
     for row in rows:
         existing_row = merged_rows.get(row.observed_date)
-        if existing_row is not None and not overwrite:
-            if existing_row != row:
+        if existing_row is not None and existing_row != row:
+            if not overwrite:
                 raise MarketSeriesError(
                     "Refusing to overwrite existing market series observation with different "
                     f"content: {output_path} {row.observed_date.isoformat()}"
                 )
+            revision_records.append(
+                _market_series_revision_record(
+                    output_path=output_path,
+                    previous=existing_row,
+                    replacement=row,
+                )
+            )
+        elif existing_row is not None and not overwrite:
             continue
         merged_rows[row.observed_date] = row
+
+    revision_log_path = None
+    if revision_records:
+        revision_log_path = _append_market_series_revision_records(
+            revision_records,
+            output_root=output_root,
+            series_id=series_id,
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = "".join(
@@ -275,6 +293,14 @@ def write_market_series_observations(
         total_row_count=len(merged_rows),
         observation_path=str(output_path),
     ).success("Wrote market series observations")
+    if revision_records and revision_log_path is not None:
+        logger.bind(
+            series_id=series_id,
+            revision_count=len(revision_records),
+            first_observed_date=revision_records[0]["observed_date"],
+            last_observed_date=revision_records[-1]["observed_date"],
+            revision_log_path=str(revision_log_path),
+        ).warning("Recorded market series current-history revisions")
     return output_path
 
 
@@ -300,6 +326,48 @@ def load_market_series_history(
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         raise MarketSeriesError(f"Invalid market series observations file: {path}") from exc
     return tuple(sorted(rows, key=lambda observation: observation.observed_date))
+
+
+def market_series_revision_log_path(
+    *,
+    series_id: str,
+    observations_root: Path = DEFAULT_MARKET_SERIES_OBSERVATIONS_ROOT,
+) -> Path:
+    """Return the append-only revision audit log path for one market series."""
+
+    normalized_series_id = normalize_series_id(series_id)
+    return observations_root / MARKET_SERIES_REVISION_LOG_DIR / f"{normalized_series_id}.jsonl"
+
+
+def _market_series_revision_record(
+    *,
+    output_path: Path,
+    previous: MarketSeriesObservation,
+    replacement: MarketSeriesObservation,
+) -> dict[str, Any]:
+    return {
+        "record_type": "market-series-revision",
+        "recorded_at": utc_timestamp(),
+        "series_id": previous.series_id,
+        "observed_date": previous.observed_date.isoformat(),
+        "observation_path": str(output_path),
+        "previous": previous.to_dict(),
+        "replacement": replacement.to_dict(),
+    }
+
+
+def _append_market_series_revision_records(
+    records: list[dict[str, Any]],
+    *,
+    output_root: Path,
+    series_id: str,
+) -> Path:
+    path = market_series_revision_log_path(series_id=series_id, observations_root=output_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(payload)
+    return path
 
 
 def dedupe_series_ids(series_ids: tuple[str, ...]) -> tuple[str, ...]:

@@ -244,9 +244,10 @@ Because these inputs use different units, the regime engine should not combine t
 - Aggregate within each signal family first, then aggregate family scores so one dense family does not overwhelm sparse but important evidence.
 - Use top pressure percentiles for calibration/backtests, while keeping action rules compact and interpretable enough to improve or replace without carrying stale benchmark code.
 
-Action evidence should also be grouped into bounded modules, including a separate cross-factor module
-for divergence, confirmation, and contradiction evidence. This keeps a cluster of similar volatility
-or trend turns from drowning out a smaller but independent breadth or credit warning.
+Action evidence should also be aggregated through bounded internal modules. Paired checks should be
+folded into the relevant family rather than treated as their own family. This keeps
+a cluster of similar volatility or trend turns from drowning out a smaller but independent
+breadth or credit warning.
 
 | **Family**              | **Candidate inputs**                                                               | **Question answered**                                                           |
 |-------------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
@@ -268,6 +269,8 @@ reweighted, or retired.
   - `VIX high + VVIX falling/contained`: headline fear is elevated, but volatility-of-volatility may be stabilizing; candidate re-risk signal if credit/liquidity is not broken and breadth stops deteriorating.
   - `VIX low + VVIX low + stretched trend`: complacency plus price extension; candidate scale-down/protect signal.
   - `VIX low + VVIX rising`: quiet index tape with rising vol-of-vol; candidate early-warning signal.
+  - The current action model separates direct `VVIX vs VIX` lead-lag evidence from
+    VIX term-structure normalization so a single VVIX move is not counted twice.
 
 - Breadth and participation:
   - Current proxies are `RSP/SPY` and `IWM/SPY`, which ask whether equal-weight large caps and small caps are confirming the cap-weighted index.
@@ -301,8 +304,8 @@ snapshot-level debugging:
 
 | **Output block** | **Purpose** |
 |------------------|-------------|
-| Key signals | Headline regime, stretch/washout pressure, missing inputs, contradictions, and final action state. |
-| Action evidence modules | Family-bounded deterioration/redeployment evidence across trend, volatility, breadth, credit, liquidity, and cross-factor relationships. |
+| Key signals | Headline regime, stretch/washout pressure, missing inputs, and final action state. |
+| Action evidence | Turn-signal rows grouped by trend, volatility, breadth, credit, and liquidity, with paired checks folded into the relevant family. |
 | Market signals | Directional family rows such as trend, volatility, breadth, credit, liquidity, and rates. |
 | Pressure features | Normalized stretch/washout setup inputs using point-in-time raw values and trailing historical context. |
 | Outcome replays | `marketlab regime outcomes --by ...` compares regime, action, pressure, market-signal, and policy buckets against forward SPY/QQQ returns and drawdowns. |
@@ -915,7 +918,7 @@ marketlab/
 - Keep the market-signal snapshot layer as the evidence boundary for regime and policy. The current model consumes generated signal rows; next steps are longer-history calibration, event studies, ablations, and a standalone signal-production command only if the regime workflow becomes too coupled.
 
 - Continue Market Signal Expansion only where source access is practical and measured outcome replay improves:
-  - VIX term structure is now in the first expansion slice through VIX9D/VIX and VIX/VIX3M ratios; same-date legs are required, and stale vendor legs should become input gaps instead of mixed-date evidence. Next volatility additions should wait for measured replay value.
+  - VIX term structure is now in the first expansion slice through CBOE-sourced VIX9D/VIX and VIX/VIX3M ratios; same-date legs are required, and stale source legs should become input gaps instead of mixed-date evidence. Next volatility additions should wait for measured replay value.
   - Realized-vs-implied volatility where the data source is reliable.
   - Fear/greed-style sentiment or equivalent risk-appetite observations from a stable source-specific importer.
   - Put/call or positioning proxies only after source semantics are clear.
@@ -923,7 +926,7 @@ marketlab/
 - Breadth internals now include S&P 500 percent above 50d/200d moving averages through isolated EODData recent-history ingestion; next breadth work should measure whether these levels and 5d/20d changes improve forward outcome separation beyond RSP/SPY and IWM/SPY.
 - Strengthen credit/liquidity after the first policy loop reveals a measured weakness. Prefer one robust signal per family over many correlated variants.
 
-- Treat the current action layer as `Regime -> Setup -> Action Evidence -> State`. The implemented action evidence is family-bounded and includes cross-factor divergence/confirmation/contradiction features; persistent hysteresis/cooldowns are later state-machine mechanics, not another market signal layer.
+- Treat the current action layer as `Regime -> Setup -> Action Evidence -> State`. The implemented action evidence is family-bounded and includes paired divergence/confirmation/contradiction checks inside the relevant family module; persistent hysteresis/cooldowns are later state-machine mechanics, not another market signal layer.
 
 - Keep `regime report` as the normal human-facing market-regime and policy readout. Keep `regime snapshot` metadata-first by default, with `regime snapshot --detail` available for family-level evidence, action modules, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
 

@@ -27,7 +27,7 @@ generation, then independently validate and measure it.
 - Market regime and portfolio posture, primary pillar:
   - Refreshes SPY/QQQ, VIX/VVIX, VIX term-structure, breadth, HYG/TLT, and FRED credit/liquidity/rates observations.
   - Computes daily directional regime, stretch/washout setup pressure, family-bounded deterioration/stabilization action evidence, and rare action states: `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
-  - Reports named turn, divergence, confirmation, and contradiction evidence across trend, volatility, breadth, credit, liquidity, and cross-factor relationships.
+  - Reports named turn, divergence, confirmation, and contradiction evidence across trend, volatility, breadth, credit, and liquidity modules.
   - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
   - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
   - Renders the daily policy report and regime chart from saved point-in-time snapshots.
@@ -59,11 +59,12 @@ The routine operating path is one command:
 ./bin/marketlab daily
 ```
 
-By default it uses today's local date. The daily run first refreshes market sources, writes
-market-signal and regime snapshots, derives the portfolio policy, and renders the daily
-policy report and regime chart. When read-only Gmail credentials exist, it then fetches the
-Bulltard recap from Gmail, validates captured candidates, and refreshes the local DuckDB
-store for outcome review.
+By default it uses today's local date. The daily run first refreshes market sources
+(Yahoo ETF/index proxies, CBOE volatility indexes, EODData breadth indexes, and FRED
+market series), writes market-signal and regime snapshots, derives the portfolio policy,
+and renders the daily policy report and regime chart. When read-only Gmail credentials exist,
+it then fetches the Bulltard recap from Gmail, validates captured candidates, and refreshes
+the local DuckDB store for outcome review.
 Daily mode recomputes and overwrites same-version market-signal and regime snapshots by default.
 Use `--no-bulltard` for a market-regime-only run.
 
@@ -97,12 +98,17 @@ source observations remain under `data/observations/`.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
-  If a vendor returns stale VIX9D or VIX3M rows while current VIX is available,
+  Volatility indexes are fetched from CBOE historical CSVs; if a source returns stale
+  VIX9D or VIX3M rows while current VIX is available,
   the term-structure signal is shown as an input gap instead of mixing dates.
 - FRED market-series backfills use the latest revised history available when you fetch them.
   - In economic-data terminology, a "vintage" is the data as it existed on a specific release date.
   - MarketLab does not fetch true historical vintages yet, so these rows are useful for research
     but are not the original values that were known on each past date.
+  - Refreshing these current-history rows can replace prior local values for the same
+    observed date when FRED publishes a revision.
+  - Replaced rows are recorded in
+    `data/observations/market/series/_revisions/<SERIES>.jsonl`, and the refresh logs a warning.
 
 The current regime score uses:
 
@@ -114,10 +120,15 @@ The current regime score uses:
 
 The detailed regime evidence output from `regime snapshot --detail` is organized as:
 
-- Key signals: the headline regime, pressure, input gaps, contradictions, and action.
-- Action evidence: bounded deterioration/redeployment modules by family, including cross-factor relationships.
-- Market signals: directional family evidence such as trend, volatility, breadth, credit, liquidity, and rates.
+- Key signals: the headline regime, pressure, input gaps, and action.
+- Action evidence: bounded deterioration/redeployment signals by family, with paired checks folded into the relevant family.
+- Market signals: directional family evidence such as trend, volatility, breadth, credit,
+  liquidity, and rates. Score cells marked `(regime)` feed the headline `regime_score`;
+  other rows are supporting evidence for pressure, action, and later validation.
 - Pressure features: normalized stretch/washout setup values and recent point-in-time raw inputs.
+
+See [KNOWLEDGE.md](./KNOWLEDGE.md) for a row-by-row interpretation guide for these
+market-regime tables.
 
 Backfill market-regime and market-signal snapshots over local price dates:
 
@@ -125,22 +136,24 @@ Backfill market-regime and market-signal snapshots over local price dates:
 ./bin/marketlab regime backfill --start 2025-01-02 --end 2026-09-04
 ```
 
+### Backtesting
+
 Backfill recomputes and overwrites same-version snapshots by default. Use `--skip-existing` when
 you only want to fill missing dates.
 
 Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
 
 ```bash
-./bin/marketlab regime outcomes --start 2026-08-01 --end 2026-09-04
+./bin/marketlab regime outcomes --start 2025-01-02 --end 2026-09-04
 ```
 
 Replay rare action states, normalized pressure buckets, market-signal rows, or policy states:
 
 ```bash
-./bin/marketlab regime outcomes --by action --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
-./bin/marketlab regime outcomes --by pressure --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
-./bin/marketlab regime outcomes --by signal --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
-./bin/marketlab regime outcomes --by policy --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+./bin/marketlab regime outcomes --by action   --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by pressure --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by signal   --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by policy   --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
 ```
 
 Render a reproducible market-regime chart:
@@ -348,6 +361,14 @@ This uses the actively maintained `yfinance` package. It stores raw `close` and 
 MarketLab uses adjusted close for return/outcome calculations when available. Re-fetching an
 overlapping date range updates the local price cache; saved snapshots carry the dates, versions,
 and provenance used when they were written.
+
+For source-only CBOE volatility-index diagnostics:
+
+```bash
+./bin/marketlab data prices fetch-cboe '^VIX9D,^VIX,^VIX3M,^VVIX' \
+  --start 2025-01-01 \
+  --end 2026-09-08
+```
 
 For source-only FRED diagnostics:
 

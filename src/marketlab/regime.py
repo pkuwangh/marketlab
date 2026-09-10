@@ -34,8 +34,10 @@ from marketlab.prices import (
     PriceDataError,
     PriceFetchResult,
     dedupe_symbols,
+    fetch_and_write_cboe_index_daily_prices,
     fetch_and_write_eoddata_index_daily_prices,
     fetch_and_write_yahoo_daily_prices,
+    is_cboe_index_symbol,
     load_price_history,
 )
 from marketlab.snapshots.models import (
@@ -59,13 +61,19 @@ DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS = (
     "RSP",
     "HYG",
     "TLT",
+)
+DEFAULT_REGIME_CBOE_PRICE_SYMBOLS = (
     "^VIX",
     "^VIX9D",
     "^VIX3M",
     "^VVIX",
 )
 DEFAULT_REGIME_BREADTH_SYMBOLS = ("$S5FI", "$S5TH")
-DEFAULT_REGIME_PRICE_SYMBOLS = DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS + DEFAULT_REGIME_BREADTH_SYMBOLS
+DEFAULT_REGIME_PRICE_SYMBOLS = (
+    DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS
+    + DEFAULT_REGIME_CBOE_PRICE_SYMBOLS
+    + DEFAULT_REGIME_BREADTH_SYMBOLS
+)
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
 REGIME_FEATURE_VERSION = "market_regime_features_v0"
 REGIME_MODEL_VERSION = "market_regime_score_v0"
@@ -838,6 +846,7 @@ def refresh_regime_prices(
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     symbols: tuple[str, ...] = DEFAULT_REGIME_PRICE_SYMBOLS,
     downloader=None,
+    cboe_client=None,
     eoddata_client=None,
 ) -> RegimePriceRefreshResult:
     """Refresh price observations for market regime proxies."""
@@ -850,7 +859,12 @@ def refresh_regime_prices(
         symbol for symbol in requested_symbols if symbol in DEFAULT_REGIME_BREADTH_SYMBOLS
     )
     yahoo_symbols = tuple(
-        symbol for symbol in requested_symbols if symbol not in DEFAULT_REGIME_BREADTH_SYMBOLS
+        symbol
+        for symbol in requested_symbols
+        if symbol not in DEFAULT_REGIME_BREADTH_SYMBOLS and not is_cboe_index_symbol(symbol)
+    )
+    cboe_symbols = tuple(
+        symbol for symbol in requested_symbols if is_cboe_index_symbol(symbol)
     )
     price_results: list[PriceFetchResult] = []
     price_failures: list[RegimePriceRefreshFailure] = []
@@ -873,6 +887,25 @@ def refresh_regime_prices(
                 end_date=end_date.isoformat(),
                 error=str(exc),
             ).error("Failed market regime price refresh")
+    for symbol in cboe_symbols:
+        try:
+            price_results.extend(
+                fetch_and_write_cboe_index_daily_prices(
+                    symbols=(symbol,),
+                    start_date=start_date,
+                    end_date=end_date,
+                    output_root=price_root,
+                    client=cboe_client,
+                )
+            )
+        except PriceDataError as exc:
+            price_failures.append(RegimePriceRefreshFailure(symbol=symbol, error=str(exc)))
+            logger.bind(
+                symbol=symbol,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                error=str(exc),
+            ).error("Failed market regime CBOE index refresh")
     for symbol in breadth_symbols:
         try:
             price_results.extend(
@@ -1166,7 +1199,10 @@ def _compute_regime_snapshot_from_histories(
         action=action,
         pressure=pressure,
         pressure_table=format_regime_pressure_features(pressure.features),
-        action_table=format_regime_action_modules(action.action_modules),
+        action_table=format_regime_action_modules(
+            action.action_modules,
+            action_features=action.action_features,
+        ),
     )
 
 
@@ -1459,12 +1495,16 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
     """Format the final market regime read as a compact summary table."""
 
     snapshot = result.snapshot
+    missing_inputs = _missing_market_input_labels(
+        snapshot=snapshot,
+        signals=result.signals,
+    )
     rows = [
         ["signal", "value", "read"],
         [
             "regime",
             f"{snapshot.regime} ({_format_score(snapshot.score)})",
-            f"{snapshot.confidence} confidence",
+            _regime_read(snapshot, missing_inputs=missing_inputs),
         ],
     ]
     pressure = result.pressure
@@ -1488,12 +1528,12 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
                 f"stretch {_format_pressure_score(stretch_pressure_score)} / "
                 f"washout {_format_pressure_score(washout_pressure_score)}"
             ),
-            f"{pressure_confidence} confidence",
+            (
+                f"{_pressure_level(stretch_pressure_score)} stretch / "
+                f"{_pressure_level(washout_pressure_score)} washout; "
+                f"{pressure_confidence} confidence"
+            ),
         ]
-    )
-    missing_inputs = _missing_market_input_labels(
-        snapshot=snapshot,
-        signals=result.signals,
     )
     rows.append(
         [
@@ -1502,35 +1542,136 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             "missing point-in-time observations",
         ]
     )
-    rows.append(
-        [
-            "contradictions",
-            ";".join(result.contradictions) if result.contradictions else "none",
-            "positive/negative signal clash",
-        ]
-    )
     action = result.action or _action_state_from_snapshot(snapshot)
     rows.append(
         [
             "action",
             (
-                f"{action.state}; protect {_format_pressure_score(action.protect_strength)} / "
+                f"protect {_format_pressure_score(action.protect_strength)} / "
                 f"redeploy {_format_pressure_score(action.redeploy_strength)}; "
                 f"net {action.action_score:+.2f}"
             ),
-            f"{action.confidence} confidence; {action.reason}",
+            _action_read(action, missing_inputs=missing_inputs),
         ]
     )
     return _format_table(rows)
 
 
-def format_regime_action_modules(modules: tuple[RegimeActionModule, ...]) -> str:
+def _regime_read(snapshot: RegimeSnapshot, *, missing_inputs: tuple[str, ...]) -> str:
+    return "; ".join(
+        (
+            _regime_strength_read(snapshot),
+            _data_quality_read(missing_inputs),
+            f"{snapshot.confidence} confidence",
+        )
+    )
+
+
+def _regime_strength_read(snapshot: RegimeSnapshot) -> str:
+    if snapshot.regime == "neutral":
+        return "mixed backdrop"
+    magnitude = abs(snapshot.score)
+    if magnitude <= 2:
+        return f"marginal {snapshot.regime}"
+    if magnitude == 3:
+        return f"moderate {snapshot.regime}"
+    return f"strong {snapshot.regime}"
+
+
+def _pressure_level(score: float | None) -> str:
+    if score is None:
+        return "unknown"
+    if score >= 0.85:
+        return "extreme"
+    if score >= 0.70:
+        return "high"
+    if score >= 0.55:
+        return "elevated"
+    if score >= 0.30:
+        return "noticeable"
+    return "low"
+
+
+def _action_strength_read(action: RegimeActionState) -> str:
+    if action.state == "scale_down_protect":
+        return "protect signal active"
+    if action.state == "scale_up_redeploy":
+        return "redeploy signal active"
+    if action.protect_strength > action.redeploy_strength:
+        return _inactive_action_strength_read("protect", action.protect_strength)
+    if action.redeploy_strength > action.protect_strength:
+        return _inactive_action_strength_read("redeploy", action.redeploy_strength)
+    return "balanced below action threshold"
+
+
+def _inactive_action_strength_read(label: str, strength: float) -> str:
+    if strength >= ACTION_STRENGTH_THRESHOLD - 0.10:
+        return f"{label} lean near {ACTION_STRENGTH_THRESHOLD:.2f} action threshold"
+    return f"{label} lean below action threshold"
+
+
+def _action_read(action: RegimeActionState, *, missing_inputs: tuple[str, ...]) -> str:
+    parts = [
+        _action_state_label(action.state),
+        _action_strength_read(action),
+        _data_quality_read(missing_inputs),
+        f"{action.confidence} confidence",
+    ]
+    reason = _nonredundant_action_reason(action)
+    if reason:
+        parts.append(reason)
+    return "; ".join(parts)
+
+
+def _action_state_label(state: str) -> str:
+    if state == "no_change":
+        return "maintain"
+    if state == "scale_down_protect":
+        return "protect"
+    if state == "scale_up_redeploy":
+        return "redeploy"
+    return state
+
+
+def _data_quality_read(missing_inputs: tuple[str, ...]) -> str:
+    if missing_inputs:
+        return "data gaps: " + ",".join(missing_inputs)
+    return "data complete"
+
+
+def _nonredundant_action_reason(action: RegimeActionState) -> str | None:
+    default_reason = "No actionable setup; maintain current posture"
+    if action.state == "no_change" and action.reason.startswith(default_reason):
+        suffix = action.reason[len(default_reason) :].lstrip(": ")
+        return suffix or None
+    return action.reason
+
+
+def format_regime_action_modules(
+    modules: tuple[RegimeActionModule, ...],
+    *,
+    action_features: tuple[RegimeActionFeature, ...] = (),
+) -> str:
     """Format bounded action-evidence modules as a compact table."""
 
     if not modules:
         return "No regime action evidence modules found."
 
-    rows = [["family", "module", "D", "R", "active_evidence"]]
+    if action_features:
+        rows = [["family", "signal", "protect", "redeploy", "read"]]
+        for feature in _action_features_for_display(action_features):
+            rows.append(
+                [
+                    feature.family,
+                    _action_feature_display_name(feature.name),
+                    _format_pressure_score(feature.deterioration_score),
+                    _format_pressure_score(feature.stabilization_score),
+                    feature.reason,
+                ]
+            )
+        return _format_table(rows)
+
+    rows = [["family", "module", "protect", "redeploy", "read"]]
     for module in modules:
         rows.append(
             [
@@ -1542,6 +1683,36 @@ def format_regime_action_modules(modules: tuple[RegimeActionModule, ...]) -> str
             ]
         )
     return _format_table(rows)
+
+
+def _action_features_for_display(
+    features: tuple[RegimeActionFeature, ...],
+) -> tuple[RegimeActionFeature, ...]:
+    family_order = {
+        family: index for index, (family, _module_name) in enumerate(_ACTION_MODULE_SPECS)
+    }
+    return tuple(
+        feature
+        for _index, feature in sorted(
+            enumerate(features),
+            key=lambda item: (
+                family_order.get(item[1].family, len(family_order)),
+                item[0],
+            ),
+        )
+    )
+
+
+def _action_feature_display_name(name: str) -> str:
+    labels = {
+        "vvix_vs_vix": "vvix_vs_vix",
+        "volatility_normalization_confirmation": "vol_normalization",
+        "price_breadth_divergence": "price_vs_breadth",
+        "equity_credit_divergence": "equity_vs_credit",
+        "breadth_credit_confirmation": "breadth_vs_credit",
+        "rebound_not_confirmed_by_credit": "rebound_vs_credit",
+    }
+    return labels.get(name, name)
 
 
 def _missing_market_input_labels(
@@ -1579,7 +1750,7 @@ def _market_signals_from_snapshot(
                 features=features,
             ),
             unit="text",
-            source="yahoo_price_proxy",
+            source=_component_signal_source(component.name),
             observed_date=snapshot.price_date,
             availability_date=snapshot.price_date,
             reason=component.reason,
@@ -1642,6 +1813,8 @@ def _component_signal_details(
                 "vix_close": snapshot.vix_close,
                 "vix_return_5d": vix.return_5d,
                 "vix_return_20d": vix.return_20d,
+                "vix_change_5d": vix.change_5d,
+                "vix_change_20d": vix.change_20d,
             }
         )
     elif component_name == "breadth":
@@ -1680,6 +1853,12 @@ def _component_signal_details(
     return details
 
 
+def _component_signal_source(component_name: str) -> str:
+    if component_name == "volatility":
+        return "yahoo_cboe_price_proxy"
+    return "yahoo_price_proxy"
+
+
 def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> MarketSignal:
     if features.close is None:
         return MarketSignal(
@@ -1691,7 +1870,7 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
             score=0,
             value=None,
             unit="index",
-            source="yahoo_vvix",
+            source="cboe_vvix",
             observed_date=None,
             availability_date=None,
             reason="VVIX is unavailable",
@@ -1699,6 +1878,8 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
                 "vvix_close": None,
                 "vvix_return_5d": None,
                 "vvix_return_20d": None,
+                "vvix_change_5d": None,
+                "vvix_change_20d": None,
                 "missing_symbols": ["^VVIX"],
             },
         )
@@ -1723,7 +1904,7 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
         score=score,
         value=features.close,
         unit="index",
-        source="yahoo_vvix",
+        source="cboe_vvix",
         observed_date=features.price_date,
         availability_date=features.price_date,
         reason=reason,
@@ -1731,6 +1912,8 @@ def _vvix_signal(*, snapshot: RegimeSnapshot, features: _SymbolFeatures) -> Mark
             "vvix_close": features.close,
             "vvix_return_5d": features.return_5d,
             "vvix_return_20d": features.return_20d,
+            "vvix_change_5d": features.change_5d,
+            "vvix_change_20d": features.change_20d,
             "missing_symbols": [],
         },
     )
@@ -1761,22 +1944,22 @@ def _vix_term_structure_signal(
         "vix3m_observed_date": vix3m.price_date.isoformat() if vix3m.price_date else None,
         "vix9d_vix_ratio": vix9d_vix_ratio,
         "vix_vix3m_ratio": vix_vix3m_ratio,
-        "vix9d_vix_ratio_change_5d": _aligned_relative_ratio_return(
+        "vix9d_vix_ratio_change_5d": _aligned_ratio_change(
             vix9d,
             vix,
             field_name="return_5d",
         ),
-        "vix9d_vix_ratio_change_20d": _aligned_relative_ratio_return(
+        "vix9d_vix_ratio_change_20d": _aligned_ratio_change(
             vix9d,
             vix,
             field_name="return_20d",
         ),
-        "vix_vix3m_ratio_change_5d": _aligned_relative_ratio_return(
+        "vix_vix3m_ratio_change_5d": _aligned_ratio_change(
             vix,
             vix3m,
             field_name="return_5d",
         ),
-        "vix_vix3m_ratio_change_20d": _aligned_relative_ratio_return(
+        "vix_vix3m_ratio_change_20d": _aligned_ratio_change(
             vix,
             vix3m,
             field_name="return_20d",
@@ -1794,7 +1977,7 @@ def _vix_term_structure_signal(
             score=0,
             value=None,
             unit="ratio",
-            source="yahoo_vix_term_structure",
+            source="cboe_vix_term_structure",
             observed_date=None,
             availability_date=None,
             reason="VIX9D/VIX/VIX3M term structure is unavailable on aligned dates",
@@ -1824,7 +2007,7 @@ def _vix_term_structure_signal(
         score=score,
         value=vix_vix3m_ratio,
         unit="ratio",
-        source="yahoo_vix_term_structure",
+        source="cboe_vix_term_structure",
         observed_date=observed_date,
         availability_date=observed_date,
         reason=reason,
@@ -2487,18 +2670,19 @@ def _action_feature_evidence(
     )
 
 
+_ACTION_MODULE_SPECS = (
+    ("trend", "trend_turn"),
+    ("volatility", "volatility_turn"),
+    ("breadth", "breadth_turn"),
+    ("credit", "credit_turn"),
+    ("liquidity", "liquidity_turn"),
+)
+
+
 def _action_modules(features: tuple[RegimeActionFeature, ...]) -> tuple[RegimeActionModule, ...]:
-    module_specs = (
-        ("trend", "trend_turn"),
-        ("volatility", "volatility_turn"),
-        ("breadth", "breadth_turn"),
-        ("credit", "credit_turn"),
-        ("liquidity", "liquidity_turn"),
-        ("cross_factor", "cross_factor_relationships"),
-    )
     return tuple(
         module
-        for family, name in module_specs
+        for family, name in _ACTION_MODULE_SPECS
         if (
             module := _action_module(
                 family=family,
@@ -2573,7 +2757,7 @@ def _action_features(
         _hyg_tlt_turn_feature(signals=signals),
         _credit_spread_turn_feature(signals=signals),
         _financial_conditions_turn_feature(signals=signals),
-        *_cross_factor_action_features(snapshot=snapshot, signals=signals),
+        *_paired_turn_features(snapshot=snapshot, signals=signals),
     ]
     return tuple(feature for feature in features if feature is not None)
 
@@ -2610,12 +2794,13 @@ def _vix_turn_feature(*, signals: tuple[MarketSignal, ...]) -> RegimeActionFeatu
     vix_return_5d = _signal_detail_float(signal, "vix_return_5d")
     if vix_return_5d is None:
         return None
+    vix_change_5d = _signal_detail_float(signal, "vix_change_5d")
     return RegimeActionFeature(
         family="volatility",
         name="vix_turn",
         deterioration_score=_positive_change_score(vix_return_5d, full_at=0.15),
         stabilization_score=_negative_change_score(vix_return_5d, full_at=0.15),
-        reason=f"VIX 5d move {_format_percent(vix_return_5d)}",
+        reason=f"VIX 5d chg {_format_change_with_percent(vix_change_5d, vix_return_5d)}",
     )
 
 
@@ -2628,6 +2813,7 @@ def _vvix_turn_feature(
     vvix_return_5d = _signal_detail_float(signal, "vvix_return_5d")
     if vvix_return_5d is None:
         return None
+    vvix_change_5d = _signal_detail_float(signal, "vvix_change_5d")
     quiet_market_boost = (
         1.2 if snapshot.vix_close is not None and snapshot.vix_close <= 16.0 else 1.0
     )
@@ -2642,7 +2828,7 @@ def _vvix_turn_feature(
         name="vvix_turn",
         deterioration_score=deterioration,
         stabilization_score=_negative_change_score(vvix_return_5d, full_at=0.12),
-        reason=f"VVIX 5d move {_format_percent(vvix_return_5d)}",
+        reason=f"VVIX 5d chg {_format_change_with_percent(vvix_change_5d, vvix_return_5d)}",
     )
 
 
@@ -2673,8 +2859,9 @@ def _vix_term_structure_turn_feature(
         deterioration_score=deterioration or 0.0,
         stabilization_score=stabilization or 0.0,
         reason=(
-            "VIX term-ratio 5d moves "
-            f"{_format_percent(vix9d_vix_change_5d)}/{_format_percent(vix_vix3m_change_5d)}"
+            "VIX term-ratio 5d chg "
+            f"{_format_signed_decimal(vix9d_vix_change_5d)}/"
+            f"{_format_signed_decimal(vix_vix3m_change_5d)}"
         ),
     )
 
@@ -2770,13 +2957,13 @@ def _financial_conditions_turn_feature(
     )
 
 
-def _cross_factor_action_features(
+def _paired_turn_features(
     *,
     snapshot: RegimeSnapshot,
     signals: tuple[MarketSignal, ...],
 ) -> tuple[RegimeActionFeature, ...]:
     features = (
-        _vvix_leading_vix_higher_feature(snapshot=snapshot, signals=signals),
+        _vvix_vs_vix_feature(snapshot=snapshot, signals=signals),
         _volatility_normalization_confirmation_feature(signals=signals),
         _price_breadth_divergence_feature(snapshot=snapshot, signals=signals),
         _equity_credit_divergence_feature(snapshot=snapshot, signals=signals),
@@ -2786,7 +2973,7 @@ def _cross_factor_action_features(
     return tuple(feature for feature in features if feature is not None)
 
 
-def _vvix_leading_vix_higher_feature(
+def _vvix_vs_vix_feature(
     *,
     snapshot: RegimeSnapshot,
     signals: tuple[MarketSignal, ...],
@@ -2809,16 +2996,20 @@ def _vvix_leading_vix_higher_feature(
         relative_change = vvix_return_5d - vix_return_5d
         relative_score = _positive_change_score(relative_change, full_at=0.12)
     deterioration = _max_scores((low_vix_score, relative_score)) or 0.0
+    high_vix_score = _high_vix_context_score(snapshot.vix_close)
+    vvix_cooling_score = _negative_change_score(vvix_return_5d, full_at=0.12)
+    stabilization = _gated_score(high_vix_score, vvix_cooling_score)
     return RegimeActionFeature(
-        family="cross_factor",
-        name="vvix_leading_vix_higher",
+        family="volatility",
+        name="vvix_vs_vix",
         deterioration_score=deterioration,
-        stabilization_score=0.0,
+        stabilization_score=stabilization,
         evidence_kind="divergence",
         reason=(
             "VVIX vs VIX 5d "
             f"{_format_percent(vvix_return_5d)}/{_format_percent(vix_return_5d)}; "
-            f"lead {_format_percent(relative_change)}; VIX {_format_index(snapshot.vix_close)}"
+            f"lead {_format_percent(relative_change)}; VIX {_format_index(snapshot.vix_close)}; "
+            f"high-VIX gate {_format_pressure_score(high_vix_score)}"
         ),
     )
 
@@ -2832,27 +3023,28 @@ def _volatility_normalization_confirmation_feature(
     vvix_return_5d = _signal_detail_float(vvix_signal, "vvix_return_5d")
     vix9d_vix_change_5d = _signal_detail_float(term_signal, "vix9d_vix_ratio_change_5d")
     vix_vix3m_change_5d = _signal_detail_float(term_signal, "vix_vix3m_ratio_change_5d")
-    vvix_score = _negative_change_score(vvix_return_5d, full_at=0.12)
     term_score = _average_scores(
         (
             _negative_change_score(vix9d_vix_change_5d, full_at=0.10),
             _negative_change_score(vix_vix3m_change_5d, full_at=0.08),
         )
     )
-    if vvix_score is None and term_score is None:
+    if vvix_return_5d is None and term_score is None:
         return None
-    stabilization = _gated_score(vvix_score, term_score)
+    vvix_gate = _vvix_not_rising_gate(vvix_return_5d)
+    stabilization = _gated_score(vvix_gate, term_score)
     return RegimeActionFeature(
-        family="cross_factor",
+        family="volatility",
         name="volatility_normalization_confirmation",
         deterioration_score=0.0,
         stabilization_score=stabilization,
         evidence_kind="confirmation",
         reason=(
-            "VVIX and VIX term ratios 5d "
-            f"{_format_percent(vvix_return_5d)}, "
-            f"{_format_percent(vix9d_vix_change_5d)}/"
-            f"{_format_percent(vix_vix3m_change_5d)}"
+            "VIX term-ratio 5d chg "
+            f"{_format_signed_decimal(vix9d_vix_change_5d)}/"
+            f"{_format_signed_decimal(vix_vix3m_change_5d)}; "
+            f"VVIX gate {_format_pressure_score(vvix_gate)} "
+            f"({_format_percent(vvix_return_5d)})"
         ),
     )
 
@@ -2868,7 +3060,7 @@ def _price_breadth_divergence_feature(
         return None
     deterioration = _gated_score(price_score, breadth_damage)
     return RegimeActionFeature(
-        family="cross_factor",
+        family="breadth",
         name="price_breadth_divergence",
         deterioration_score=deterioration,
         stabilization_score=0.0,
@@ -2892,7 +3084,7 @@ def _equity_credit_divergence_feature(
         return None
     deterioration = _gated_score(price_score, credit_damage)
     return RegimeActionFeature(
-        family="cross_factor",
+        family="credit",
         name="equity_credit_divergence",
         deterioration_score=deterioration,
         stabilization_score=0.0,
@@ -2915,7 +3107,7 @@ def _breadth_credit_confirmation_feature(
         return None
     stabilization = _gated_score(breadth_recovery, funding_recovery)
     return RegimeActionFeature(
-        family="cross_factor",
+        family="credit",
         name="breadth_credit_confirmation",
         deterioration_score=0.0,
         stabilization_score=stabilization,
@@ -2941,7 +3133,7 @@ def _rebound_not_confirmed_by_credit_feature(
         return None
     contradiction = _gated_score(rebound_score, credit_damage) * 0.5
     return RegimeActionFeature(
-        family="cross_factor",
+        family="credit",
         name="rebound_not_confirmed_by_credit",
         deterioration_score=contradiction,
         stabilization_score=0.0,
@@ -2959,6 +3151,20 @@ def _price_stable_or_rising_score(snapshot: RegimeSnapshot) -> float | None:
     if price_return is None:
         return None
     return 1.0 if price_return >= 0.0 else 0.0
+
+
+def _high_vix_context_score(vix_close: float | None) -> float | None:
+    if vix_close is None:
+        return None
+    if vix_close <= 20.0:
+        return 0.0
+    return _clamp((vix_close - 20.0) / 10.0, 0.0, 1.0)
+
+
+def _vvix_not_rising_gate(vvix_return_5d: float | None) -> float | None:
+    if vvix_return_5d is None:
+        return None
+    return 1.0 if vvix_return_5d <= 0.0 else 0.0
 
 
 def _breadth_deterioration_score(signals: tuple[MarketSignal, ...]) -> float | None:
@@ -5052,23 +5258,26 @@ def _aligned_ratio(numerator: _SymbolFeatures, denominator: _SymbolFeatures) -> 
     return _ratio(numerator.close, denominator.close)
 
 
-def _relative_ratio_return(
+def _ratio_change_for_lookback(
     numerator: _SymbolFeatures,
     denominator: _SymbolFeatures,
     *,
     field_name: str,
 ) -> float | None:
+    current_ratio = _ratio(numerator.close, denominator.close)
     numerator_return = getattr(numerator, field_name)
     denominator_return = getattr(denominator, field_name)
-    if numerator_return is None or denominator_return is None:
+    if current_ratio is None or numerator_return is None or denominator_return is None:
         return None
+    numerator_factor = 1.0 + numerator_return
     denominator_factor = 1.0 + denominator_return
-    if denominator_factor <= 0.0:
+    if numerator_factor <= 0.0 or denominator_factor <= 0.0:
         return None
-    return (1.0 + numerator_return) / denominator_factor - 1.0
+    past_ratio = current_ratio * denominator_factor / numerator_factor
+    return current_ratio - past_ratio
 
 
-def _aligned_relative_ratio_return(
+def _aligned_ratio_change(
     numerator: _SymbolFeatures,
     denominator: _SymbolFeatures,
     *,
@@ -5080,7 +5289,7 @@ def _aligned_relative_ratio_return(
         or numerator.price_date != denominator.price_date
     ):
         return None
-    return _relative_ratio_return(numerator, denominator, field_name=field_name)
+    return _ratio_change_for_lookback(numerator, denominator, field_name=field_name)
 
 
 def _vix_term_structure_stale_pairs(
@@ -5462,6 +5671,20 @@ def _format_percent(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value * 100:+.1f}%"
+
+
+def _format_signed_decimal(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:+.2f}"
+
+
+def _format_change_with_percent(change: float | None, percent_change: float | None) -> str:
+    if change is None:
+        return _format_percent(percent_change)
+    if percent_change is None:
+        return _format_signed_decimal(change)
+    return f"{_format_signed_decimal(change)} ({_format_percent(percent_change)})"
 
 
 def _format_index(value: float | None) -> str:
