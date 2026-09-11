@@ -37,7 +37,7 @@ generation, then independently validate and measure it.
   - Reports named turn, divergence, confirmation, and contradiction evidence across trend, volatility, breadth, credit, and liquidity modules.
   - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
   - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
-  - Renders the daily policy report and regime chart from saved point-in-time snapshots.
+  - Renders the daily policy report; regime charts are available through the explicit `regime chart` command.
 
 - Bulltard and single-name candidates, secondary pillar:
   - Fetches the daily Bulltard recap from Gmail and uses the original signed link to capture targeted app views.
@@ -69,9 +69,9 @@ The routine operating path is one command:
 By default it uses today's local date. The daily run first refreshes market sources
 (Yahoo ETF/index proxies, CBOE volatility indexes, EODData breadth indexes, and FRED
 market series), writes market-signal and regime snapshots, derives the portfolio policy,
-and renders the daily policy report and regime chart. When read-only Gmail credentials exist,
-it then fetches the Bulltard recap from Gmail, validates captured candidates, and refreshes
-the local DuckDB store for outcome review.
+and renders the daily policy report. When read-only Gmail credentials exist, it then fetches the
+Bulltard recap from Gmail, validates captured candidates, and refreshes the local DuckDB store for
+outcome review.
 Daily mode recomputes and overwrites same-version market-signal and regime snapshots by default.
 Use `--no-bulltard` for a market-regime-only run.
 

@@ -450,11 +450,6 @@ def daily_run(
         "--outcomes/--no-outcomes",
         help="Replay candidate outcomes after validation when Bulltard runs.",
     ),
-    render_chart_flag: bool = typer.Option(
-        True,
-        "--chart/--no-chart",
-        help="Render the daily regime chart.",
-    ),
     refresh_store_flag: bool = typer.Option(
         True,
         "--store/--no-store",
@@ -463,7 +458,7 @@ def daily_run(
     strict_optional_stages: bool = typer.Option(
         False,
         "--strict",
-        help="Fail instead of warning when optional refresh/chart/store stages fail.",
+        help="Fail instead of warning when optional refresh/store stages fail.",
     ),
     price_start_value: str | None = typer.Option(
         None,
@@ -835,29 +830,6 @@ def daily_run(
         raise typer.BadParameter(str(exc)) from exc
     _echo_daily_policy_report_result(report_result)
     typer.echo("")
-
-    if render_chart_flag:
-        typer.echo("[chart]")
-        try:
-            chart_result = render_regime_chart(
-                start_date=source_date,
-                end_date=source_date,
-                symbol="SPY",
-                comparison_symbol="QQQ",
-                price_root=price_root,
-                regime_snapshot_root=regime_snapshot_root,
-                market_signal_snapshot_root=market_signal_snapshot_root,
-                policy_snapshot_root=policy_snapshot_root,
-                signal_time=signal_time,
-                snapshot_version=snapshot_version,
-                output_path=None,
-            )
-        except ChartError as exc:
-            _handle_optional_daily_error("regime_chart", exc, strict=strict_optional_stages)
-        else:
-            typer.echo(f"chart_path={chart_result.output_path}")
-            typer.echo(f"policy_snapshot_count={chart_result.policy_snapshot_count}")
-        typer.echo("")
 
     if refresh_store_flag:
         typer.echo("[store]")

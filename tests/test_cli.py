@@ -224,39 +224,6 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
             report="fixture daily report",
         )
 
-    def fake_render_regime_chart(
-        *,
-        start_date: date,
-        end_date: date,
-        symbol: str,
-        comparison_symbol: str | None,
-        price_root: Path,
-        regime_snapshot_root: Path,
-        market_signal_snapshot_root: Path,
-        policy_snapshot_root: Path,
-        signal_time,
-        snapshot_version: str | None,
-        output_path: Path | None,
-    ) -> RegimeChartResult:
-        assert events == ["regime_prices", "market_series", "regime", "report"]
-        assert start_date == date(2026, 8, 31)
-        assert end_date == date(2026, 8, 31)
-        assert symbol == "SPY"
-        assert comparison_symbol == "QQQ"
-        assert policy_snapshot_root == policy_root
-        assert output_path is None
-        events.append("chart")
-        return RegimeChartResult(
-            start_date=start_date,
-            end_date=end_date,
-            output_path=tmp_path / "reports" / "regime.html",
-            price_symbols=("SPY", "QQQ"),
-            price_point_count=10,
-            regime_snapshot_count=1,
-            market_signal_count=4,
-            policy_snapshot_count=1,
-        )
-
     def fake_refresh_research_store(
         *,
         db_path: Path,
@@ -268,7 +235,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         policy_snapshot_root: Path,
         bulltard_observation_root: Path,
     ) -> StoreRefreshResult:
-        assert events == ["regime_prices", "market_series", "regime", "report", "chart"]
+        assert events == ["regime_prices", "market_series", "regime", "report"]
         assert db_path == db_path_arg
         assert bulltard_observation_root == bulltard_root_arg
         events.append("store")
@@ -291,7 +258,6 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         "marketlab.cli.compute_daily_policy_report",
         fake_compute_daily_policy_report,
     )
-    monkeypatch.setattr("marketlab.cli.render_regime_chart", fake_render_regime_chart)
     monkeypatch.setattr("marketlab.cli.refresh_research_store", fake_refresh_research_store)
 
     result = CliRunner().invoke(
@@ -321,7 +287,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
     )
 
     assert result.exit_code == 0
-    assert events == ["regime_prices", "market_series", "regime", "report", "chart", "store"]
+    assert events == ["regime_prices", "market_series", "regime", "report", "store"]
     assert "daily_date=2026-08-31" in result.output
     assert "bulltard_status=skipped_missing_recap" in result.output
     assert "fixture daily report" in result.output
@@ -553,7 +519,6 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
             "--date",
             "2026-08-31",
             "--no-market-series",
-            "--no-chart",
             "--no-store",
             "--top-ranked",
             "2",
@@ -740,7 +705,6 @@ def test_daily_run_fetches_missing_default_recap_from_gmail(
             "2026-09-01",
             "--no-prices",
             "--no-market-series",
-            "--no-chart",
             "--no-store",
             "--no-outcomes",
             "--gmail-query",

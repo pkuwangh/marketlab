@@ -109,17 +109,105 @@ automatically bullish. It becomes actionable only when stabilization appears.
 
 ## Research Observations and Proposals
 
-These observations come from initial local outcome replays and should guide the next model
-iteration. They are not implemented guarantees.
+This section is a working research notebook for model problems and possible fixes. It should give
+future reviewers, collaborators, and coding agents enough context to challenge the assumptions
+rather than blindly tuning thresholds. These observations come from initial local outcome replays
+and recent snapshot reviews. They are not implemented guarantees.
 
-| Observation | Implication | Proposal |
-| --- | --- | --- |
-| Stretch pressure alone has often been followed by positive SPY/QQQ forward returns and modest drawdown. | Stretch is often strong momentum, not a de-risk signal. | Treat stretch as `protect_setup`, not `protect_action`. |
-| Same-day `scale_down_protect` has not separated bad forward windows well enough. | The current action state mixes pre-correction warnings, stress already visible, and false warnings during strong tapes. | Split protect into setup, confirmation, and action. |
-| Current protect logic effectively requires setup and confirmation on the same date. | It can miss the real pattern: extension first, deterioration days or weeks later. | Add an armed setup state that decays over a bounded number of trading days. |
-| Washout pressure is associated with realized drawdown and can still have strong forward returns. | Washout is closer to a redeploy setup than a bearish warning. | Require stabilization confirmation before redeploy. |
-| COVID, tariff shocks, wars, and similar headline shocks can dominate drawdown studies. | They are useful for panic/bottom research but poor calibration examples for ordinary correction warning. | Maintain episode diagnostics that can exclude or label shock-driven trough windows. |
-| Daily action outcomes are not a full portfolio backtest. | `no_change` should eventually mean keep the previous posture, not neutral today. | Add stateful posture replay after episode diagnostics. |
+### Problem: Stretch Is Not Bearish By Itself
+
+Initial outcome replays show that high stretch pressure has often been followed by positive
+SPY/QQQ forward returns and modest drawdown. That means stretch is frequently strong risk-on
+momentum, not a standalone de-risk signal.
+
+Proposals:
+
+- Treat stretch as `protect_setup`, not `protect_action`.
+- Rename or explain the concept more clearly in outputs, for example `risk_on_extension` or
+  `protect_setup`.
+- Validate stretch as a setup-only bucket before using it to change portfolio posture.
+
+### Problem: Protect Currently Mixes Different States
+
+Same-day `scale_down_protect` has not separated bad forward windows well enough. The current
+action state can mean several different things:
+
+- pre-correction extension with emerging deterioration;
+- stress that is already visible;
+- a false warning during a strong tape;
+- event-volatility premium before a scheduled macro catalyst.
+
+Proposals:
+
+- Split protect research into `protect_setup`, `protect_confirmation`, and `protect_action`.
+- Require setup plus confirmation for action, but study each component separately.
+- Report why protect fired: price extension, breadth damage, credit damage, vol turn, event-vol,
+  or some combination.
+
+### Problem: Same-Day Setup And Confirmation Are Too Rigid
+
+The current protect rule effectively requires stretch setup and deterioration evidence to exist on
+the same snapshot date. That can miss the intended pattern: the market gets extended first, then
+breadth, credit, or volatility deteriorates days or weeks later.
+
+Proposals:
+
+- Add an armed setup state: high stretch arms protect for a bounded number of trading days.
+- Let the armed setup decay over time rather than disappear immediately.
+- Trigger protect only when confirmation appears while setup is armed.
+- Compare decay windows, such as 10, 20, and 40 trading days, against correction episodes.
+
+### Problem: Event Volatility Can Masquerade As Deterioration
+
+The September 10, 2026 snapshot is a useful example. It signaled `scale_down_protect` with VIX,
+VVIX, and VIX term-structure deterioration one day before the August CPI release scheduled for
+September 11, 2026. Some or all of that volatility move may have been scheduled event-risk premium
+rather than broad market deterioration.
+
+Proposals:
+
+- Add an `event_vol` context flag for known CPI, FOMC, payrolls, major expiration, and other
+  scheduled macro/event dates.
+- Downweight volatility-turn confirmation near scheduled events unless breadth, credit, trend, or
+  liquidity also confirms.
+- Split volatility evidence into generic deterioration and event-premium components.
+- In output, distinguish `vol rising before known event` from `vol rising with broad internal
+  deterioration`.
+
+### Problem: Washout Is A Setup, Not An Automatic Buy
+
+Washout pressure is associated with realized drawdown, but forward returns can also be strong.
+That makes washout closer to a redeploy setup than a bearish warning or a mechanical buy signal.
+
+Proposals:
+
+- Treat washout as `redeploy_setup`.
+- Require stabilization confirmation before redeploy: volatility cooling, breadth stabilizing, or
+  credit no longer worsening.
+- Track whether redeploy signals fire too early during continuing stress.
+
+### Problem: Shock Windows Distort Ordinary Correction Research
+
+COVID, tariff announcements, wars, and similar headline shocks can dominate drawdown statistics.
+They are useful for studying panic/bottom behavior, but they are poor calibration examples for
+ordinary correction warning.
+
+Proposals:
+
+- Maintain episode diagnostics that can exclude or separately label shock-driven trough windows.
+- Evaluate ordinary corrections and shock events as separate cohorts.
+- Use shock events mainly to study washout/redeploy behavior, not ordinary protect warning.
+
+### Problem: Action Events Are Not Portfolio Posture
+
+Daily action outcomes are not a full portfolio backtest. `no_change` should eventually mean keep
+the previous posture, not neutral today.
+
+Proposals:
+
+- Add stateful posture replay after episode diagnostics.
+- Preserve protected/redeploying posture until an explicit reset or opposite signal appears.
+- Measure both signal precision and actual portfolio effect after friction.
 
 ## Outcome Research
 

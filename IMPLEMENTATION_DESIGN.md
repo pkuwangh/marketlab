@@ -56,7 +56,7 @@ The routine daily path is:
 refresh market sources
     -> write market-signal snapshots
     -> write regime snapshot
-    -> derive portfolio-policy snapshot/report/chart
+    -> derive portfolio-policy snapshot/report
     -> fetch Bulltard recap from Gmail when authorized
     -> ingest/validate Bulltard candidates
     -> refresh DuckDB query store
