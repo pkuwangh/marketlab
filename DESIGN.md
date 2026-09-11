@@ -298,9 +298,9 @@ reweighted, or retired.
 
 ## Regime output
 
-Avoid a binary BUY/SELL output. The daily human-facing regime readout is deliberately decomposed,
-with `regime report` as the canonical review path and `regime snapshot --detail` reserved for
-snapshot-level debugging:
+Avoid a binary BUY/SELL output. The daily human-facing regime readout is deliberately decomposed.
+`regime snapshot` prints metadata plus key signals by default, while `regime snapshot --detail`
+adds the heavier snapshot-level debugging tables:
 
 | **Output block** | **Purpose** |
 |------------------|-------------|
@@ -308,7 +308,7 @@ snapshot-level debugging:
 | Action evidence | Turn-signal rows grouped by trend, volatility, breadth, credit, and liquidity, with paired checks folded into the relevant family. |
 | Market signals | Directional family rows such as trend, volatility, breadth, credit, liquidity, and rates. |
 | Pressure features | Normalized stretch/washout setup inputs using point-in-time raw values and trailing historical context. |
-| Outcome replays | `marketlab regime outcomes --by ...` compares regime, action, pressure, market-signal, and policy buckets against forward SPY/QQQ returns and drawdowns. |
+| Outcome replays | `marketlab regime outcomes` defaults to action-event validation; explicit `--by ...` modes compare regime, pressure, market-signal, and policy buckets against forward SPY/QQQ returns and drawdowns. |
 
 The headline regime score is a summed directional signal, not the action. The action state is derived from setup pressure plus action evidence and should normally remain `no_change`. The output should prefer calibrated uncertainty over false precision; "risk-on but stretch pressure is rising" is more useful than a brittle BUY/SELL label.
 
@@ -339,6 +339,25 @@ The mapping layer should be designed around marginal actions rather than whole-p
 A stretched market is not the same as a bearish market. The system may say "trend still risk-on, but stretch pressure is high," which should map to protecting gains and slowing new risk additions rather than shorting the market. Likewise, a bloodbath/re-risk alert is not a claim that the exact bottom is known; it should map to staged deployment and bounded option risk.
 
 Most days, portfolio posture should remain unchanged. Policy should include hysteresis, minimum-change thresholds, and cooldowns so the engine does not create activity merely because data updates daily.
+
+## Future step: stateful posture replay
+
+Current `regime outcomes --by action` validates rare action events, not the portfolio posture that
+would follow them. `no_change` must eventually mean "keep the previous posture," not "neutral."
+After `scale_down_protect`, later `no_change` dates should remain in a protected posture until
+`scale_up_redeploy` or an explicit reset changes the state.
+
+Add a stateful replay that walks daily snapshots into posture episodes such as neutral, protected,
+and redeploying. This replay should report:
+
+- Correction recall: whether protection activated before or early in realized SPY/QQQ drawdowns, how many trading days early or late it was, and how much drawdown remained after activation.
+- Protect precision: whether protected episodes were followed by meaningful downside or were false positives that only reduced upside.
+- Redeploy timing: whether redeploy episodes restored exposure before durable rebounds or too early during continuing stress.
+- Portfolio effect: return, max drawdown, volatility, turnover, and simple beta/cash posture versus buy-and-hold and fixed-policy baselines.
+
+Do not treat the current action-event table as a full protect/redeploy backtest. It is useful for
+signal precision, but posture replay is required before judging whether the defensive policy catches
+large corrections.
 
 # 7. Bulltard Research Module
 
@@ -640,12 +659,13 @@ Build the simplest version that can teach us something, then add sophistication 
 The current implementation has enough regime inputs to begin the feedback loop. The near-term sequence is:
 
 1. Run the normal daily workflow for several real sessions and preserve the produced source observations, regime snapshots, candidate snapshots, reports, and charts.
-2. Backfill enough history to replay regime, pressure, action, and policy buckets over 20-, 40-, and 65-trading-day horizons.
-3. Add event-study and ablation tooling to test whether `setup + action evidence` beats setup-only and headline-regime-only reads.
-4. Calibrate rare-action thresholds, confidence handling, and provisional policy bands against replay results before adding new raw indicator families.
-5. Extend the Bulltard candidate loop from triage toward opportunity episodes only after the 60-90 day candidate outcome dataset is large enough to compare signal cohorts.
-6. Add persistent hysteresis/cooldown state mechanics only after continuous action scores show enough value to justify stateful policy behavior.
-7. Defer cloud infrastructure, a permanent agent runtime, and broader data-provider integration until the local daily/replay loop exposes a concrete need.
+2. Backfill enough history to replay regime, pressure, action-event, and policy buckets over 20-, 40-, and 65-trading-day horizons.
+3. Add stateful posture replay so `no_change` inherits the prior protect/redeploy posture and large-correction recall can be measured directly.
+4. Add event-study and ablation tooling to test whether `setup + action evidence` beats setup-only and headline-regime-only reads.
+5. Calibrate rare-action thresholds, confidence handling, and provisional policy bands against replay results before adding new raw indicator families.
+6. Extend the Bulltard candidate loop from triage toward opportunity episodes only after the 60-90 day candidate outcome dataset is large enough to compare signal cohorts.
+7. Add live hysteresis/cooldown mechanics only after posture replay shows the stateful policy improves realized portfolio behavior.
+8. Defer cloud infrastructure, a permanent agent runtime, and broader data-provider integration until the local daily/replay loop exposes a concrete need.
 
 # 12. Key Design Risks
 
@@ -825,7 +845,10 @@ replays, `bulltard` owns subscription-driven single-name candidates and opportun
 integrations and one-off helpers live under `tools`. Visualization should be reproducible from
 the CLI rather than existing only inside a notebook. Snapshot commands should print concise
 metadata by default; research review tables should live in `regime report` and
-`regime outcomes --by ...`, with `--detail` available for snapshot debugging. Example commands:
+`regime outcomes`, whose default action replay validates exposure decisions. Use explicit
+`--by ...` groupings for regime labels, pressure buckets, market signals, and policy states.
+`regime report` should show recent multi-day regime/action/pressure trends rather than repeat one
+snapshot. `--detail` remains available for snapshot debugging. Example commands:
 
 - marketlab daily
 
@@ -835,7 +858,11 @@ metadata by default; research review tables should live in `regime report` and
 
 - marketlab regime chart --start 2026-08-24 --end 2026-08-24
 
-- marketlab regime report --date 2026-08-24
+- marketlab regime report --date 2026-08-24 --days 10
+
+- marketlab regime outcomes --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
+
+- marketlab regime outcomes --by regime --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 
 - marketlab regime outcomes --by pressure --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 
@@ -928,7 +955,7 @@ marketlab/
 
 - Treat the current action layer as `Regime -> Setup -> Action Evidence -> State`. The implemented action evidence is family-bounded and includes paired divergence/confirmation/contradiction checks inside the relevant family module; persistent hysteresis/cooldowns are later state-machine mechanics, not another market signal layer.
 
-- Keep `regime report` as the normal human-facing market-regime and policy readout. Keep `regime snapshot` metadata-first by default, with `regime snapshot --detail` available for family-level evidence, action modules, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
+- Keep `regime report` focused on the recent multi-day regime trend: stretch/washout pressure, protect/redeploy strength, headline action, and key signal percentiles. Keep `regime snapshot` metadata-first by default but include the key-signals table; use `regime snapshot --detail` for family-level evidence, action signals, contradictions, and missing-source status. A missing external data family should lower confidence, not silently force a bullish or bearish conclusion.
 
 - Replay each added market family and every policy revision against forward SPY/QQQ returns and drawdowns. Keep a feature only if it improves out-of-sample separation, calibration, contradiction handling, or interpretability.
 

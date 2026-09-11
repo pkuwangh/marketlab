@@ -73,6 +73,7 @@ from marketlab.regime import (
     RegimePressureOutcomeSummaryRow,
     RegimePressureSnapshot,
     RegimePriceRefreshResult,
+    RegimeRecentReportResult,
     RegimeSnapshot,
     RegimeSnapshotResult,
 )
@@ -1176,10 +1177,67 @@ def test_regime_report_no_args_shows_help_without_missing_option_error() -> None
     result = CliRunner().invoke(app, ["regime", "report"])
 
     assert result.exit_code != 0
-    assert "Render the daily market regime and portfolio policy report" in result.output
+    assert "Render recent market-regime trend tables" in result.output
     assert "--date" in result.output
+    assert "--days" in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
+
+
+def test_regime_report_outputs_recent_trend_tables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regime_root = tmp_path / "regime"
+
+    def fake_compute_regime_recent_report(
+        *,
+        source_date: date,
+        lookback_days: int,
+        snapshot_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+    ) -> RegimeRecentReportResult:
+        assert source_date == date(2026, 8, 28)
+        assert lookback_days == 7
+        assert snapshot_root == regime_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        return RegimeRecentReportResult(
+            source_date=source_date,
+            lookback_days=lookback_days,
+            snapshots=(_regime_snapshot(source_date=source_date),),
+            report=(
+                "MarketLab recent regime report - through 2026-08-28\n"
+                "regime_trend: headline, setup pressure, and action strength\n"
+                "signal_percentiles: key pressure-feature percentiles"
+            ),
+        )
+
+    regime_root_arg = regime_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_recent_report",
+        fake_compute_regime_recent_report,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "report",
+            "--date",
+            "2026-08-28",
+            "--days",
+            "7",
+            "--regime-root",
+            str(regime_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "MarketLab recent regime report - through 2026-08-28" in result.output
+    assert "regime_trend:" in result.output
+    assert "signal_percentiles:" in result.output
 
 
 def test_chart_regime_no_args_shows_help_without_missing_option_error() -> None:
@@ -2324,7 +2382,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert result.output.index("pressure_features:") < result.output.index("action_evidence:")
 
 
-def test_regime_snapshot_outputs_concise_metadata_by_default(
+def test_regime_snapshot_outputs_metadata_and_overall_table_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2434,11 +2492,16 @@ def test_regime_snapshot_outputs_concise_metadata_by_default(
     assert "regime_score=5" in result.output
     assert "regime_action_state=no_change" in result.output
     assert "market_signal_contradiction_count=1" in result.output
-    assert "overall:" not in result.output
+    assert (
+        "overall: headline regime, pressure, input gaps, and final action"
+        in result.output
+    )
+    assert "risk_on (+5)" in result.output
+    assert "stretch 0.42 / washout 0.08" in result.output
+    assert "maintain" in result.output
     assert "action_evidence:" not in result.output
     assert "market_signals:" not in result.output
     assert "pressure_features:" not in result.output
-    assert "risk_on (+5)" not in result.output
     assert "trend   price_proxy  +2" not in result.output
     assert "positive=trend/price_proxy:constructive negative=fixture" not in result.output
     assert "trend   spy_return_20d  0.42" not in result.output
@@ -2795,6 +2858,8 @@ def test_regime_outcomes_outputs_summary_table(
         [
             "regime",
             "outcomes",
+            "--by",
+            "regime",
             "--start",
             "2026-01-01",
             "--end",
@@ -2816,7 +2881,7 @@ def test_regime_outcomes_outputs_summary_table(
     assert "regime:risk_on  20d" in result.output
 
 
-def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
+def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2905,8 +2970,6 @@ def test_regime_action_outcomes_outputs_frequency_and_summary_tables(
         [
             "regime",
             "outcomes",
-            "--by",
-            "action",
             "--start",
             "2026-01-01",
             "--end",
@@ -2986,7 +3049,7 @@ def test_regime_pressure_outcomes_outputs_summary_table(
             ),
             summary_rows=(
                 RegimePressureOutcomeSummaryRow(
-                    bucket="stretch:top_5",
+                    bucket="stretch:p95",
                     horizon_days=20,
                     pressure_count=1,
                     available_count=1,
@@ -2998,7 +3061,7 @@ def test_regime_pressure_outcomes_outputs_summary_table(
                     avg_qqq_max_drawdown=-0.08,
                 ),
             ),
-            table="bucket         horizon\nstretch:top_5  20d",
+            table="bucket       horizon\nstretch:p95  20d",
         )
 
     snapshot_root_arg = snapshot_root
@@ -3037,7 +3100,7 @@ def test_regime_pressure_outcomes_outputs_summary_table(
     assert "available_regime_pressure_outcome_count=1" in result.output
     assert "summary_table:" in result.output
     assert "frequency_table:" not in result.output
-    assert "stretch:top_5  20d" in result.output
+    assert "stretch:p95  20d" in result.output
 
 
 def test_regime_signal_outcomes_outputs_summary_table(

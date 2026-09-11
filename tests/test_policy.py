@@ -279,7 +279,10 @@ def test_policy_backfill_and_outcomes_compare_to_fixed_benchmark(tmp_path: Path)
     assert redeploy.excess_return is not None
     assert redeploy.excess_return > 0.0
     assert "policy:redeploy" in outcome.table
+    assert "====" in outcome.table.splitlines()[1]
+    assert "\n---" in outcome.table
     assert "redeploy" in outcome.frequency_table
+    assert "====" not in outcome.frequency_table
 
 
 def _regime_snapshot(

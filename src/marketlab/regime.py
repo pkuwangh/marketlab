@@ -81,6 +81,11 @@ REGIME_ACTION_VERSION = "regime_action_v0"
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
 REGIME_PRESSURE_VERSION = "regime_pressure_v0"
 REGIME_SNAPSHOT_FILENAME = "regime.json"
+REGIME_KEY_SIGNALS_CAPTION = "headline regime, pressure, input gaps, and final action"
+REGIME_MARKET_SIGNALS_CAPTION = (
+    "score cells marked (regime) feed the headline regime score; "
+    "other rows are supporting evidence"
+)
 PRESSURE_LOOKBACK_SAMPLES = 252
 MIN_PRESSURE_FEATURE_SAMPLES = 20
 MIN_PRESSURE_BUCKET_SAMPLES = 20
@@ -438,6 +443,16 @@ class RegimeSnapshotResult:
     pressure: RegimePressureSnapshot | None = None
     pressure_table: str = ""
     action_table: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeRecentReportResult:
+    """Recent saved market-regime snapshots formatted for transition review."""
+
+    source_date: date
+    lookback_days: int
+    snapshots: tuple[RegimeSnapshot, ...]
+    report: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1206,6 +1221,47 @@ def _compute_regime_snapshot_from_histories(
     )
 
 
+def compute_regime_recent_report(
+    *,
+    source_date: date,
+    lookback_days: int = 10,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
+) -> RegimeRecentReportResult:
+    """Format recent saved regime snapshots for transition review."""
+
+    if lookback_days < 1:
+        raise RegimeError("Report lookback days must be at least 1")
+
+    snapshots = _load_recent_regime_snapshots_through(
+        source_date=source_date,
+        lookback_days=lookback_days,
+        snapshot_root=snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
+    )
+    if not snapshots:
+        raise RegimeError(f"No market regime snapshots found through {source_date}")
+
+    report = format_regime_recent_report(
+        source_date=source_date,
+        lookback_days=lookback_days,
+        snapshots=snapshots,
+    )
+    logger.bind(
+        source_date=source_date.isoformat(),
+        lookback_days=lookback_days,
+        snapshot_count=len(snapshots),
+    ).success("Computed recent market regime report")
+    return RegimeRecentReportResult(
+        source_date=source_date,
+        lookback_days=lookback_days,
+        snapshots=snapshots,
+        report=report,
+    )
+
+
 def write_regime_snapshot(
     snapshot: RegimeSnapshot,
     *,
@@ -1554,6 +1610,91 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             _action_read(action, missing_inputs=missing_inputs),
         ]
     )
+    return _format_table(rows)
+
+
+def format_regime_recent_report(
+    *,
+    source_date: date,
+    lookback_days: int,
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> str:
+    """Format recent market-regime snapshots as trend tables."""
+
+    if not snapshots:
+        return "No market regime snapshots found."
+
+    lines = [
+        f"MarketLab recent regime report - through {source_date.isoformat()}",
+        f"saved_trading_day_count={len(snapshots)} requested_days={lookback_days}",
+        "",
+        "regime_trend: headline, setup pressure, and action strength",
+        _format_recent_regime_trend(snapshots),
+        "",
+        "signal_percentiles: key pressure-feature percentiles in trailing context",
+        _format_recent_signal_percentiles(snapshots),
+    ]
+    return "\n".join(lines)
+
+
+def _format_recent_regime_trend(snapshots: tuple[RegimeSnapshot, ...]) -> str:
+    rows = [
+        [
+            "date",
+            "regime",
+            "score",
+            "stretch",
+            "washout",
+            "protect",
+            "redeploy",
+            "net",
+            "action",
+        ]
+    ]
+    for snapshot in snapshots:
+        rows.append(
+            [
+                snapshot.source_date.isoformat(),
+                snapshot.regime,
+                _format_score(snapshot.score),
+                _format_pressure_score(snapshot.stretch_pressure_score),
+                _format_pressure_score(snapshot.washout_pressure_score),
+                _format_pressure_score(snapshot.protect_strength),
+                _format_pressure_score(snapshot.redeploy_strength),
+                _format_signed_decimal(snapshot.action_score),
+                _action_state_label(snapshot.action_state),
+            ]
+        )
+    return _format_table(rows)
+
+
+_RECENT_SIGNAL_PERCENTILE_FEATURES = (
+    ("SPY20", "spy_return_20d"),
+    ("VIX", "vix_close"),
+    ("VVIX", "vvix_close"),
+    ("RSP/SPY", "rsp_spy_relative_20d"),
+    ("IWM/SPY", "iwm_spy_relative_20d"),
+    ("HYG/TLT", "hyg_tlt_relative_20d"),
+    ("HY OAS", "credit_spread"),
+    ("NFCI", "financial_conditions"),
+)
+
+
+def _format_recent_signal_percentiles(snapshots: tuple[RegimeSnapshot, ...]) -> str:
+    rows = [["date", *(label for label, _name in _RECENT_SIGNAL_PERCENTILE_FEATURES)]]
+    for snapshot in snapshots:
+        features = {feature.name: feature for feature in snapshot.pressure_features}
+        rows.append(
+            [
+                snapshot.source_date.isoformat(),
+                *(
+                    _format_percentile(features[name].percentile)
+                    if name in features
+                    else "-"
+                    for _label, name in _RECENT_SIGNAL_PERCENTILE_FEATURES
+                ),
+            ]
+        )
     return _format_table(rows)
 
 
@@ -4525,7 +4666,7 @@ def format_regime_outcome_summary(rows: tuple[RegimeOutcomeSummaryRow, ...]) -> 
                 _format_drawdown(row.avg_qqq_max_drawdown),
             ]
         )
-    return _format_table(table)
+    return _format_grouped_table(table, group_column=0)
 
 
 def format_market_signal_outcome_summary(
@@ -4562,7 +4703,7 @@ def format_market_signal_outcome_summary(
                 _format_drawdown(row.avg_qqq_max_drawdown),
             ]
         )
-    return _format_table(table)
+    return _format_grouped_table(table, group_column=0)
 
 
 def format_regime_action_frequency(rows: tuple[RegimeActionFrequencyRow, ...]) -> str:
@@ -4617,7 +4758,7 @@ def format_regime_action_outcome_summary(
                 _format_drawdown(row.avg_qqq_max_drawdown),
             ]
         )
-    return _format_table(table)
+    return _format_grouped_table(table, group_column=0)
 
 
 def format_regime_pressure_outcome_summary(
@@ -4629,20 +4770,19 @@ def format_regime_pressure_outcome_summary(
     if not available_rows:
         return "No available regime pressure outcome rows found."
 
-    table = [
-        [
-            "bucket",
-            "horizon",
-            "pressures",
-            "available",
-            "stretch",
-            "washout",
-            "avg_spy",
-            "avg_qqq",
-            "spy_dd",
-            "qqq_dd",
-        ]
+    header = [
+        "bucket",
+        "horizon",
+        "pressures",
+        "available",
+        "stretch",
+        "washout",
+        "avg_spy",
+        "avg_qqq",
+        "spy_dd",
+        "qqq_dd",
     ]
+    table = [header]
     for row in available_rows:
         table.append(
             [
@@ -4658,7 +4798,29 @@ def format_regime_pressure_outcome_summary(
                 _format_drawdown(row.avg_qqq_max_drawdown),
             ]
         )
-    return _format_table(table)
+    return _format_grouped_table(table, group_column=0)
+
+
+def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
+    if not rows:
+        return ""
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    header_separator = "  ".join("=" * width for width in widths)
+    group_separator = "  ".join("-" * width for width in widths)
+    lines = [
+        "  ".join(value.ljust(widths[index]) for index, value in enumerate(rows[0])),
+        header_separator,
+    ]
+    previous_group: str | None = None
+    for row in rows[1:]:
+        current_group = row[group_column]
+        if previous_group is not None and current_group != previous_group:
+            lines.append(group_separator)
+        lines.append(
+            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+        )
+        previous_group = current_group
+    return "\n".join(lines)
 
 
 def _load_histories(
@@ -4719,6 +4881,32 @@ def _load_regime_snapshots_in_range(
             if snapshot is not None:
                 snapshots.append(snapshot)
     return tuple(snapshots)
+
+
+def _load_recent_regime_snapshots_through(
+    *,
+    source_date: date,
+    lookback_days: int,
+    snapshot_root: Path,
+    signal_time: SignalTime | str,
+    snapshot_version: str | None,
+) -> tuple[RegimeSnapshot, ...]:
+    snapshots: list[RegimeSnapshot] = []
+    for snapshot_source_date in snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".json",
+        filename=REGIME_SNAPSHOT_FILENAME,
+    ):
+        if snapshot_source_date <= source_date:
+            snapshot = load_regime_snapshot(
+                source_date=snapshot_source_date,
+                snapshot_root=snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
+            )
+            if snapshot is not None and snapshot.price_date == snapshot.source_date:
+                snapshots.append(snapshot)
+    return tuple(snapshots[-lookback_days:])
 
 
 def _load_regime_snapshots_through(
@@ -4939,15 +5127,15 @@ def _regime_pressure_buckets(outcome: RegimePressureForwardOutcome) -> tuple[str
 
     buckets: list[str] = []
     if outcome.stretch_pressure_percentile >= 0.95:
-        buckets.append("stretch:top_5")
+        buckets.append("stretch:p95")
     if outcome.stretch_pressure_percentile >= 0.90:
-        buckets.append("stretch:top_10")
+        buckets.append("stretch:p90")
     if outcome.washout_pressure_percentile >= 0.95:
-        buckets.append("washout:top_5")
+        buckets.append("washout:p95")
     if outcome.washout_pressure_percentile >= 0.90:
-        buckets.append("washout:top_10")
+        buckets.append("washout:p90")
     if not buckets:
-        buckets.append("pressure:below_top_10")
+        buckets.append("pressure:below_p90")
     return tuple(buckets)
 
 

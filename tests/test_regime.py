@@ -15,12 +15,14 @@ from marketlab.prices import DailyPriceObservation, write_price_observations
 from marketlab.regime import (
     RegimeComponentScore,
     RegimeError,
+    RegimePressureFeature,
     RegimeSnapshot,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
     compute_regime_outcomes,
     compute_regime_pressure_outcomes,
+    compute_regime_recent_report,
     compute_regime_snapshot,
     derive_regime_action_state,
     format_regime_key_signals,
@@ -1592,6 +1594,7 @@ def test_compute_regime_outcomes_summarizes_market_buckets(tmp_path: Path) -> No
     assert risk_on_row.available_count == 1
     assert round(risk_on_row.avg_spy_return or 0.0, 4) == 0.2
     assert "regime:risk_on" in result.table
+    assert "====" in result.table.splitlines()[1]
 
 
 def test_compute_regime_outcomes_hides_unavailable_summary_rows(tmp_path: Path) -> None:
@@ -1683,6 +1686,8 @@ def test_compute_market_signal_outcomes_summarizes_signal_buckets(tmp_path: Path
     assert signal_row.available_count == 1
     assert "family:volatility" in result.table
     assert "signal:volatility/vol_of_vol/calm" in result.table
+    assert "====" in result.table.splitlines()[1]
+    assert "\n---" in result.table
 
 
 def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path) -> None:
@@ -1782,7 +1787,10 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
     assert action_row.available_count == 1
     assert round(action_row.avg_spy_return or 0.0, 4) == round(20.0 / 102.0, 4)
     assert "scale_down_protect" in result.frequency_table
+    assert "====" not in result.frequency_table
     assert "action:scale_up_redeploy" in result.table
+    assert "====" in result.table.splitlines()[1]
+    assert "\n---" in result.table
 
 
 def test_compute_regime_pressure_outcomes_summarizes_top_pressure_buckets(
@@ -1832,12 +1840,94 @@ def test_compute_regime_pressure_outcomes_summarizes_top_pressure_buckets(
 
     assert len(result.pressures) == 11
     assert len(result.outcomes) == 11
-    stretch_row = next(row for row in result.summary_rows if row.bucket == "stretch:top_10")
+    stretch_row = next(row for row in result.summary_rows if row.bucket == "stretch:p90")
     assert stretch_row.pressure_count == 11
     assert stretch_row.available_count == 11
     assert stretch_row.avg_stretch_pressure is not None
     assert stretch_row.avg_stretch_pressure > 0.4
-    assert "stretch:top_10" in result.table
+    assert "stretch:p90" in result.table
+    assert "====" in result.table.splitlines()[1]
+    assert "\n---" in result.table
+
+
+def test_compute_regime_recent_report_summarizes_recent_snapshot_trends(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    for index in range(4):
+        source_date = start_date + timedelta(days=index)
+        write_regime_snapshot(
+            _snapshot(
+                source_date=source_date,
+                regime="risk_on" if index < 3 else "neutral",
+                score=5 - index,
+                action_state="scale_down_protect" if index == 3 else "no_change",
+                stretch_pressure_score=0.30 + index / 10.0,
+                washout_pressure_score=0.10 + index / 20.0,
+                protect_strength=0.20 + index / 10.0,
+                redeploy_strength=0.05 + index / 100.0,
+                action_score=-0.15 - index / 10.0,
+                pressure_features=(
+                    _pressure_feature(
+                        source_date=source_date,
+                        name="spy_return_20d",
+                        percentile=0.40 + index / 10.0,
+                    ),
+                    _pressure_feature(
+                        source_date=source_date,
+                        name="vix_close",
+                        percentile=0.20 + index / 10.0,
+                    ),
+                    _pressure_feature(
+                        source_date=source_date,
+                        name="credit_spread",
+                        percentile=0.80 - index / 10.0,
+                    ),
+                ),
+            ),
+            snapshot_root=snapshot_root,
+        )
+
+    result = compute_regime_recent_report(
+        source_date=start_date + timedelta(days=3),
+        lookback_days=3,
+        snapshot_root=snapshot_root,
+    )
+
+    assert len(result.snapshots) == 3
+    assert "MarketLab recent regime report - through 2026-01-04" in result.report
+    assert "saved_trading_day_count=3 requested_days=3" in result.report
+    assert "regime_trend: headline, setup pressure, and action strength" in result.report
+    assert "2026-01-04  neutral  +2" in result.report
+    assert "protect" in result.report
+    assert "signal_percentiles: key pressure-feature percentiles" in result.report
+    assert "SPY20" in result.report
+    assert "VIX" in result.report
+    assert "HY OAS" in result.report
+    assert "70.0%" in result.report
+    assert "50.0%" in result.report
+
+
+def _pressure_feature(
+    *,
+    source_date: date,
+    name: str,
+    percentile: float,
+) -> RegimePressureFeature:
+    return RegimePressureFeature(
+        source_date=source_date,
+        pressure_version="fixture_pressure",
+        family="fixture",
+        name=name,
+        raw_value=percentile,
+        percentile=percentile,
+        normalized_score=0.0,
+        stretch_score=0.0,
+        washout_score=0.0,
+        sample_count=252,
+        reason="fixture",
+    )
 
 
 def _snapshot(
@@ -1866,8 +1956,12 @@ def _snapshot(
     action_reason: str = "No rare-action threshold crossed",
     stretch_score: int = 0,
     washout_score: int = 0,
+    protect_strength: float = 0.0,
+    redeploy_strength: float = 0.0,
+    action_score: float = 0.0,
     stretch_pressure_score: float | None = None,
     washout_pressure_score: float | None = None,
+    pressure_features: tuple[RegimePressureFeature, ...] = (),
     model_version: str = "fixture_model",
     signal_time: str = "eod",
     snapshot_version: str | None = None,
@@ -1910,8 +2004,12 @@ def _snapshot(
         action_reason=action_reason,
         stretch_score=stretch_score,
         washout_score=washout_score,
+        protect_strength=protect_strength,
+        redeploy_strength=redeploy_strength,
+        action_score=action_score,
         stretch_pressure_score=stretch_pressure_score,
         washout_pressure_score=washout_pressure_score,
+        pressure_features=pressure_features,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
     )

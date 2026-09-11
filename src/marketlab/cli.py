@@ -101,6 +101,8 @@ from marketlab.prices import (
 )
 from marketlab.regime import (
     DEFAULT_REGIME_SNAPSHOT_ROOT,
+    REGIME_KEY_SIGNALS_CAPTION,
+    REGIME_MARKET_SIGNALS_CAPTION,
     MarketSignalOutcomeResult,
     RegimeActionOutcomeResult,
     RegimeBackfillResult,
@@ -108,12 +110,14 @@ from marketlab.regime import (
     RegimeOutcomeResult,
     RegimePressureOutcomeResult,
     RegimePriceRefreshResult,
+    RegimeRecentReportResult,
     RegimeSnapshotResult,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
     compute_regime_outcomes,
     compute_regime_pressure_outcomes,
+    compute_regime_recent_report,
     compute_regime_snapshot,
     format_regime_key_signals,
     refresh_regime_prices,
@@ -1244,7 +1248,7 @@ def regime_snapshot(
         "--detail/--no-detail",
         help=(
             "Print detailed regime evidence tables. "
-            "Defaults to concise snapshot metadata; use regime report for daily review."
+            "Defaults to concise snapshot metadata; use regime report for recent trends."
         ),
     ),
 ) -> None:
@@ -1489,7 +1493,7 @@ def regime_outcomes(
         help="Comma-separated forward trading-day horizons.",
     ),
     outcome_group: RegimeOutcomeGroup = typer.Option(
-        RegimeOutcomeGroup.REGIME,
+        RegimeOutcomeGroup.ACTION,
         "--by",
         help="Outcome grouping to replay: regime, signal, action, pressure, or policy.",
     ),
@@ -1746,7 +1750,7 @@ def policy_snapshot(
         "--detail/--no-detail",
         help=(
             "Print the policy posture table. "
-            "Defaults to concise snapshot metadata; use regime report for daily review."
+            "Defaults to concise snapshot metadata."
         ),
     ),
 ) -> None:
@@ -1854,31 +1858,19 @@ def report_daily(
         ...,
         "--date",
         metavar="YYYY-MM-DD",
-        help="Daily report date.",
+        help="Last regime snapshot date to include.",
+    ),
+    lookback_days: int = typer.Option(
+        10,
+        "--days",
+        min=1,
+        help="Number of saved trading-day regime snapshots to include.",
     ),
     regime_snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
         "--regime-root",
         file_okay=False,
         help="Root directory containing market regime snapshots.",
-    ),
-    market_signal_snapshot_root: Path = typer.Option(
-        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
-        "--signal-root",
-        file_okay=False,
-        help="Root directory containing market signal snapshots.",
-    ),
-    candidate_snapshot_root: Path = typer.Option(
-        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
-        "--candidate-root",
-        file_okay=False,
-        help="Root directory containing Bulltard candidate snapshots.",
-    ),
-    policy_snapshot_root: Path = typer.Option(
-        DEFAULT_POLICY_SNAPSHOT_ROOT,
-        "--policy-root",
-        file_okay=False,
-        help="Root directory for portfolio policy snapshots.",
     ),
     signal_time: SignalTime = typer.Option(
         SignalTime.EOD,
@@ -1890,30 +1882,22 @@ def report_daily(
         "--snapshot-version",
         help="Snapshot version. Defaults to v0.",
     ),
-    write_snapshot: bool = typer.Option(
-        True,
-        "--write/--no-write",
-        help="Write the portfolio policy snapshot used by the report.",
-    ),
 ) -> None:
-    """Render the daily market regime and portfolio policy report."""
+    """Render recent market-regime trend tables."""
 
     source_date = _parse_source_date(source_date_value)
     try:
-        result = compute_daily_policy_report(
+        result = compute_regime_recent_report(
             source_date=source_date,
-            regime_snapshot_root=regime_snapshot_root,
-            market_signal_snapshot_root=market_signal_snapshot_root,
-            candidate_snapshot_root=candidate_snapshot_root,
-            policy_snapshot_root=policy_snapshot_root,
+            lookback_days=lookback_days,
+            snapshot_root=regime_snapshot_root,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
-            write_snapshot=write_snapshot,
         )
-    except PortfolioPolicyError as exc:
+    except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    _echo_daily_policy_report_result(result)
+    _echo_regime_recent_report_result(result)
 
 
 @regime_app.command("chart", no_args_is_help=True)
@@ -2947,20 +2931,17 @@ def _echo_regime_snapshot_result(
     if result.pressure is not None:
         typer.echo(f"pressure_feature_count={len(result.pressure.features)}")
     typer.echo(f"market_signal_contradiction_count={len(result.contradictions)}")
-    if not show_detail:
-        return
     _echo_table_section(
         "overall",
         format_regime_key_signals(result),
-        caption="headline regime, pressure, input gaps, and final action",
+        caption=REGIME_KEY_SIGNALS_CAPTION,
     )
+    if not show_detail:
+        return
     _echo_table_section(
         "market_signals",
         result.signal_table,
-        caption=(
-            "score cells marked (regime) feed the headline regime score; "
-            "other rows are supporting evidence"
-        ),
+        caption=REGIME_MARKET_SIGNALS_CAPTION,
     )
     _echo_table_section(
         "pressure_features",
@@ -3127,6 +3108,10 @@ def _echo_daily_policy_report_result(result: DailyPolicyReportResult) -> None:
     if result.policy_snapshot_path is not None:
         typer.echo(f"policy_snapshot_path={result.policy_snapshot_path}")
         typer.echo("")
+    typer.echo(result.report)
+
+
+def _echo_regime_recent_report_result(result: RegimeRecentReportResult) -> None:
     typer.echo(result.report)
 
 

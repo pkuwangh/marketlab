@@ -88,10 +88,10 @@ Compute the market regime directly:
 ./bin/marketlab regime snapshot --date 2026-09-04 --refresh-sources
 ```
 
-`regime snapshot` is a snapshot command. By default it prints concise metadata: snapshot paths,
-signal counts, headline regime, action state, confidence, and contradiction count. Use
-`regime report` for the normal human-facing daily readout, or add `--detail` when debugging the
-regime evidence tables from the snapshot command itself.
+`regime snapshot` is a snapshot command. By default it prints concise metadata plus the
+key-signals table: headline regime, pressure, input gaps, and action. Use `regime report`
+to inspect the recent multi-day regime trend, or add `--detail` when debugging the heavier
+evidence tables from the snapshot command itself.
 
 Regime and market-signal snapshots are replaceable calculated under `data/snapshots/`;
 source observations remain under `data/observations/`.
@@ -118,14 +118,15 @@ The current regime score uses:
 - HYG/TLT risk appetite.
 - FRED credit spread, financial conditions, and yield-curve context.
 
-The detailed regime evidence output from `regime snapshot --detail` is organized as:
+The regime snapshot output is organized as:
 
-- Key signals: the headline regime, pressure, input gaps, and action.
+- Key signals: the headline regime, pressure, input gaps, and action. This prints by default.
 - Action evidence: bounded deterioration/redeployment signals by family, with paired checks folded into the relevant family.
 - Market signals: directional family evidence such as trend, volatility, breadth, credit,
   liquidity, and rates. Score cells marked `(regime)` feed the headline `regime_score`;
   other rows are supporting evidence for pressure, action, and later validation.
 - Pressure features: normalized stretch/washout setup values and recent point-in-time raw inputs.
+  Action evidence, market signals, and pressure features print with `--detail`.
 
 See [KNOWLEDGE.md](./KNOWLEDGE.md) for a row-by-row interpretation guide for these
 market-regime tables.
@@ -133,7 +134,7 @@ market-regime tables.
 Backfill market-regime and market-signal snapshots over local price dates:
 
 ```bash
-./bin/marketlab regime backfill --start 2025-01-02 --end 2026-09-04
+./bin/marketlab regime backfill --start 2016-01-01 --end 2026-09-04 --refresh-sources
 ```
 
 ### Backtesting
@@ -141,19 +142,19 @@ Backfill market-regime and market-signal snapshots over local price dates:
 Backfill recomputes and overwrites same-version snapshots by default. Use `--skip-existing` when
 you only want to fill missing dates.
 
-Replay saved regime snapshots against forward SPY/QQQ returns and drawdowns:
+Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 
 ```bash
-./bin/marketlab regime outcomes --start 2025-01-02 --end 2026-09-04
+./bin/marketlab regime outcomes --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
 
-Replay rare action states, normalized pressure buckets, market-signal rows, or policy states:
+Replay headline regime labels, normalized pressure buckets, market-signal rows, or policy states:
 
 ```bash
-./bin/marketlab regime outcomes --by action   --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
-./bin/marketlab regime outcomes --by pressure --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
-./bin/marketlab regime outcomes --by signal   --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
-./bin/marketlab regime outcomes --by policy   --start 2025-01-02 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by regime   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by pressure --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by signal   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by policy   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
 
 Render a reproducible market-regime chart:
@@ -171,13 +172,15 @@ Create a policy snapshot from a saved regime snapshot and any saved Bulltard can
 ```
 
 `regime policy` is also a snapshot command. By default it prints snapshot metadata only. Use
-`regime report` for the normal policy readout, or `regime policy --detail` for the underlying
-policy posture table.
+`regime policy --detail` for the underlying policy posture table.
 
-Render the daily human-facing report:
+Render the recent regime trend report. By default this shows the last 10 saved trading-day
+snapshots through `--date`, including stretch/washout pressure, protect/redeploy strength, and
+key signal percentiles:
 
 ```bash
 ./bin/marketlab regime report --date 2026-09-04
+./bin/marketlab regime report --date 2026-09-04 --days 20
 ```
 
 Backfill and replay policy snapshots:

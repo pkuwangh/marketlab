@@ -20,6 +20,7 @@ from marketlab.market_signals import (
     DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     MarketSignal,
     MarketSignalError,
+    format_market_signals,
     load_market_signal_snapshot,
 )
 from marketlab.prices import (
@@ -31,9 +32,13 @@ from marketlab.prices import (
 from marketlab.regime import (
     DEFAULT_REGIME_OUTCOME_HORIZONS,
     DEFAULT_REGIME_SNAPSHOT_ROOT,
+    REGIME_KEY_SIGNALS_CAPTION,
+    REGIME_MARKET_SIGNALS_CAPTION,
     REGIME_SNAPSHOT_FILENAME,
     RegimeError,
     RegimeSnapshot,
+    RegimeSnapshotResult,
+    format_regime_key_signals,
     load_regime_snapshot,
 )
 from marketlab.snapshots.models import (
@@ -201,6 +206,7 @@ class PortfolioPolicySnapshotResult:
     snapshot_path: Path | None
     candidate_snapshots: tuple[CandidateValidationSnapshot, ...]
     table: str
+    regime_snapshot: RegimeSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +336,7 @@ def compute_portfolio_policy_snapshot(
         snapshot_path=snapshot_path,
         candidate_snapshots=candidate_snapshots,
         table=table,
+        regime_snapshot=regime_snapshot,
     )
 
 
@@ -427,6 +434,7 @@ def compute_daily_policy_report(
         policy=policy_result.snapshot,
         previous_policy=previous_policy,
         signals=signals,
+        regime_snapshot=policy_result.regime_snapshot,
     )
     return DailyPolicyReportResult(
         source_date=source_date,
@@ -738,6 +746,7 @@ def format_daily_policy_report(
     policy: PortfolioPolicySnapshot,
     previous_policy: PortfolioPolicySnapshot | None,
     signals: tuple[MarketSignal, ...] = (),
+    regime_snapshot: RegimeSnapshot | None = None,
 ) -> str:
     """Format a concise daily policy report."""
 
@@ -747,24 +756,58 @@ def format_daily_policy_report(
         "Portfolio posture",
         format_portfolio_policy_snapshot(policy),
         "",
-        "Regime context",
+        "Policy change",
         _format_table(
-            [
-                ["field", "value"],
-                ["regime", policy.regime],
-                ["regime_score", str(policy.regime_score)],
-                ["regime_confidence", policy.regime_confidence],
-                ["regime_action_state", policy.regime_action_state],
-                ["regime_action_confidence", policy.regime_action_confidence],
-                ["stretch_pressure", _format_score(policy.stretch_pressure_score)],
-                ["washout_pressure", _format_score(policy.washout_pressure_score)],
-                ["pressure_confidence", policy.pressure_confidence],
-                ["change", _policy_change_text(policy, previous_policy)],
-            ]
+            [["field", "value"], ["change", _policy_change_text(policy, previous_policy)]]
         ),
     ]
+    if regime_snapshot is not None:
+        regime_result = RegimeSnapshotResult(
+            source_date=regime_snapshot.source_date,
+            snapshot=regime_snapshot,
+            snapshot_path=None,
+            table="",
+            signals=signals,
+            signal_snapshot_path=None,
+            signal_table=format_market_signals(signals),
+        )
+        lines.extend(
+            (
+                "",
+                "Regime context",
+                f"overall: {REGIME_KEY_SIGNALS_CAPTION}",
+                format_regime_key_signals(regime_result),
+            )
+        )
+    else:
+        lines.extend(
+            (
+                "",
+                "Regime context",
+                _format_table(
+                    [
+                        ["field", "value"],
+                        ["regime", policy.regime],
+                        ["regime_score", str(policy.regime_score)],
+                        ["regime_confidence", policy.regime_confidence],
+                        ["regime_action_state", policy.regime_action_state],
+                        ["regime_action_confidence", policy.regime_action_confidence],
+                        ["stretch_pressure", _format_score(policy.stretch_pressure_score)],
+                        ["washout_pressure", _format_score(policy.washout_pressure_score)],
+                        ["pressure_confidence", policy.pressure_confidence],
+                    ]
+                ),
+            )
+        )
     if signals:
-        lines.extend(("", "Market signals", _format_market_signal_summary(signals)))
+        lines.extend(
+            (
+                "",
+                "Market signals",
+                f"market_signals: {REGIME_MARKET_SIGNALS_CAPTION}",
+                format_market_signals(signals),
+            )
+        )
     if policy.candidate_highlights:
         lines.extend(
             ("", "Candidate sleeve", _format_policy_candidates(policy.candidate_highlights))
@@ -831,7 +874,7 @@ def format_policy_outcome_summary(
                 _format_drawdown(row.avg_policy_proxy_max_drawdown),
             ]
         )
-    return _format_table(table)
+    return _format_grouped_table(table, group_column=0)
 
 
 def _load_required_regime_snapshot(
@@ -1454,4 +1497,26 @@ def _format_table(rows: list[list[str]]) -> str:
         lines.append("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
         if row_index == 0:
             lines.append("  ".join("-" * width for width in widths))
+    return "\n".join(lines)
+
+
+def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
+    if not rows:
+        return ""
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    header_separator = "  ".join("=" * width for width in widths)
+    group_separator = "  ".join("-" * width for width in widths)
+    lines = [
+        "  ".join(value.ljust(widths[index]) for index, value in enumerate(rows[0])),
+        header_separator,
+    ]
+    previous_group: str | None = None
+    for row in rows[1:]:
+        current_group = row[group_column]
+        if previous_group is not None and current_group != previous_group:
+            lines.append(group_separator)
+        lines.append(
+            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+        )
+        previous_group = current_group
     return "\n".join(lines)
