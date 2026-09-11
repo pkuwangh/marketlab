@@ -1,6 +1,7 @@
 # MarketLab
 
 - [MarketLab](#marketlab)
+  - [Design Docs](#design-docs)
   - [Current Capabilities](#current-capabilities)
   - [Normal Daily Use](#normal-daily-use)
   - [Market Regime Pillar](#market-regime-pillar)
@@ -15,7 +16,13 @@
 
 MarketLab is a local research system for market-regime analysis and large-cap opportunity tracking.
 
-The implementation follows `DESIGN.md`: point-in-time observations, deterministic calculations, bounded agent outputs, and reproducible reports.
+Design is split between research logic and implementation mechanics.
+
+## Design Docs
+
+- [DESIGN.md](./DESIGN.md): short index to the design documents.
+- [ALGORITHM_DESIGN.md](./ALGORITHM_DESIGN.md): market-regime, portfolio, Bulltard candidate, and outcome-research logic.
+- [IMPLEMENTATION_DESIGN.md](./IMPLEMENTATION_DESIGN.md): CLI, storage, source handling, snapshot/version semantics, and local workflow architecture.
 
 ## Current Capabilities
 
