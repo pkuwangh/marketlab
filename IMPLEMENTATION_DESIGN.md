@@ -21,6 +21,7 @@ Current source modules:
 | `marketlab.market_series` | FRED credit/liquidity/rates observations. |
 | `marketlab.market_signals` | Calculated market-signal snapshots. |
 | `marketlab.regime` | Market-regime snapshots, pressure/action evidence, backfills, outcomes, reports. |
+| `marketlab.regime_export` | Refreshable XLSX exports for regime snapshot research and manual charting. |
 | `marketlab.policy` | Portfolio-policy snapshots, backfills, outcomes, daily policy report. |
 | `marketlab.bulltard.*` | Recap parsing, app-view ingestion, candidate review, validation, outcomes. |
 | `marketlab.gmail` | Read-only Gmail OAuth and recap acquisition. |
@@ -166,7 +167,9 @@ key-signals table. `--detail` adds:
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action;
-explicit `--by` options cover regime, pressure, signal, and policy.
+explicit `--by` options cover regime, pressure, signal, and policy. `regime export-xlsx` writes
+saved regime snapshots into a stable workbook sheet/table so Excel charts can be maintained
+manually and refreshed in place.
 
 ## Portfolio Policy Outputs
 

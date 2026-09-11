@@ -77,6 +77,7 @@ from marketlab.regime import (
     RegimeSnapshot,
     RegimeSnapshotResult,
 )
+from marketlab.regime_export import RegimeXlsxExportResult
 from marketlab.store import StoreRefreshResult, StoreTableRefresh
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bulltard"
@@ -1215,6 +1216,18 @@ def test_chart_regime_no_args_shows_help_without_missing_option_error() -> None:
     assert "Traceback" not in result.output
 
 
+def test_regime_export_xlsx_no_args_shows_help_without_missing_option_error() -> None:
+    result = CliRunner().invoke(app, ["regime", "export-xlsx"])
+
+    assert result.exit_code != 0
+    assert "Export saved regime snapshots to a refreshable Excel workbook" in result.output
+    assert "--start" in result.output
+    assert "--end" in result.output
+    assert "--workbook" in result.output
+    assert "Missing option" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_chart_opportunity_no_args_shows_help_without_missing_argument_error() -> None:
     result = CliRunner().invoke(app, ["bulltard", "chart"])
 
@@ -1310,6 +1323,82 @@ def test_chart_regime_outputs_chart_metadata(
     assert "regime_snapshot_count=20" in result.output
     assert "market_signal_count=160" in result.output
     assert "policy_snapshot_count=18" in result.output
+
+
+def test_regime_export_xlsx_outputs_export_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_root = tmp_path / "prices"
+    snapshot_root = tmp_path / "regime"
+    workbook_path = tmp_path / "workbooks" / "regime.xlsx"
+
+    def fake_export_regime_xlsx(
+        *,
+        start_date: date,
+        end_date: date,
+        workbook_path: Path,
+        sheet_name: str,
+        table_name: str,
+        snapshot_root: Path,
+        price_root: Path,
+        signal_time,
+        snapshot_version: str | None,
+    ) -> RegimeXlsxExportResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 9, 4)
+        assert workbook_path == workbook_path_arg
+        assert sheet_name == "data"
+        assert table_name == "MarketRegimeData"
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert signal_time == "eod"
+        assert snapshot_version is None
+        return RegimeXlsxExportResult(
+            start_date=start_date,
+            end_date=end_date,
+            workbook_path=workbook_path,
+            sheet_name=sheet_name,
+            table_name=table_name,
+            row_count=120,
+            column_count=96,
+        )
+
+    price_root_arg = price_root
+    snapshot_root_arg = snapshot_root
+    workbook_path_arg = workbook_path
+    monkeypatch.setattr("marketlab.cli.export_regime_xlsx", fake_export_regime_xlsx)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "export-xlsx",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-09-04",
+            "--workbook",
+            str(workbook_path),
+            "--sheet",
+            "data",
+            "--table",
+            "MarketRegimeData",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"xlsx_path={workbook_path}" in result.output
+    assert "xlsx_sheet=data" in result.output
+    assert "xlsx_table=MarketRegimeData" in result.output
+    assert "xlsx_start=2026-01-01" in result.output
+    assert "xlsx_end=2026-09-04" in result.output
+    assert "xlsx_row_count=120" in result.output
+    assert "xlsx_column_count=96" in result.output
 
 
 def test_chart_opportunity_outputs_chart_metadata(
