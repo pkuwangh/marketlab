@@ -1,6 +1,6 @@
 # R2 Implementation Progress
 
-**Status:** in progress.
+**Status:** complete.
 **Source plan:** `r2-plan-codex.md`.
 
 This file tracks implementation progress separately from the design plan. Do not use
