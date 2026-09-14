@@ -416,10 +416,41 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
         confidence="medium",
         reason=snapshot.action_reason,
         evidence=(),
+        deterioration_score=0.65,
+        stabilization_score=0.19,
         protect_strength=0.67,
         redeploy_strength=0.24,
         action_score=-0.43,
         event_volatility_context="near_term_event_premium_with_confirmation",
+        action_modules=(
+            RegimeActionModule(
+                family="volatility",
+                name="volatility_turn",
+                deterioration_score=0.75,
+                stabilization_score=0.0,
+                feature_count=2,
+                feature_names=("vix_turn", "vvix_turn"),
+                reason="fixture volatility deterioration",
+            ),
+            RegimeActionModule(
+                family="breadth",
+                name="breadth_turn",
+                deterioration_score=0.65,
+                stabilization_score=0.0,
+                feature_count=1,
+                feature_names=("participation_turn",),
+                reason="fixture breadth deterioration",
+            ),
+            RegimeActionModule(
+                family="credit",
+                name="credit_turn",
+                deterioration_score=0.17,
+                stabilization_score=0.23,
+                feature_count=1,
+                feature_names=("hyg_tlt_turn",),
+                reason="fixture credit stabilization",
+            ),
+        ),
     )
     result = RegimeSnapshotResult(
         source_date=source_date,
@@ -438,6 +469,15 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "fragility" in summary_table
     assert "0.68 < 0.70" in summary_table
     assert "near regime-break context gate" in summary_table
+    assert "deterioration" in summary_table
+    assert "elevated protect confirmation; families volatility,breadth" in summary_table
+    assert "redeploy_setup" in summary_table
+    assert "low washout; redeploy setup not armed" in summary_table
+    assert "stabilization" in summary_table
+    assert "low redeploy confirmation; families none" in summary_table
+    assert "strength" in summary_table
+    assert "action" in summary_table
+    assert "maintain" in summary_table
     assert "protect gates" not in summary_table
     assert "near-term event vol premium with non-vol confirmation" in summary_table
     assert "trend damage is already visible" in summary_table

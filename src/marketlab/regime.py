@@ -87,7 +87,7 @@ REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
 REGIME_PRESSURE_VERSION = versioned_label("regime_pressure", REGIME_VERSION)
 REGIME_SNAPSHOT_FILENAME = "regime.json"
-REGIME_KEY_SIGNALS_CAPTION = "headline regime, pressure, input gaps, and final action"
+REGIME_KEY_SIGNALS_CAPTION = "headline regime, setup/evidence, and final action"
 REGIME_MARKET_SIGNALS_CAPTION = (
     "score cells marked (regime) feed the headline regime score; "
     "other rows are supporting evidence"
@@ -1877,6 +1877,54 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
                 _fragility_context_read(snapshot.fragility_context_score),
             ]
         )
+    action = result.action or _action_state_from_snapshot(snapshot)
+    rows.append(
+        [
+            "deterioration",
+            _format_pressure_score(action.deterioration_score),
+            _action_confirmation_read(
+                label="protect",
+                score=action.deterioration_score,
+                families=_confirming_families(
+                    modules=action.action_modules,
+                    field_name="deterioration_score",
+                ),
+            ),
+        ]
+    )
+    if snapshot.washout_setup_score is not None:
+        rows.append(
+            [
+                "redeploy_setup",
+                _format_pressure_score(snapshot.washout_setup_score),
+                _redeploy_setup_read(snapshot.washout_setup_score),
+            ]
+        )
+    rows.append(
+        [
+            "stabilization",
+            _format_pressure_score(action.stabilization_score),
+            _action_confirmation_read(
+                label="redeploy",
+                score=action.stabilization_score,
+                families=_confirming_families(
+                    modules=action.action_modules,
+                    field_name="stabilization_score",
+                ),
+            ),
+        ]
+    )
+    rows.append(
+        [
+            "strength",
+            (
+                f"protect {_format_pressure_score(action.protect_strength)} / "
+                f"redeploy {_format_pressure_score(action.redeploy_strength)}; "
+                f"net {action.action_score:+.2f}"
+            ),
+            _action_strength_read(action),
+        ]
+    )
     rows.append(
         [
             "input_gaps",
@@ -1884,16 +1932,11 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             "missing point-in-time observations",
         ]
     )
-    action = result.action or _action_state_from_snapshot(snapshot)
     rows.append(
         [
             "action",
-            (
-                f"protect {_format_pressure_score(action.protect_strength)} / "
-                f"redeploy {_format_pressure_score(action.redeploy_strength)}; "
-                f"net {action.action_score:+.2f}"
-            ),
-            _action_read(action, snapshot=snapshot, missing_inputs=missing_inputs),
+            _action_state_label(action.state),
+            _action_decision_read(action, missing_inputs=missing_inputs),
         ]
     )
     return _format_table(rows)
@@ -2037,15 +2080,12 @@ def _inactive_action_strength_read(label: str, strength: float) -> str:
     return f"{label} lean below action threshold"
 
 
-def _action_read(
+def _action_decision_read(
     action: RegimeActionState,
     *,
-    snapshot: RegimeSnapshot,
     missing_inputs: tuple[str, ...],
 ) -> str:
     parts = [
-        _action_state_label(action.state),
-        _action_strength_read(action),
         _data_quality_read(missing_inputs),
         f"{action.confidence} confidence",
     ]
@@ -2056,6 +2096,18 @@ def _action_read(
     if reason:
         parts.append(reason)
     return "; ".join(parts)
+
+
+def _action_confirmation_read(
+    *,
+    label: str,
+    score: float,
+    families: tuple[str, ...],
+) -> str:
+    level = _pressure_level(score)
+    if families:
+        return f"{level} {label} confirmation; families {_family_list_read(families)}"
+    return f"{level} {label} confirmation; families none"
 
 
 def _gate_value(*, score: float, threshold: float) -> str:
@@ -2081,6 +2133,16 @@ def _fragility_context_read(score: float) -> str:
     if score >= 0.30:
         return "some fragility; not enough for regime-break"
     return "low fragility context"
+
+
+def _redeploy_setup_read(score: float) -> str:
+    if score >= ACTION_STRENGTH_THRESHOLD:
+        return "washout setup visible for redeploy"
+    if score >= ACTION_STRENGTH_THRESHOLD - 0.10:
+        return "near redeploy setup level"
+    if score >= 0.30:
+        return "partial washout; redeploy setup not armed"
+    return "low washout; redeploy setup not armed"
 
 
 def _action_state_label(state: str) -> str:

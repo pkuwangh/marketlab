@@ -2245,7 +2245,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_action_confidence=low" in result.output
     assert "market_signal_contradiction_count=1" in result.output
     assert (
-        "overall: headline regime, pressure, input gaps, and final action"
+        "overall: headline regime, setup/evidence, and final action"
         in result.output
     )
     assert "signal" in result.output
@@ -2391,7 +2391,7 @@ def test_regime_snapshot_outputs_metadata_and_overall_table_by_default(
     assert "regime_action_state=no_change" in result.output
     assert "market_signal_contradiction_count=1" in result.output
     assert (
-        "overall: headline regime, pressure, input gaps, and final action"
+        "overall: headline regime, setup/evidence, and final action"
         in result.output
     )
     assert "risk_on (+5)" in result.output

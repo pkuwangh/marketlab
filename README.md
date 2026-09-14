@@ -96,7 +96,7 @@ Compute the market regime directly:
 ```
 
 `regime snapshot` is a snapshot command. By default it prints concise metadata plus the
-key-signals table: headline regime, pressure, input gaps, and action. Use `regime report`
+key-signals table: headline regime, setup/evidence, and action. Use `regime report`
 to inspect the recent multi-day regime trend, or add `--detail` when debugging the heavier
 evidence tables from the snapshot command itself.
 
@@ -127,7 +127,7 @@ The current regime score uses:
 
 The regime snapshot output is organized as:
 
-- Key signals: the headline regime, pressure, input gaps, and action. This prints by default.
+- Key signals: the headline regime, setup/evidence, and final action. This prints by default.
 - Action evidence: bounded deterioration/redeployment signals by family, with paired checks folded into the relevant family.
 - Market signals: directional family evidence such as trend, volatility, breadth, credit,
   liquidity, and rates. Score cells marked `(regime)` feed the headline `regime_score`;
