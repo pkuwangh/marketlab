@@ -36,11 +36,11 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     _write_prices(price_root, symbol="SPY", start=first_date, closes=(100.0, 103.0))
     _write_prices(price_root, symbol="QQQ", start=first_date, closes=(200.0, 202.0))
     write_regime_snapshot(
-        _snapshot(source_date=first_date, spy_return_20d=0.01),
+        _snapshot(source_date=first_date, spy_return_20d=0.01, extension_setup_score=0.65),
         snapshot_root=snapshot_root,
     )
     write_regime_snapshot(
-        _snapshot(source_date=second_date, spy_return_20d=0.03),
+        _snapshot(source_date=second_date, spy_return_20d=0.03, extension_setup_score=0.40),
         snapshot_root=snapshot_root,
     )
 
@@ -68,10 +68,19 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["pressure_module__vol_complacency__stretch"] == 0.80
     assert first_row["action__vvix_turn__protect"] == 0.70
     assert first_row["action_module__volatility_turn__redeploy"] == 0.10
-    assert first_row["extension_setup"] == 0.50
+    assert first_row["extension_setup"] == 0.65
     assert first_row["fragility_context"] == 0.20
     assert first_row["washout_setup"] == 0.11
     assert first_row["event_volatility_context"] == "near_term_event_premium"
+    assert first_row["extension_armed"] is True
+    assert _as_date(first_row["extension_armed_since"]) == first_date
+    assert first_row["extension_armed_age"] == 0
+    assert first_row["extension_armed_decay"] == 1.0
+    assert first_row["extension_armed_source_strength"] == 0.65
+    second_row = dict(zip(headers, (cell.value for cell in worksheet[3]), strict=True))
+    assert second_row["extension_armed"] is True
+    assert _as_date(second_row["extension_armed_since"]) == first_date
+    assert second_row["extension_armed_age"] == 1
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
     with csv_path.open(encoding="utf-8", newline="") as handle:
@@ -79,6 +88,8 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert csv_rows[0]["date"] == first_date.isoformat()
     assert csv_rows[0]["SPY_close"] == "100.0"
     assert csv_rows[0]["event_volatility_context"] == "near_term_event_premium"
+    assert csv_rows[0]["extension_armed"] == "True"
+    assert csv_rows[1]["extension_armed_age"] == "1"
     assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
 
 
@@ -177,6 +188,7 @@ def _snapshot(
     *,
     source_date: date,
     spy_return_20d: float = 0.01,
+    extension_setup_score: float = 0.50,
 ) -> RegimeSnapshot:
     return RegimeSnapshot(
         source_date=source_date,
@@ -218,7 +230,7 @@ def _snapshot(
         event_volatility_context="near_term_event_premium",
         stretch_pressure_score=0.62,
         washout_pressure_score=0.11,
-        extension_setup_score=0.50,
+        extension_setup_score=extension_setup_score,
         fragility_context_score=0.20,
         washout_setup_score=0.11,
         deterioration_score=0.70,

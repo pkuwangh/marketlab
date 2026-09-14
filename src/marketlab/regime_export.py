@@ -36,6 +36,8 @@ DEFAULT_REGIME_EXPORT_WORKBOOK_PATH = DEFAULT_REGIME_EXPORT_ROOT / f"regime-{REG
 DEFAULT_REGIME_EXPORT_CSV_PATH = DEFAULT_REGIME_EXPORT_ROOT / f"regime-{REGIME_VERSION}.csv"
 DEFAULT_REGIME_EXPORT_SHEET_NAME = "regime_data"
 DEFAULT_REGIME_EXPORT_TABLE_NAME = "RegimeData"
+ARMED_EXTENSION_SETUP_THRESHOLD = 0.60
+ARMED_EXTENSION_MAX_AGE_DAYS = 40
 
 _ACTION_FEATURE_ORDER = (
     "short_momentum",
@@ -75,6 +77,11 @@ _BASE_COLUMNS = (
     "stretch_pressure",
     "washout_pressure",
     "extension_setup",
+    "extension_armed",
+    "extension_armed_since",
+    "extension_armed_age",
+    "extension_armed_decay",
+    "extension_armed_source_strength",
     "fragility_context",
     "washout_setup",
     "protect_strength",
@@ -108,7 +115,7 @@ _MARKET_INPUT_COLUMNS = (
     "hyg_tlt_relative_20d",
 )
 
-_DATE_COLUMNS = frozenset({"date", "price_date"})
+_DATE_COLUMNS = frozenset({"date", "price_date", "extension_armed_since"})
 _PERCENT_COLUMNS = frozenset(
     {
         "spy_return_20d",
@@ -358,6 +365,7 @@ def _rows_for_snapshots(
     qqq_prices = _prices_by_date(symbol="QQQ", price_root=price_root)
     spy_base = _first_snapshot_price(snapshots, prices_by_date=spy_prices)
     qqq_base = _first_snapshot_price(snapshots, prices_by_date=qqq_prices)
+    armed_rows = _armed_extension_memory_rows(snapshots)
 
     rows: list[dict[str, Any]] = []
     for snapshot in snapshots:
@@ -368,12 +376,63 @@ def _rows_for_snapshots(
             spy_base=spy_base,
             qqq_base=qqq_base,
         )
+        row.update(armed_rows.get(snapshot.source_date, {}))
         _add_pressure_features(row, snapshot)
         _add_pressure_modules(row, snapshot)
         _add_action_features(row, snapshot)
         _add_action_modules(row, snapshot)
         rows.append({header: row.get(header) for header in headers})
     return rows
+
+
+def _armed_extension_memory_rows(
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> dict[date, dict[str, Any]]:
+    armed_since: date | None = None
+    armed_index: int | None = None
+    source_strength: float | None = None
+    rows: dict[date, dict[str, Any]] = {}
+    for index, snapshot in enumerate(snapshots):
+        setup_score = snapshot.extension_setup_score
+        if (
+            armed_since is None
+            or (
+                armed_index is not None
+                and index - armed_index > ARMED_EXTENSION_MAX_AGE_DAYS
+                and not _armed_extension_setup_active(setup_score)
+            )
+        ):
+            armed_since = None
+            armed_index = None
+            source_strength = None
+
+        if armed_index is not None and index - armed_index > ARMED_EXTENSION_MAX_AGE_DAYS:
+            armed_since = snapshot.source_date
+            armed_index = index
+            source_strength = setup_score
+        elif armed_since is None and _armed_extension_setup_active(setup_score):
+            armed_since = snapshot.source_date
+            armed_index = index
+            source_strength = setup_score
+
+        age = index - armed_index if armed_index is not None else None
+        decay = (
+            max(0.0, 1.0 - age / ARMED_EXTENSION_MAX_AGE_DAYS)
+            if age is not None
+            else None
+        )
+        rows[snapshot.source_date] = {
+            "extension_armed": armed_since is not None,
+            "extension_armed_since": armed_since,
+            "extension_armed_age": age,
+            "extension_armed_decay": decay,
+            "extension_armed_source_strength": source_strength,
+        }
+    return rows
+
+
+def _armed_extension_setup_active(setup_score: float | None) -> bool:
+    return setup_score is not None and setup_score >= ARMED_EXTENSION_SETUP_THRESHOLD
 
 
 def _base_row(
