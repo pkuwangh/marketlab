@@ -10,7 +10,7 @@ This file tracks implementation progress separately from the design plan. Do not
 
 - [x] Bump market-regime research version to `v1.0`.
 - [x] Version workbook and canonical outcome artifacts.
-- [ ] Split `extension_setup` from `fragility_context`.
+- [x] Split `extension_setup` from `fragility_context`.
 - [ ] Add correction-episode diagnostics.
 - [ ] Replace protect with gated paths.
 - [ ] Make volatility-only protect warning-only.

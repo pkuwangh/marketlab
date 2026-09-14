@@ -68,6 +68,9 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["pressure_module__vol_complacency__stretch"] == 0.80
     assert first_row["action__vvix_turn__protect"] == 0.70
     assert first_row["action_module__volatility_turn__redeploy"] == 0.10
+    assert first_row["extension_setup"] == 0.50
+    assert first_row["fragility_context"] == 0.20
+    assert first_row["washout_setup"] == 0.11
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
     with csv_path.open(encoding="utf-8", newline="") as handle:
@@ -212,6 +215,9 @@ def _snapshot(
         action_reason="fixture action",
         stretch_pressure_score=0.62,
         washout_pressure_score=0.11,
+        extension_setup_score=0.50,
+        fragility_context_score=0.20,
+        washout_setup_score=0.11,
         deterioration_score=0.70,
         stabilization_score=0.10,
         protect_strength=0.70,

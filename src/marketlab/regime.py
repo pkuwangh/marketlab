@@ -217,6 +217,9 @@ class RegimePressureSnapshot:
     confidence: str
     features: tuple[RegimePressureFeature, ...]
     modules: tuple[RegimePressureModule, ...] = ()
+    extension_setup_score: float = 0.0
+    fragility_context_score: float = 0.0
+    washout_setup_score: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +314,9 @@ class RegimeSnapshot:
     pressure_version: str = REGIME_PRESSURE_VERSION
     stretch_pressure_score: float | None = None
     washout_pressure_score: float | None = None
+    extension_setup_score: float | None = None
+    fragility_context_score: float | None = None
+    washout_setup_score: float | None = None
     pressure_confidence: str = "low"
     pressure_features: tuple[RegimePressureFeature, ...] = ()
     pressure_modules: tuple[RegimePressureModule, ...] = ()
@@ -384,6 +390,9 @@ class RegimeSnapshot:
             "pressure_version": self.pressure_version,
             "stretch_pressure_score": self.stretch_pressure_score,
             "washout_pressure_score": self.washout_pressure_score,
+            "extension_setup_score": self.extension_setup_score,
+            "fragility_context_score": self.fragility_context_score,
+            "washout_setup_score": self.washout_setup_score,
             "pressure_confidence": self.pressure_confidence,
             "pressure_features": [feature.to_dict() for feature in self.pressure_features],
             "pressure_modules": [module.to_dict() for module in self.pressure_modules],
@@ -3706,11 +3715,30 @@ def derive_regime_pressure_snapshot(
         for spec in PRESSURE_FEATURE_SPECS
     )
     modules = _pressure_modules(source_date=source_date, features=features)
+    extension_setup_score = _pressure_score_for_modules(
+        modules,
+        module_names=("trend_extension", "vol_complacency"),
+        field_name="stretch_score",
+    )
+    fragility_context_score = _pressure_score_for_modules(
+        modules,
+        module_names=(
+            "breadth_fragility",
+            "credit_risk_appetite",
+            "liquidity_conditions",
+            "yield_curve_pressure",
+        ),
+        field_name="stretch_score",
+    )
+    washout_setup_score = _aggregate_pressure_score(modules, field_name="washout_score")
     return RegimePressureSnapshot(
         source_date=source_date,
         pressure_version=REGIME_PRESSURE_VERSION,
         stretch_pressure_score=_aggregate_pressure_score(modules, field_name="stretch_score"),
-        washout_pressure_score=_aggregate_pressure_score(modules, field_name="washout_score"),
+        washout_pressure_score=washout_setup_score,
+        extension_setup_score=extension_setup_score,
+        fragility_context_score=fragility_context_score,
+        washout_setup_score=washout_setup_score,
         confidence=_pressure_confidence(features),
         features=features,
         modules=modules,
@@ -3761,6 +3789,9 @@ def _snapshot_with_pressure(
         pressure_version=pressure.pressure_version,
         stretch_pressure_score=pressure.stretch_pressure_score,
         washout_pressure_score=pressure.washout_pressure_score,
+        extension_setup_score=pressure.extension_setup_score,
+        fragility_context_score=pressure.fragility_context_score,
+        washout_setup_score=pressure.washout_setup_score,
         pressure_confidence=pressure.confidence,
         pressure_features=pressure.features,
         pressure_modules=pressure.modules,
@@ -3812,6 +3843,19 @@ def _pressure_module(
         feature_count=len(usable_names),
         feature_names=usable_names,
         reason=spec.reason if usable_names else "No usable module features",
+    )
+
+
+def _pressure_score_for_modules(
+    modules: tuple[RegimePressureModule, ...],
+    *,
+    module_names: tuple[str, ...],
+    field_name: str,
+) -> float:
+    allowed_names = set(module_names)
+    return _aggregate_pressure_score(
+        tuple(module for module in modules if module.name in allowed_names),
+        field_name=field_name,
     )
 
 
@@ -5742,6 +5786,9 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),
         stretch_pressure_score=_optional_float(row.get("stretch_pressure_score")),
         washout_pressure_score=_optional_float(row.get("washout_pressure_score")),
+        extension_setup_score=_optional_float(row.get("extension_setup_score")),
+        fragility_context_score=_optional_float(row.get("fragility_context_score")),
+        washout_setup_score=_optional_float(row.get("washout_setup_score")),
         pressure_confidence=str(row.get("pressure_confidence", "low")),
         pressure_features=pressure_features,
         pressure_modules=pressure_modules,

@@ -211,6 +211,11 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.pressure is not None
     assert result.snapshot.stretch_pressure_score is not None
     assert result.snapshot.washout_pressure_score is not None
+    assert result.snapshot.extension_setup_score is not None
+    assert result.snapshot.fragility_context_score is not None
+    assert result.snapshot.washout_setup_score == result.snapshot.washout_pressure_score
+    assert result.pressure.extension_setup_score == result.snapshot.extension_setup_score
+    assert result.pressure.fragility_context_score == result.snapshot.fragility_context_score
     assert result.snapshot.stretch_score == int(round(result.snapshot.stretch_pressure_score * 5))
     assert result.snapshot.washout_score == int(round(result.snapshot.washout_pressure_score * 5))
     assert result.snapshot.protect_strength < 0.55
@@ -336,6 +341,9 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert loaded is not None
     assert loaded.action_state == "no_change"
     assert loaded.stretch_pressure_score == result.snapshot.stretch_pressure_score
+    assert loaded.extension_setup_score == result.snapshot.extension_setup_score
+    assert loaded.fragility_context_score == result.snapshot.fragility_context_score
+    assert loaded.washout_setup_score == result.snapshot.washout_setup_score
 
 
 def test_compute_regime_snapshot_rejects_stale_vix_term_structure(tmp_path: Path) -> None:
