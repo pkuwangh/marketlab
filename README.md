@@ -164,6 +164,7 @@ episodes, market-signal rows, or policy states:
 ```bash
 ./bin/marketlab regime outcomes --by regime   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by posture  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by redeploy --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by pressure --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by episode  --start 2016-01-01 --end 2026-06-01
 ./bin/marketlab regime outcomes --by signal   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65

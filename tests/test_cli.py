@@ -80,6 +80,9 @@ from marketlab.regime import (
     RegimePressureSnapshot,
     RegimePriceRefreshResult,
     RegimeRecentReportResult,
+    RegimeRedeployForwardOutcome,
+    RegimeRedeployOutcomeResult,
+    RegimeRedeployOutcomeSummaryRow,
     RegimeSnapshot,
     RegimeSnapshotResult,
 )
@@ -2968,6 +2971,99 @@ def test_regime_outcomes_posture_outputs_summary_table(
     assert "frequency_table:" in result.output
     assert "summary_table:" in result.output
     assert "posture:protected  20d" in result.output
+
+
+def test_regime_outcomes_redeploy_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_redeploy_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+        snapshot_version: str | None,
+    ) -> RegimeRedeployOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20,)
+        assert snapshot_version is None
+        return RegimeRedeployOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                RegimeRedeployForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    bucket="redeploy:action",
+                    action_state="scale_up_redeploy",
+                    washout_setup_score=0.72,
+                    stabilization_score=0.70,
+                    redeploy_strength=0.71,
+                    horizon_days=20,
+                    spy_return=0.04,
+                    qqq_return=0.05,
+                    spy_max_drawdown=-0.02,
+                    qqq_max_drawdown=-0.03,
+                ),
+            ),
+            summary_rows=(
+                RegimeRedeployOutcomeSummaryRow(
+                    bucket="redeploy:action",
+                    horizon_days=20,
+                    redeploy_count=1,
+                    available_count=1,
+                    avg_washout_setup=0.72,
+                    avg_stabilization=0.70,
+                    avg_redeploy_strength=0.71,
+                    avg_spy_return=0.04,
+                    avg_qqq_return=0.05,
+                    avg_spy_max_drawdown=-0.02,
+                    avg_qqq_max_drawdown=-0.03,
+                ),
+            ),
+            table="bucket           horizon\nredeploy:action  20d",
+        )
+
+    snapshot_root_arg = snapshot_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_redeploy_outcomes",
+        fake_compute_regime_redeploy_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--by",
+            "redeploy",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_redeploy_outcome_count=1" in result.output
+    assert "available_regime_redeploy_outcome_count=1" in result.output
+    assert "summary_table:" in result.output
+    assert "redeploy:action  20d" in result.output
 
 
 def test_regime_outcomes_save_writes_versioned_report(

@@ -104,6 +104,7 @@ from marketlab.regime import (
     RegimePressureOutcomeResult,
     RegimePriceRefreshResult,
     RegimeRecentReportResult,
+    RegimeRedeployOutcomeResult,
     RegimeSnapshotResult,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
@@ -113,6 +114,7 @@ from marketlab.regime import (
     compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_recent_report,
+    compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
     format_regime_key_signals,
     refresh_regime_prices,
@@ -159,6 +161,7 @@ class RegimeOutcomeGroup(StrEnum):
     PRESSURE = "pressure"
     EPISODE = "episode"
     POSTURE = "posture"
+    REDEPLOY = "redeploy"
     POLICY = "policy"
 
 
@@ -1488,8 +1491,8 @@ def regime_outcomes(
         RegimeOutcomeGroup.ACTION,
         "--by",
         help=(
-            "Outcome grouping to replay: regime, signal, action, posture, pressure, episode, "
-            "or policy."
+            "Outcome grouping to replay: regime, signal, action, posture, redeploy, "
+            "pressure, episode, or policy."
         ),
     ),
 ) -> None:
@@ -1563,6 +1566,29 @@ def regime_outcomes(
             raise typer.BadParameter(str(exc)) from exc
         _emit_regime_outcome_report(
             _regime_posture_outcome_report_text(posture_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
+        return
+    if outcome_group == RegimeOutcomeGroup.REDEPLOY:
+        try:
+            redeploy_result = compute_regime_redeploy_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+                snapshot_version=snapshot_version,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _emit_regime_outcome_report(
+            _regime_redeploy_outcome_report_text(redeploy_result),
             save_report=save_report,
             outcome_group=outcome_group.value,
             artifact_version=outcome_version,
@@ -3142,6 +3168,19 @@ def _regime_posture_outcome_report_text(result: RegimePostureOutcomeResult) -> s
     )
 
 
+def _regime_redeploy_outcome_report_text(result: RegimeRedeployOutcomeResult) -> str:
+    return _format_outcome_tables(
+        (
+            ("regime_redeploy_outcome_count", len(result.outcomes)),
+            (
+                "available_regime_redeploy_outcome_count",
+                _available_regime_redeploy_outcome_count(result),
+            ),
+        ),
+        summary_table=result.table,
+    )
+
+
 def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) -> None:
     typer.echo(_regime_pressure_outcome_report_text(result))
 
@@ -3299,6 +3338,14 @@ def _available_regime_action_outcome_count(result: RegimeActionOutcomeResult) ->
 
 
 def _available_regime_posture_outcome_count(result: RegimePostureOutcomeResult) -> int:
+    return sum(
+        1
+        for outcome in result.outcomes
+        if outcome.spy_return is not None and outcome.qqq_return is not None
+    )
+
+
+def _available_regime_redeploy_outcome_count(result: RegimeRedeployOutcomeResult) -> int:
     return sum(
         1
         for outcome in result.outcomes

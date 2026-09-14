@@ -25,6 +25,7 @@ from marketlab.regime import (
     compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_recent_report,
+    compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
     derive_regime_action_state,
     derive_regime_postures,
@@ -2023,6 +2024,64 @@ def test_compute_regime_posture_outcomes_summarizes_held_posture(
     assert "protect_path:extension_unwind" in result.table
 
 
+def test_compute_regime_redeploy_outcomes_summarizes_validation_buckets(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date,
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.72,
+            stabilization_score=0.20,
+            redeploy_strength=0.38,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_off",
+            score=-3,
+            action_state="scale_up_redeploy",
+            washout_setup_score=0.72,
+            stabilization_score=0.70,
+            redeploy_strength=0.71,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 101.0, 103.0, 104.0],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=start_date,
+        closes=[100.0, 102.0, 104.0, 106.0],
+    )
+
+    result = compute_regime_redeploy_outcomes(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=1),
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(1,),
+    )
+
+    buckets = {outcome.bucket for outcome in result.outcomes}
+    assert buckets == {"redeploy:setup_only", "redeploy:action"}
+    setup_row = next(row for row in result.summary_rows if row.bucket == "redeploy:setup_only")
+    assert setup_row.redeploy_count == 1
+    assert setup_row.avg_washout_setup == 0.72
+    assert "redeploy:action" in result.table
+
+
 def test_compute_regime_pressure_outcomes_summarizes_top_pressure_buckets(
     tmp_path: Path,
 ) -> None:
@@ -2255,6 +2314,7 @@ def _snapshot(
     event_volatility_context: str = "none",
     stretch_score: int = 0,
     washout_score: int = 0,
+    stabilization_score: float = 0.0,
     protect_strength: float = 0.0,
     redeploy_strength: float = 0.0,
     action_score: float = 0.0,
@@ -2307,6 +2367,7 @@ def _snapshot(
         event_volatility_context=event_volatility_context,
         stretch_score=stretch_score,
         washout_score=washout_score,
+        stabilization_score=stabilization_score,
         protect_strength=protect_strength,
         redeploy_strength=redeploy_strength,
         action_score=action_score,
