@@ -100,6 +100,7 @@ from marketlab.regime import (
     RegimeCorrectionEpisodeResult,
     RegimeError,
     RegimeOutcomeResult,
+    RegimePostureOutcomeResult,
     RegimePressureOutcomeResult,
     RegimePriceRefreshResult,
     RegimeRecentReportResult,
@@ -109,6 +110,7 @@ from marketlab.regime import (
     compute_regime_backfill,
     compute_regime_correction_episodes,
     compute_regime_outcomes,
+    compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_recent_report,
     compute_regime_snapshot,
@@ -156,6 +158,7 @@ class RegimeOutcomeGroup(StrEnum):
     ACTION = "action"
     PRESSURE = "pressure"
     EPISODE = "episode"
+    POSTURE = "posture"
     POLICY = "policy"
 
 
@@ -1485,7 +1488,7 @@ def regime_outcomes(
         RegimeOutcomeGroup.ACTION,
         "--by",
         help=(
-            "Outcome grouping to replay: regime, signal, action, pressure, episode, "
+            "Outcome grouping to replay: regime, signal, action, posture, pressure, episode, "
             "or policy."
         ),
     ),
@@ -1537,6 +1540,29 @@ def regime_outcomes(
             raise typer.BadParameter(str(exc)) from exc
         _emit_regime_outcome_report(
             _regime_action_outcome_report_text(action_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
+        return
+    if outcome_group == RegimeOutcomeGroup.POSTURE:
+        try:
+            posture_result = compute_regime_posture_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+                snapshot_version=snapshot_version,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _emit_regime_outcome_report(
+            _regime_posture_outcome_report_text(posture_result),
             save_report=save_report,
             outcome_group=outcome_group.value,
             artifact_version=outcome_version,
@@ -3101,6 +3127,21 @@ def _regime_action_outcome_report_text(result: RegimeActionOutcomeResult) -> str
     )
 
 
+def _regime_posture_outcome_report_text(result: RegimePostureOutcomeResult) -> str:
+    return _format_outcome_tables(
+        (
+            ("regime_posture_count", len(result.postures)),
+            ("regime_posture_outcome_count", len(result.outcomes)),
+            (
+                "available_regime_posture_outcome_count",
+                _available_regime_posture_outcome_count(result),
+            ),
+        ),
+        frequency_table=result.frequency_table,
+        summary_table=result.table,
+    )
+
+
 def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) -> None:
     typer.echo(_regime_pressure_outcome_report_text(result))
 
@@ -3250,6 +3291,14 @@ def _available_regime_outcome_count(result: RegimeOutcomeResult) -> int:
 
 
 def _available_regime_action_outcome_count(result: RegimeActionOutcomeResult) -> int:
+    return sum(
+        1
+        for outcome in result.outcomes
+        if outcome.spy_return is not None and outcome.qqq_return is not None
+    )
+
+
+def _available_regime_posture_outcome_count(result: RegimePostureOutcomeResult) -> int:
     return sum(
         1
         for outcome in result.outcomes

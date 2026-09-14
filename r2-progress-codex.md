@@ -16,7 +16,7 @@ This file tracks implementation progress separately from the design plan. Do not
 - [x] Make volatility-only protect warning-only.
 - [x] Add event-volatility context.
 - [x] Export armed setup memory as research output.
-- [ ] Add posture replay in outcomes/export flows.
+- [x] Add posture replay in outcomes/export flows.
 - [ ] Validate redeploy separately.
 
 ## Notes

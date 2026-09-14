@@ -72,6 +72,11 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["fragility_context"] == 0.20
     assert first_row["washout_setup"] == 0.11
     assert first_row["event_volatility_context"] == "near_term_event_premium"
+    assert first_row["posture_state"] == "protected"
+    assert _as_date(first_row["protected_since"]) == first_date
+    assert first_row["protect_path"] == "extension_unwind"
+    assert first_row["posture_age"] == 0
+    assert first_row["max_drawdown_since_posture"] == 0.0
     assert first_row["extension_armed"] is True
     assert _as_date(first_row["extension_armed_since"]) == first_date
     assert first_row["extension_armed_age"] == 0
@@ -88,6 +93,8 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert csv_rows[0]["date"] == first_date.isoformat()
     assert csv_rows[0]["SPY_close"] == "100.0"
     assert csv_rows[0]["event_volatility_context"] == "near_term_event_premium"
+    assert csv_rows[0]["posture_state"] == "protected"
+    assert csv_rows[0]["protect_path"] == "extension_unwind"
     assert csv_rows[0]["extension_armed"] == "True"
     assert csv_rows[1]["extension_armed_age"] == "1"
     assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
@@ -226,7 +233,7 @@ def _snapshot(
         sp500_above_200d=70.0,
         action_state="scale_down_protect",
         action_confidence="medium",
-        action_reason="fixture action",
+        action_reason="extension_unwind protect: fixture action",
         event_volatility_context="near_term_event_premium",
         stretch_pressure_score=0.62,
         washout_pressure_score=0.11,

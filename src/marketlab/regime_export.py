@@ -25,7 +25,9 @@ from marketlab.regime import (
     PRESSURE_MODULE_SPECS,
     REGIME_SNAPSHOT_FILENAME,
     RegimeError,
+    RegimePostureState,
     RegimeSnapshot,
+    derive_regime_postures,
     load_regime_snapshot,
 )
 from marketlab.snapshots.models import SignalTime, signal_time_value, snapshot_source_dates
@@ -74,6 +76,14 @@ _BASE_COLUMNS = (
     "action_confidence",
     "action_reason",
     "event_volatility_context",
+    "posture_state",
+    "protected_since",
+    "protect_path",
+    "protect_reason",
+    "redeploy_since",
+    "posture_age",
+    "max_drawdown_since_posture",
+    "posture_reset_reason",
     "stretch_pressure",
     "washout_pressure",
     "extension_setup",
@@ -115,7 +125,15 @@ _MARKET_INPUT_COLUMNS = (
     "hyg_tlt_relative_20d",
 )
 
-_DATE_COLUMNS = frozenset({"date", "price_date", "extension_armed_since"})
+_DATE_COLUMNS = frozenset(
+    {
+        "date",
+        "price_date",
+        "protected_since",
+        "redeploy_since",
+        "extension_armed_since",
+    }
+)
 _PERCENT_COLUMNS = frozenset(
     {
         "spy_return_20d",
@@ -365,6 +383,13 @@ def _rows_for_snapshots(
     qqq_prices = _prices_by_date(symbol="QQQ", price_root=price_root)
     spy_base = _first_snapshot_price(snapshots, prices_by_date=spy_prices)
     qqq_base = _first_snapshot_price(snapshots, prices_by_date=qqq_prices)
+    postures = {
+        posture.source_date: posture
+        for posture in derive_regime_postures(
+            snapshots=snapshots,
+            spy_history=tuple(load_price_history(symbol="SPY", price_root=price_root)),
+        )
+    }
     armed_rows = _armed_extension_memory_rows(snapshots)
 
     rows: list[dict[str, Any]] = []
@@ -376,6 +401,7 @@ def _rows_for_snapshots(
             spy_base=spy_base,
             qqq_base=qqq_base,
         )
+        _add_posture(row, postures.get(snapshot.source_date))
         row.update(armed_rows.get(snapshot.source_date, {}))
         _add_pressure_features(row, snapshot)
         _add_pressure_modules(row, snapshot)
@@ -383,6 +409,23 @@ def _rows_for_snapshots(
         _add_action_modules(row, snapshot)
         rows.append({header: row.get(header) for header in headers})
     return rows
+
+
+def _add_posture(row: dict[str, Any], posture: RegimePostureState | None) -> None:
+    if posture is None:
+        return
+    row.update(
+        {
+            "posture_state": posture.posture_state,
+            "protected_since": posture.protected_since,
+            "protect_path": posture.protect_path,
+            "protect_reason": posture.protect_reason,
+            "redeploy_since": posture.redeploy_since,
+            "posture_age": posture.posture_age,
+            "max_drawdown_since_posture": posture.max_drawdown_since_posture,
+            "posture_reset_reason": posture.reset_reason,
+        }
+    )
 
 
 def _armed_extension_memory_rows(

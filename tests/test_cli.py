@@ -69,6 +69,11 @@ from marketlab.regime import (
     RegimeForwardOutcome,
     RegimeOutcomeResult,
     RegimeOutcomeSummaryRow,
+    RegimePostureForwardOutcome,
+    RegimePostureFrequencyRow,
+    RegimePostureOutcomeResult,
+    RegimePostureOutcomeSummaryRow,
+    RegimePostureState,
     RegimePressureForwardOutcome,
     RegimePressureOutcomeResult,
     RegimePressureOutcomeSummaryRow,
@@ -2848,6 +2853,121 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
     assert "summary_table:" in result.output
     assert "scale_down_protect  1" in result.output
     assert "action:scale_down_protect  20d" in result.output
+
+
+def test_regime_outcomes_posture_outputs_summary_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_posture_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+        snapshot_version: str | None,
+    ) -> RegimePostureOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20,)
+        assert snapshot_version is None
+        return RegimePostureOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            postures=(
+                RegimePostureState(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    posture_state="protected",
+                    protected_since=date(2026, 7, 28),
+                    protect_reason="extension_unwind protect: fixture",
+                    protect_path="extension_unwind",
+                    redeploy_since=None,
+                    posture_age=4,
+                    max_drawdown_since_posture=-0.03,
+                    reset_reason=None,
+                ),
+            ),
+            outcomes=(
+                RegimePostureForwardOutcome(
+                    source_date=date(2026, 8, 1),
+                    price_date=date(2026, 8, 1),
+                    posture_state="protected",
+                    protect_path="extension_unwind",
+                    posture_age=4,
+                    max_drawdown_since_posture=-0.03,
+                    horizon_days=20,
+                    spy_return=-0.02,
+                    qqq_return=-0.03,
+                    spy_max_drawdown=-0.06,
+                    qqq_max_drawdown=-0.07,
+                ),
+            ),
+            frequency_rows=(
+                RegimePostureFrequencyRow(
+                    posture_state="protected",
+                    posture_count=1,
+                    share=1.0,
+                ),
+            ),
+            summary_rows=(
+                RegimePostureOutcomeSummaryRow(
+                    bucket="posture:protected",
+                    horizon_days=20,
+                    posture_count=1,
+                    available_count=1,
+                    avg_posture_age=4.0,
+                    avg_posture_drawdown=-0.03,
+                    avg_spy_return=-0.02,
+                    avg_qqq_return=-0.03,
+                    avg_spy_max_drawdown=-0.06,
+                    avg_qqq_max_drawdown=-0.07,
+                ),
+            ),
+            frequency_table="posture_state  count\nprotected      1",
+            table="bucket             horizon\nposture:protected  20d",
+        )
+
+    snapshot_root_arg = snapshot_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_posture_outcomes",
+        fake_compute_regime_posture_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--by",
+            "posture",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_posture_count=1" in result.output
+    assert "regime_posture_outcome_count=1" in result.output
+    assert "available_regime_posture_outcome_count=1" in result.output
+    assert "frequency_table:" in result.output
+    assert "summary_table:" in result.output
+    assert "posture:protected  20d" in result.output
 
 
 def test_regime_outcomes_save_writes_versioned_report(

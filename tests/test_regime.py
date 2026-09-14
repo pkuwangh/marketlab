@@ -11,7 +11,7 @@ from marketlab.market_signals import (
     load_market_signal_snapshot,
     write_market_signal_snapshot,
 )
-from marketlab.prices import DailyPriceObservation, write_price_observations
+from marketlab.prices import DailyPriceObservation, load_price_history, write_price_observations
 from marketlab.regime import (
     RegimeComponentScore,
     RegimeError,
@@ -22,10 +22,12 @@ from marketlab.regime import (
     compute_regime_backfill,
     compute_regime_correction_episodes,
     compute_regime_outcomes,
+    compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_recent_report,
     compute_regime_snapshot,
     derive_regime_action_state,
+    derive_regime_postures,
     format_regime_key_signals,
     load_regime_snapshot,
     refresh_regime_prices,
@@ -1896,6 +1898,129 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
     assert "action:scale_up_redeploy" in result.table
     assert "====" in result.table.splitlines()[1]
     assert "\n---" in result.table
+
+
+def test_derive_regime_postures_carries_protect_until_reset(tmp_path: Path) -> None:
+    start_date = date(2026, 1, 1)
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 102.0, 99.0, 98.0, 101.0],
+    )
+    spy_history = load_price_history(symbol="SPY", price_root=price_root)
+    snapshots = (
+        _snapshot(source_date=start_date, regime="risk_on", score=4),
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=4,
+            action_state="scale_down_protect",
+            action_reason="extension_unwind protect: fixture",
+            extension_setup_score=0.72,
+            protect_strength=0.70,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=2),
+            regime="risk_on",
+            score=3,
+            extension_setup_score=0.65,
+            protect_strength=0.40,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=3),
+            regime="risk_off",
+            score=-3,
+            action_state="scale_up_redeploy",
+            action_reason="fixture redeploy",
+            washout_setup_score=0.72,
+            redeploy_strength=0.70,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=4),
+            regime="neutral",
+            score=0,
+            washout_setup_score=0.10,
+            redeploy_strength=0.10,
+        ),
+    )
+
+    postures = derive_regime_postures(snapshots=snapshots, spy_history=spy_history)
+
+    assert [posture.posture_state for posture in postures] == [
+        "neutral",
+        "protected",
+        "protected",
+        "redeploying",
+        "neutral",
+    ]
+    assert postures[1].protected_since == start_date + timedelta(days=1)
+    assert postures[1].protect_path == "extension_unwind"
+    assert postures[2].posture_age == 1
+    assert round(postures[2].max_drawdown_since_posture or 0.0, 4) == round(99 / 102 - 1, 4)
+    assert postures[3].redeploy_since == start_date + timedelta(days=3)
+    assert postures[4].reset_reason == "redeploy_pressure_cleared"
+
+
+def test_compute_regime_posture_outcomes_summarizes_held_posture(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date,
+            regime="risk_on",
+            score=4,
+            action_state="scale_down_protect",
+            action_reason="extension_unwind protect: fixture",
+            extension_setup_score=0.72,
+            protect_strength=0.70,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.65,
+            protect_strength=0.45,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 99.0, 101.0, 102.0],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=start_date,
+        closes=[100.0, 98.0, 102.0, 104.0],
+    )
+
+    result = compute_regime_posture_outcomes(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=1),
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(1,),
+    )
+
+    assert [posture.posture_state for posture in result.postures] == [
+        "protected",
+        "protected",
+    ]
+    assert "protected" in result.frequency_table
+    protected_row = next(row for row in result.summary_rows if row.bucket == "posture:protected")
+    assert protected_row.posture_count == 2
+    assert protected_row.available_count == 2
+    assert "protect_path:extension_unwind" in result.table
 
 
 def test_compute_regime_pressure_outcomes_summarizes_top_pressure_buckets(

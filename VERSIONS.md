@@ -7,7 +7,7 @@ This file records the current research versions. Code constants live in
 
 | Pillar | Current version | Snapshot version | Derived labels |
 | --- | --- | --- | --- |
-| Market regime | `v1.0` | `v1.0` | `market_signals_v1.0`, `market_signals_model_v1.0`, `market_regime_features_v1.0`, `market_regime_score_v1.0`, `regime_pressure_v1.0`, `regime_action_v1.0`, `regime-v1.0.xlsx`, `regime-v1.0.csv`, `outcomes-action-v1.0.txt`, `outcomes-pressure-v1.0.txt`, `outcomes-regime-v1.0.txt`, `outcomes-episode-v1.0.txt` |
+| Market regime | `v1.0` | `v1.0` | `market_signals_v1.0`, `market_signals_model_v1.0`, `market_regime_features_v1.0`, `market_regime_score_v1.0`, `regime_pressure_v1.0`, `regime_action_v1.0`, `regime-v1.0.xlsx`, `regime-v1.0.csv`, `outcomes-action-v1.0.txt`, `outcomes-posture-v1.0.txt`, `outcomes-pressure-v1.0.txt`, `outcomes-regime-v1.0.txt`, `outcomes-episode-v1.0.txt` |
 | Bulltard | `v0.0` | `v0.0` | `bulltard_html_parsers_v0.0`, `bulltard_ingest_v0.0`, `bulltard_candidate_validation_v0.0`, `bulltard_candidate_validation_rules_v0.0`, `candidate_validation_only_v0.0` |
 | Portfolio policy | `v0.0` | `v0.0` | `portfolio_policy_v0.0` |
 

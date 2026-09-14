@@ -158,11 +158,12 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 Add `--save` to write the same report to a versioned canonical text file such as
 `workbooks/outcomes-action-v1.0.txt`.
 
-Replay headline regime labels, normalized pressure buckets, SPY correction episodes,
-market-signal rows, or policy states:
+Replay headline regime labels, held posture, normalized pressure buckets, SPY correction
+episodes, market-signal rows, or policy states:
 
 ```bash
 ./bin/marketlab regime outcomes --by regime   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by posture  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by pressure --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by episode  --start 2016-01-01 --end 2026-06-01
 ./bin/marketlab regime outcomes --by signal   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
@@ -180,8 +181,9 @@ and writes the same rows to `workbooks/regime-v1.0.csv`. Use `--snapshot-version
 to regenerate older-version files such as `workbooks/regime-v0.0.xlsx`. The XLSX output refreshes the `regime_data` worksheet and
 `RegimeData` table in place. Other workbook sheets are preserved, so you can create charts
 once in Excel and refresh the same workbook after each new backfill or daily run. Both
-formats include SPY/QQQ closes, indexed prices, headline regime/action fields, normalized
-pressure feature values, and protect/redeploy action evidence.
+formats include SPY/QQQ closes, indexed prices, headline regime/action fields, derived
+held posture, armed extension memory, normalized pressure feature values, and
+protect/redeploy action evidence.
 
 ### Portfolio Policy
 

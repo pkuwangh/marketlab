@@ -102,6 +102,9 @@ ACTION_REGIME_BREAK_CONTEXT_THRESHOLD = 0.70
 ACTION_CONFIRMATION_THRESHOLD = 0.35
 ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES = 2
 ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES = 2
+PROTECTED_POSTURE_MAX_AGE_DAYS = 65
+REDEPLOY_POSTURE_MAX_AGE_DAYS = 20
+POSTURE_CLEAR_THRESHOLD = 0.35
 
 
 class RegimeError(ValueError):
@@ -627,6 +630,78 @@ class RegimeActionOutcomeResult:
     outcomes: tuple[RegimeActionForwardOutcome, ...]
     frequency_rows: tuple[RegimeActionFrequencyRow, ...]
     summary_rows: tuple[RegimeActionOutcomeSummaryRow, ...]
+    frequency_table: str
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePostureState:
+    """Derived held posture reconstructed from regime action events."""
+
+    source_date: date
+    price_date: date | None
+    posture_state: str
+    protected_since: date | None
+    protect_reason: str | None
+    protect_path: str | None
+    redeploy_since: date | None
+    posture_age: int | None
+    max_drawdown_since_posture: float | None
+    reset_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePostureForwardOutcome:
+    """One forward market outcome from one derived posture state."""
+
+    source_date: date
+    price_date: date | None
+    posture_state: str
+    protect_path: str | None
+    posture_age: int | None
+    max_drawdown_since_posture: float | None
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePostureOutcomeSummaryRow:
+    """Aggregate forward outcome row for one derived posture bucket."""
+
+    bucket: str
+    horizon_days: int
+    posture_count: int
+    available_count: int
+    avg_posture_age: float | None
+    avg_posture_drawdown: float | None
+    avg_spy_return: float | None
+    avg_qqq_return: float | None
+    avg_spy_max_drawdown: float | None
+    avg_qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePostureFrequencyRow:
+    """Frequency count for one derived posture state."""
+
+    posture_state: str
+    posture_count: int
+    share: float
+
+
+@dataclass(frozen=True, slots=True)
+class RegimePostureOutcomeResult:
+    """Result of replaying derived held posture against forward outcomes."""
+
+    start_date: date
+    end_date: date
+    postures: tuple[RegimePostureState, ...]
+    outcomes: tuple[RegimePostureForwardOutcome, ...]
+    frequency_rows: tuple[RegimePostureFrequencyRow, ...]
+    summary_rows: tuple[RegimePostureOutcomeSummaryRow, ...]
     frequency_table: str
     table: str
 
@@ -4503,6 +4578,148 @@ def _clamp(value: float, lower: float, upper: float) -> float:
     return min(upper, max(lower, value))
 
 
+def derive_regime_postures(
+    *,
+    snapshots: tuple[RegimeSnapshot, ...],
+    spy_history: tuple[DailyPriceObservation, ...] = (),
+) -> tuple[RegimePostureState, ...]:
+    """Reconstruct held posture from point-in-time regime action events."""
+
+    ordered_snapshots = tuple(sorted(snapshots, key=lambda snapshot: snapshot.source_date))
+    posture_state = "neutral"
+    posture_start_date: date | None = None
+    posture_start_index: int | None = None
+    protected_since: date | None = None
+    protect_reason: str | None = None
+    protect_path: str | None = None
+    redeploy_since: date | None = None
+    rows: list[RegimePostureState] = []
+
+    for index, snapshot in enumerate(ordered_snapshots):
+        reset_reason: str | None = None
+        if snapshot.action_state == "scale_down_protect":
+            posture_state = "protected"
+            posture_start_date = snapshot.source_date
+            posture_start_index = index
+            protected_since = snapshot.source_date
+            protect_reason = snapshot.action_reason
+            protect_path = _protect_path_from_reason(snapshot.action_reason)
+            redeploy_since = None
+        elif snapshot.action_state == "scale_up_redeploy":
+            reset_reason = "redeploy_event" if posture_state == "protected" else None
+            posture_state = "redeploying"
+            posture_start_date = snapshot.source_date
+            posture_start_index = index
+            redeploy_since = snapshot.source_date
+            protected_since = None
+            protect_reason = None
+            protect_path = None
+        else:
+            reset_reason = _posture_reset_reason(
+                snapshot=snapshot,
+                posture_state=posture_state,
+                posture_start_index=posture_start_index,
+                snapshot_index=index,
+            )
+            if reset_reason is not None:
+                posture_state = "neutral"
+                posture_start_date = None
+                posture_start_index = None
+                protected_since = None
+                protect_reason = None
+                protect_path = None
+                redeploy_since = None
+
+        posture_age = index - posture_start_index if posture_start_index is not None else None
+        rows.append(
+            RegimePostureState(
+                source_date=snapshot.source_date,
+                price_date=snapshot.price_date,
+                posture_state=posture_state,
+                protected_since=protected_since,
+                protect_reason=protect_reason,
+                protect_path=protect_path,
+                redeploy_since=redeploy_since,
+                posture_age=posture_age,
+                max_drawdown_since_posture=_posture_max_drawdown(
+                    history=spy_history,
+                    start_date=posture_start_date,
+                    end_date=snapshot.price_date,
+                ),
+                reset_reason=reset_reason,
+            )
+        )
+    return tuple(rows)
+
+
+def _protect_path_from_reason(reason: str) -> str | None:
+    for path in ("extension_unwind", "regime_break"):
+        if reason.startswith(f"{path} protect"):
+            return path
+    if "volatility_only_warning" in reason:
+        return "volatility_only_warning"
+    return None
+
+
+def _posture_reset_reason(
+    *,
+    snapshot: RegimeSnapshot,
+    posture_state: str,
+    posture_start_index: int | None,
+    snapshot_index: int,
+) -> str | None:
+    if posture_start_index is None:
+        return None
+    age = snapshot_index - posture_start_index
+    if posture_state == "protected":
+        if age >= PROTECTED_POSTURE_MAX_AGE_DAYS:
+            return "max_protected_age"
+        if _protect_pressure_cleared(snapshot):
+            return "protect_pressure_cleared"
+    if posture_state == "redeploying":
+        if age >= REDEPLOY_POSTURE_MAX_AGE_DAYS:
+            return "max_redeploy_age"
+        if _redeploy_pressure_cleared(snapshot):
+            return "redeploy_pressure_cleared"
+    return None
+
+
+def _protect_pressure_cleared(snapshot: RegimeSnapshot) -> bool:
+    return (
+        snapshot.protect_strength < POSTURE_CLEAR_THRESHOLD
+        and (snapshot.extension_setup_score or 0.0) < ACTION_EXTENSION_SETUP_THRESHOLD
+        and (snapshot.fragility_context_score or 0.0) < POSTURE_CLEAR_THRESHOLD
+    )
+
+
+def _redeploy_pressure_cleared(snapshot: RegimeSnapshot) -> bool:
+    return (
+        snapshot.redeploy_strength < POSTURE_CLEAR_THRESHOLD
+        and (snapshot.washout_setup_score or 0.0) < POSTURE_CLEAR_THRESHOLD
+    )
+
+
+def _posture_max_drawdown(
+    *,
+    history: tuple[DailyPriceObservation, ...],
+    start_date: date | None,
+    end_date: date | None,
+) -> float | None:
+    if start_date is None or end_date is None:
+        return None
+    start_index = _exact_date_index(history, start_date)
+    end_index = _exact_date_index(history, end_date)
+    if start_index is None or end_index is None or end_index < start_index:
+        return None
+    start_close = history[start_index].return_close
+    if start_close == 0:
+        return None
+    lows = [row.return_close for row in history[start_index : end_index + 1]]
+    if not lows:
+        return None
+    return min(0.0, min(lows) / start_close - 1.0)
+
+
 def compute_regime_outcomes(
     *,
     start_date: date,
@@ -4683,6 +4900,74 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         event_volatility_context=snapshot.event_volatility_context,
         action_features=snapshot.action_features,
         action_modules=snapshot.action_modules,
+    )
+
+
+def compute_regime_posture_outcomes(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
+) -> RegimePostureOutcomeResult:
+    """Replay derived held posture states against forward SPY/QQQ outcomes."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    snapshots = _load_regime_snapshots_through(
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
+    )
+    target_snapshots = tuple(
+        snapshot for snapshot in snapshots if start_date <= snapshot.source_date <= end_date
+    )
+    if not target_snapshots:
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    postures_by_date = {
+        posture.source_date: posture
+        for posture in derive_regime_postures(
+            snapshots=snapshots,
+            spy_history=histories.get("SPY", ()),
+        )
+    }
+    target_postures = tuple(
+        postures_by_date[snapshot.source_date] for snapshot in target_snapshots
+    )
+    outcomes = tuple(
+        outcome
+        for snapshot in target_snapshots
+        for outcome in _regime_posture_outcomes(
+            snapshot=snapshot,
+            posture=postures_by_date[snapshot.source_date],
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    frequency_rows = summarize_regime_posture_frequency(target_postures)
+    summary_rows = summarize_regime_posture_outcomes(outcomes)
+    frequency_table = format_regime_posture_frequency(frequency_rows)
+    table = format_regime_posture_outcome_summary(summary_rows)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        posture_count=len(target_postures),
+        outcome_count=len(outcomes),
+    ).success("Computed market regime posture outcomes")
+    return RegimePostureOutcomeResult(
+        start_date=start_date,
+        end_date=end_date,
+        postures=target_postures,
+        outcomes=outcomes,
+        frequency_rows=frequency_rows,
+        summary_rows=summary_rows,
+        frequency_table=frequency_table,
+        table=table,
     )
 
 
@@ -4969,6 +5254,75 @@ def summarize_regime_action_outcomes(
     return tuple(rows)
 
 
+def summarize_regime_posture_frequency(
+    postures: tuple[RegimePostureState, ...],
+) -> tuple[RegimePostureFrequencyRow, ...]:
+    """Summarize derived posture-state frequencies."""
+
+    states = ("neutral", "protected", "redeploying")
+    counts = {state: 0 for state in states}
+    for posture in postures:
+        counts.setdefault(posture.posture_state, 0)
+        counts[posture.posture_state] += 1
+    total_count = len(postures)
+    return tuple(
+        RegimePostureFrequencyRow(
+            posture_state=state,
+            posture_count=counts[state],
+            share=counts[state] / total_count if total_count else 0.0,
+        )
+        for state in counts
+    )
+
+
+def summarize_regime_posture_outcomes(
+    outcomes: tuple[RegimePostureForwardOutcome, ...],
+) -> tuple[RegimePostureOutcomeSummaryRow, ...]:
+    """Summarize forward market outcomes by derived posture bucket."""
+
+    buckets: dict[str, list[RegimePostureForwardOutcome]] = {"all": list(outcomes)}
+    for outcome in outcomes:
+        buckets.setdefault(f"posture:{outcome.posture_state}", []).append(outcome)
+        if outcome.protect_path:
+            buckets.setdefault(f"protect_path:{outcome.protect_path}", []).append(outcome)
+
+    rows: list[RegimePostureOutcomeSummaryRow] = []
+    for bucket in sorted(buckets):
+        bucket_outcomes = tuple(buckets[bucket])
+        for horizon in sorted({outcome.horizon_days for outcome in bucket_outcomes}):
+            horizon_outcomes = tuple(
+                outcome for outcome in bucket_outcomes if outcome.horizon_days == horizon
+            )
+            available = tuple(
+                outcome
+                for outcome in horizon_outcomes
+                if outcome.spy_return is not None and outcome.qqq_return is not None
+            )
+            rows.append(
+                RegimePostureOutcomeSummaryRow(
+                    bucket=bucket,
+                    horizon_days=horizon,
+                    posture_count=len(horizon_outcomes),
+                    available_count=len(available),
+                    avg_posture_age=_average(
+                        outcome.posture_age for outcome in horizon_outcomes
+                    ),
+                    avg_posture_drawdown=_average(
+                        outcome.max_drawdown_since_posture for outcome in horizon_outcomes
+                    ),
+                    avg_spy_return=_average(outcome.spy_return for outcome in available),
+                    avg_qqq_return=_average(outcome.qqq_return for outcome in available),
+                    avg_spy_max_drawdown=_average(
+                        outcome.spy_max_drawdown for outcome in available
+                    ),
+                    avg_qqq_max_drawdown=_average(
+                        outcome.qqq_max_drawdown for outcome in available
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
 def summarize_regime_pressure_outcomes(
     outcomes: tuple[RegimePressureForwardOutcome, ...],
 ) -> tuple[RegimePressureOutcomeSummaryRow, ...]:
@@ -5134,6 +5488,65 @@ def format_regime_action_outcome_summary(
                 f"{row.horizon_days}d",
                 str(row.action_count),
                 str(row.available_count),
+                _format_percent(row.avg_spy_return),
+                _format_percent(row.avg_qqq_return),
+                _format_drawdown(row.avg_spy_max_drawdown),
+                _format_drawdown(row.avg_qqq_max_drawdown),
+            ]
+        )
+    return _format_grouped_table(table, group_column=0)
+
+
+def format_regime_posture_frequency(rows: tuple[RegimePostureFrequencyRow, ...]) -> str:
+    """Format derived posture frequency as a compact table."""
+
+    if not rows:
+        return "No regime posture rows found."
+
+    table = [["posture_state", "count", "share"]]
+    for row in rows:
+        table.append(
+            [
+                row.posture_state,
+                str(row.posture_count),
+                _format_share(row.share),
+            ]
+        )
+    return _format_table(table)
+
+
+def format_regime_posture_outcome_summary(
+    rows: tuple[RegimePostureOutcomeSummaryRow, ...],
+) -> str:
+    """Format derived posture forward outcome summaries as a compact table."""
+
+    available_rows = tuple(row for row in rows if row.available_count > 0)
+    if not available_rows:
+        return "No available regime posture outcome rows found."
+
+    table = [
+        [
+            "bucket",
+            "horizon",
+            "postures",
+            "available",
+            "age",
+            "posture_dd",
+            "avg_spy",
+            "avg_qqq",
+            "spy_dd",
+            "qqq_dd",
+        ]
+    ]
+    for row in available_rows:
+        table.append(
+            [
+                row.bucket,
+                f"{row.horizon_days}d",
+                str(row.posture_count),
+                str(row.available_count),
+                _format_decimal(row.avg_posture_age),
+                _format_drawdown(row.avg_posture_drawdown),
                 _format_percent(row.avg_spy_return),
                 _format_percent(row.avg_qqq_return),
                 _format_drawdown(row.avg_spy_max_drawdown),
@@ -5740,6 +6153,35 @@ def _regime_action_outcomes(
             stretch_score=action.stretch_score,
             washout_score=action.washout_score,
             action_confidence=action.confidence,
+            horizon_days=horizon,
+            spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+            qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+            spy_max_drawdown=_forward_max_drawdown(spy_history, index=spy_index, horizon=horizon),
+            qqq_max_drawdown=_forward_max_drawdown(qqq_history, index=qqq_index, horizon=horizon),
+        )
+        for horizon in horizons
+    )
+
+
+def _regime_posture_outcomes(
+    *,
+    snapshot: RegimeSnapshot,
+    posture: RegimePostureState,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[RegimePostureForwardOutcome, ...]:
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _exact_date_index(spy_history, snapshot.price_date)
+    qqq_index = _exact_date_index(qqq_history, snapshot.price_date)
+    return tuple(
+        RegimePostureForwardOutcome(
+            source_date=snapshot.source_date,
+            price_date=snapshot.price_date,
+            posture_state=posture.posture_state,
+            protect_path=posture.protect_path,
+            posture_age=posture.posture_age,
+            max_drawdown_since_posture=posture.max_drawdown_since_posture,
             horizon_days=horizon,
             spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
             qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
@@ -6555,6 +6997,12 @@ def _format_signed_decimal(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:+.2f}"
+
+
+def _format_decimal(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.1f}"
 
 
 def _format_change_with_percent(change: float | None, percent_change: float | None) -> str:
