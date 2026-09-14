@@ -667,6 +667,7 @@ def daily_run(
             snapshot_version=None,
             write_snapshot=True,
             overwrite_snapshot=True,
+            require_action_history=True,
         )
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1288,6 +1289,7 @@ def regime_snapshot(
             snapshot_version=None,
             write_snapshot=True,
             overwrite_snapshot=True,
+            require_action_history=True,
         )
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc

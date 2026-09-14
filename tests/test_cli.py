@@ -195,6 +195,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         snapshot_version: str | None,
         write_snapshot: bool,
         overwrite_snapshot: bool,
+        require_action_history: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["regime_prices", "market_series"]
         assert source_date == date(2026, 8, 31)
@@ -202,6 +203,7 @@ def test_daily_run_skips_missing_recap_and_runs_core_workflow(
         assert snapshot_version is None
         assert write_snapshot is True
         assert overwrite_snapshot is True
+        assert require_action_history is True
         events.append("regime")
         snapshot = _regime_snapshot(source_date=source_date)
         return RegimeSnapshotResult(
@@ -353,9 +355,11 @@ def test_daily_run_uses_default_recap_file_for_bulltard(
         snapshot_version: str | None,
         write_snapshot: bool,
         overwrite_snapshot: bool,
+        require_action_history: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["regime_prices"]
         assert overwrite_snapshot is True
+        assert require_action_history is True
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -588,9 +592,11 @@ def test_daily_run_fetches_missing_default_recap_from_gmail(
         snapshot_version: str | None,
         write_snapshot: bool,
         overwrite_snapshot: bool,
+        require_action_history: bool,
     ) -> RegimeSnapshotResult:
         assert source_date == date(2026, 9, 1)
         assert overwrite_snapshot is True
+        assert require_action_history is True
         events.append("regime")
         return RegimeSnapshotResult(
             source_date=source_date,
@@ -2127,6 +2133,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         snapshot_version: str | None,
         write_snapshot: bool,
         overwrite_snapshot: bool,
+        require_action_history: bool,
     ) -> RegimeSnapshotResult:
         assert events == ["prices", "market-series"]
         assert source_date == date(2026, 8, 28)
@@ -2138,6 +2145,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
         assert snapshot_version is None
         assert write_snapshot is True
         assert overwrite_snapshot is True
+        assert require_action_history is True
         events.append("snapshot")
         snapshot = _regime_snapshot(source_date=source_date)
         signal = MarketSignal(
@@ -2300,6 +2308,7 @@ def test_regime_snapshot_outputs_metadata_and_overall_table_by_default(
         snapshot_version: str | None,
         write_snapshot: bool,
         overwrite_snapshot: bool,
+        require_action_history: bool,
     ) -> RegimeSnapshotResult:
         assert source_date == date(2026, 8, 28)
         assert price_root == price_root_arg
@@ -2308,6 +2317,7 @@ def test_regime_snapshot_outputs_metadata_and_overall_table_by_default(
         assert signal_snapshot_root == signal_snapshot_root_arg
         assert signal_time == "eod"
         assert snapshot_version is None
+        assert require_action_history is True
         assert write_snapshot is True
         assert overwrite_snapshot is True
         snapshot = _regime_snapshot(source_date=source_date)

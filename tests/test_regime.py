@@ -17,6 +17,7 @@ from marketlab.regime import (
     RegimeActionState,
     RegimeComponentScore,
     RegimeError,
+    RegimeExtensionMemory,
     RegimePressureFeature,
     RegimeSnapshot,
     RegimeSnapshotResult,
@@ -81,6 +82,20 @@ def test_compute_regime_snapshot_rejects_non_current_snapshot_version(
             snapshot_root=tmp_path / "snapshots",
             signal_snapshot_root=tmp_path / "signals",
             snapshot_version="not-current",
+        )
+
+
+def test_compute_regime_snapshot_requires_prior_action_history_for_single_date(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RegimeError, match="Missing prior same-version regime snapshots"):
+        compute_regime_snapshot(
+            source_date=date(2026, 9, 11),
+            price_root=tmp_path / "prices",
+            market_series_root=tmp_path / "market-series",
+            snapshot_root=tmp_path / "snapshots",
+            signal_snapshot_root=tmp_path / "signals",
+            require_action_history=True,
         )
 
 
@@ -1025,6 +1040,75 @@ def test_derive_regime_action_state_detects_paired_divergence_inside_turn_module
     assert "equity_credit_divergence" in credit_module.feature_names
     assert breadth_module.deterioration_score > 0.0
     assert credit_module.deterioration_score > 0.0
+
+
+def test_derive_regime_action_state_uses_armed_extension_memory_after_setup_cools() -> None:
+    source_date = date(2026, 9, 10)
+    snapshot = _snapshot(
+        source_date=source_date,
+        regime="neutral",
+        score=-1,
+        stretch_pressure_score=0.48,
+        washout_pressure_score=0.10,
+        extension_setup_score=0.08,
+        fragility_context_score=0.20,
+    )
+    deterioration_signals = (
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="volatility",
+            name="price_proxy",
+            status="mixed",
+            score=0,
+            value="VIX rising",
+            details={"vix_return_5d": 0.10},
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="breadth",
+            name="price_proxy",
+            status="narrow",
+            score=-1,
+            value="weak breadth",
+            details={"rsp_spy_relative_5d": -0.03},
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="credit",
+            name="price_proxy",
+            status="weak",
+            score=-1,
+            value="HYG/TLT weak",
+            details={"hyg_tlt_relative_5d": -0.04},
+        ),
+    )
+
+    without_memory = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=deterioration_signals,
+    )
+    with_memory = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=deterioration_signals,
+        extension_memory=RegimeExtensionMemory(
+            source_date=source_date,
+            status="armed",
+            armed=True,
+            armed_since=source_date - timedelta(days=7),
+            armed_age=5,
+            armed_decay=0.875,
+            armed_source_strength=0.72,
+            effective_score=0.63,
+            snapshot_count=6,
+        ),
+    )
+
+    assert without_memory.state == "no_change"
+    assert with_memory.state == "scale_down_protect"
+    assert with_memory.action_path == "extension_unwind"
+    assert with_memory.extension_armed is True
+    assert with_memory.extension_armed_age == 5
+    assert "extension setup was armed" in with_memory.reason
 
 
 def test_derive_regime_action_state_allows_regime_break_without_extension() -> None:

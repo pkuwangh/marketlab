@@ -92,7 +92,7 @@ history length, and licensing are clear enough for replay.
 
 ## Current Market-Regime Model
 
-The current v0.0 implementation computes:
+The current v1.0 implementation computes:
 
 - Directional regime score from family-level market signals.
 - Stretch/washout pressure from rolling percentile-normalized features.
@@ -101,9 +101,11 @@ The current v0.0 implementation computes:
 - Rare action states: `no_change`, `scale_down_protect`, `scale_up_redeploy`.
 - A provisional portfolio policy mapping from action state to marginal beta/cash/overlay posture.
 
-This is useful research scaffolding, not a finished model. The current implementation is v0.0
-research code. It still mixes some extension and fragility evidence in the pressure/action
-outputs; the redesign below describes what should be improved next, not what is already guaranteed.
+This is useful research scaffolding, not a finished model. The current implementation is v1.0
+research code. It separates extension setup, fragility context, deterioration confirmation,
+and stabilization confirmation, and it uses saved same-version regime snapshots as the
+extension action-memory chain. Thresholds and decay windows are still research assumptions,
+not calibrated production policy.
 
 ## Setup, Confirmation, Action
 
@@ -218,17 +220,20 @@ Proposals:
 - Regime-break path: `strong_broad_deterioration_gate`.
 - Study strength scores after the gates pass, not as a substitute for the gates.
 
-### Problem: Same-Day Setup And Confirmation Are Too Rigid
+### Problem: Same-Day Setup And Confirmation Were Too Rigid
 
-The current protect rule effectively requires stretch setup and deterioration evidence to exist on
-the same snapshot date. That can miss the intended pattern: the market gets extended first, then
+The v0.0 protect rule effectively required stretch setup and deterioration evidence to exist on
+the same snapshot date. That missed the intended pattern: the market gets extended first, then
 breadth, credit, or volatility deteriorates days or weeks later.
 
-Proposals:
+Implemented v1.0 direction:
 
 - Add an armed setup state: high extension setup arms protect for a bounded number of trading days.
 - Let the armed setup decay over time rather than disappear immediately.
 - Trigger protect only when confirmation appears while setup is armed.
+
+Open research:
+
 - Use a rolling percentile threshold, roughly p90, instead of a fixed score.
 - Compare decay windows, such as 20 and 40 trading days, against correction episodes.
 
@@ -361,13 +366,13 @@ context, and realized outcome.
 
 ## Near-Term Algorithm Backlog
 
-1. Split protect pressure into `extension_setup` and `fragility_context`.
-2. Build correction episode diagnostics with shock/event labeling.
-3. Add armed setup memory and decay for extension-unwind protect.
-4. Add broad confirmation gates and prevent volatility-only normal protect.
-5. Add a separate, harder regime-break protect path for corrections without prior extension.
-6. Re-run episode-level correction coverage and false-alert analysis before threshold tuning.
-7. Add stateful posture replay so action events become portfolio posture episodes.
-8. Leave redeploy mostly unchanged for now, except for separate validation.
-9. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
-10. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.
+1. Re-run episode-level correction coverage and false-alert analysis on v1.0 snapshots.
+2. Study whether the fixed extension arm threshold should become a rolling p90 threshold.
+3. Compare 20 and 40 trading-snapshot decay windows for extension-unwind memory.
+4. Tighten event-volatility handling so scheduled macro premium does not masquerade as broad
+   deterioration.
+5. Calibrate regime-break thresholds separately from extension-unwind thresholds.
+6. Extend the armed-setup idea to redeploy only after protect behavior is stable.
+7. Leave redeploy mostly unchanged for now, except for separate validation.
+8. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
+9. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.

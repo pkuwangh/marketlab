@@ -103,6 +103,13 @@ evidence tables from the snapshot command itself.
 Regime and market-signal snapshots are replaceable calculated under `data/snapshots/`;
 source observations remain under `data/observations/`.
 
+The v1.0 protect action uses saved same-version regime snapshots as its action-memory
+chain. In practice, run `regime backfill` once before relying on a single-date
+`regime snapshot` or `daily` run. A fresh single-date snapshot fails with a clear
+message when this prior chain is missing. Start the backfill far enough before the
+period you care about; extension-unwind memory can look back up to 40 saved trading
+snapshots.
+
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
   Volatility indexes are fetched from CBOE historical CSVs; if a source returns stale

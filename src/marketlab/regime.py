@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +81,7 @@ CORRECTION_EPISODE_FIRST_DAMAGE_DRAWDOWN = 0.03
 CORRECTION_EPISODE_MIN_DRAWDOWN = 0.05
 CORRECTION_EPISODE_SEVERE_DRAWDOWN = 0.08
 EXTENSION_ARMED_SETUP_THRESHOLD = 0.60
+ACTION_EXTENSION_ARMED_MAX_AGE_DAYS = 40
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
 REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
@@ -332,6 +333,14 @@ class RegimeSnapshot:
     extension_setup_score: float | None = None
     fragility_context_score: float | None = None
     washout_setup_score: float | None = None
+    extension_memory_status: str = "not_computed"
+    extension_armed: bool = False
+    extension_armed_since: date | None = None
+    extension_armed_age: int | None = None
+    extension_armed_decay: float | None = None
+    extension_armed_source_strength: float | None = None
+    extension_memory_score: float = 0.0
+    extension_memory_snapshot_count: int = 0
     pressure_confidence: str = "low"
     pressure_features: tuple[RegimePressureFeature, ...] = ()
     pressure_modules: tuple[RegimePressureModule, ...] = ()
@@ -410,12 +419,39 @@ class RegimeSnapshot:
             "extension_setup_score": self.extension_setup_score,
             "fragility_context_score": self.fragility_context_score,
             "washout_setup_score": self.washout_setup_score,
+            "extension_memory_status": self.extension_memory_status,
+            "extension_armed": self.extension_armed,
+            "extension_armed_since": (
+                self.extension_armed_since.isoformat()
+                if self.extension_armed_since
+                else None
+            ),
+            "extension_armed_age": self.extension_armed_age,
+            "extension_armed_decay": self.extension_armed_decay,
+            "extension_armed_source_strength": self.extension_armed_source_strength,
+            "extension_memory_score": self.extension_memory_score,
+            "extension_memory_snapshot_count": self.extension_memory_snapshot_count,
             "pressure_confidence": self.pressure_confidence,
             "pressure_features": [feature.to_dict() for feature in self.pressure_features],
             "pressure_modules": [module.to_dict() for module in self.pressure_modules],
             "created_at": self.created_at,
             "code_revision": self.code_revision,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeExtensionMemory:
+    """Saved-snapshot memory for extension-unwind protect setups."""
+
+    source_date: date
+    status: str
+    armed: bool
+    armed_since: date | None
+    armed_age: int | None
+    armed_decay: float | None
+    armed_source_strength: float | None
+    effective_score: float
+    snapshot_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,6 +473,14 @@ class RegimeActionState:
     action_score: float = 0.0
     action_path: str | None = None
     event_volatility_context: str = "none"
+    extension_memory_status: str = "not_computed"
+    extension_armed: bool = False
+    extension_armed_since: date | None = None
+    extension_armed_age: int | None = None
+    extension_armed_decay: float | None = None
+    extension_armed_source_strength: float | None = None
+    extension_memory_score: float = 0.0
+    extension_memory_snapshot_count: int = 0
     action_features: tuple[RegimeActionFeature, ...] = ()
     action_modules: tuple[RegimeActionModule, ...] = ()
 
@@ -454,6 +498,18 @@ class RegimeActionState:
             "action_score": self.action_score,
             "action_path": self.action_path,
             "event_volatility_context": self.event_volatility_context,
+            "extension_memory_status": self.extension_memory_status,
+            "extension_armed": self.extension_armed,
+            "extension_armed_since": (
+                self.extension_armed_since.isoformat()
+                if self.extension_armed_since
+                else None
+            ),
+            "extension_armed_age": self.extension_armed_age,
+            "extension_armed_decay": self.extension_armed_decay,
+            "extension_armed_source_strength": self.extension_armed_source_strength,
+            "extension_memory_score": self.extension_memory_score,
+            "extension_memory_snapshot_count": self.extension_memory_snapshot_count,
             "confidence": self.confidence,
             "reason": self.reason,
             "evidence": list(self.evidence),
@@ -1206,6 +1262,7 @@ def compute_regime_snapshot(
     snapshot_version: str | None = None,
     write_snapshot: bool = True,
     overwrite_snapshot: bool = True,
+    require_action_history: bool = False,
 ) -> RegimeSnapshotResult:
     """Compute and optionally persist one market regime snapshot."""
 
@@ -1214,6 +1271,25 @@ def compute_regime_snapshot(
         workflow="Market regime snapshot",
     )
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
+    prior_snapshots = _load_recent_regime_snapshots_before(
+        source_date=source_date,
+        lookback_days=ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
+        snapshot_root=snapshot_root,
+        signal_time=signal_time,
+        snapshot_version=snapshot_version,
+    )
+    if require_action_history and not prior_snapshots:
+        raise RegimeError(
+            _missing_extension_memory_history_message(
+                source_date=source_date,
+                snapshot_version=snapshot_version
+                or default_snapshot_version(
+                    source_date,
+                    signal_time=signal_time,
+                    default_version=REGIME_SNAPSHOT_VERSION,
+                ),
+            )
+        )
     histories = _load_histories(symbols=DEFAULT_REGIME_PRICE_SYMBOLS, price_root=price_root)
     market_series_histories = _load_market_series_histories(
         series_ids=DEFAULT_FRED_MARKET_SERIES_IDS,
@@ -1229,6 +1305,8 @@ def compute_regime_snapshot(
         snapshot_version=snapshot_version,
         write_snapshot=write_snapshot,
         overwrite_snapshot=overwrite_snapshot,
+        prior_snapshots=prior_snapshots,
+        require_action_history=require_action_history,
     )
 
 
@@ -1286,6 +1364,15 @@ def compute_regime_backfill(
     snapshot_paths: list[Path] = []
     signal_snapshot_paths: list[Path] = []
     skipped_snapshot_paths: list[Path] = []
+    action_history_snapshots = list(
+        _load_recent_regime_snapshots_before(
+            source_date=start_date,
+            lookback_days=ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
+            snapshot_root=snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+        )
+    )
     for source_date in source_dates:
         if write_snapshot and skip_existing:
             existing_snapshot_path = _existing_regime_snapshot_path(
@@ -1305,6 +1392,14 @@ def compute_regime_backfill(
                 )
                 if existing_signal_path is not None:
                     signal_snapshot_paths.append(existing_signal_path)
+                existing_snapshot = load_regime_snapshot(
+                    source_date=source_date,
+                    snapshot_root=snapshot_root,
+                    signal_time=signal_time,
+                    snapshot_version=snapshot_version,
+                )
+                if existing_snapshot is not None:
+                    action_history_snapshots.append(existing_snapshot)
                 logger.bind(
                     source_date=source_date.isoformat(),
                     snapshot_path=str(existing_snapshot_path),
@@ -1321,7 +1416,10 @@ def compute_regime_backfill(
             write_snapshot=write_snapshot,
             overwrite_snapshot=overwrite_snapshot,
             pressure_feature_history=pressure_feature_history,
+            prior_snapshots=tuple(action_history_snapshots),
+            require_action_history=False,
         )
+        action_history_snapshots.append(result.snapshot)
         if result.snapshot_path is not None:
             snapshot_paths.append(result.snapshot_path)
         if result.signal_snapshot_path is not None:
@@ -1357,6 +1455,8 @@ def _compute_regime_snapshot_from_histories(
     write_snapshot: bool,
     overwrite_snapshot: bool,
     pressure_feature_history: dict[str, tuple[_PressureFeatureSample, ...]] | None = None,
+    prior_snapshots: tuple[RegimeSnapshot, ...] = (),
+    require_action_history: bool = False,
 ) -> RegimeSnapshotResult:
     _require_current_regime_compute_snapshot_version(
         snapshot_version,
@@ -1410,7 +1510,16 @@ def _compute_regime_snapshot_from_histories(
         ),
     )
     snapshot = _snapshot_with_pressure(snapshot=snapshot, pressure=pressure)
-    action = derive_regime_action_state(snapshot=snapshot, signals=signals)
+    extension_memory = _extension_memory_from_snapshot_chain(
+        snapshot=snapshot,
+        prior_snapshots=prior_snapshots,
+        require_prior_history=require_action_history,
+    )
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=signals,
+        extension_memory=extension_memory,
+    )
     snapshot = _snapshot_with_action(snapshot=snapshot, action=action)
     snapshot_path = (
         write_regime_snapshot(
@@ -1858,7 +1967,7 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
     if snapshot.extension_setup_score is not None:
         rows.append(
             [
-                "extension",
+                "extension_setup",
                 _gate_value(
                     score=snapshot.extension_setup_score,
                     threshold=ACTION_EXTENSION_SETUP_THRESHOLD,
@@ -1866,6 +1975,14 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
                 _extension_setup_read(snapshot.extension_setup_score),
             ]
         )
+    action = result.action or _action_state_from_snapshot(snapshot)
+    rows.append(
+        [
+            "extension_armed",
+            _extension_armed_value(action),
+            _extension_armed_read(action),
+        ]
+    )
     if snapshot.fragility_context_score is not None:
         rows.append(
             [
@@ -1877,7 +1994,6 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
                 _fragility_context_read(snapshot.fragility_context_score),
             ]
         )
-    action = result.action or _action_state_from_snapshot(snapshot)
     rows.append(
         [
             "deterioration",
@@ -2117,12 +2233,39 @@ def _gate_value(*, score: float, threshold: float) -> str:
 
 def _extension_setup_read(score: float) -> str:
     if score >= ACTION_EXTENSION_SETUP_THRESHOLD:
-        return "extension-unwind setup armed"
+        return "today's extension setup can arm protect"
     if score >= ACTION_EXTENSION_SETUP_THRESHOLD - 0.10:
         return "near extension-unwind setup gate"
     if score >= 0.30:
         return "partial extension; not armed"
     return "low extension; extension-unwind setup not armed"
+
+
+def _extension_armed_value(action: RegimeActionState) -> str:
+    if action.extension_armed_since is None:
+        return f"no; score {_format_pressure_score(action.extension_memory_score)}"
+    age = "-" if action.extension_armed_age is None else str(action.extension_armed_age)
+    decay = (
+        "-"
+        if action.extension_armed_decay is None
+        else _format_pressure_score(action.extension_armed_decay)
+    )
+    return (
+        f"{'yes' if action.extension_armed else 'expired'}; "
+        f"since {action.extension_armed_since.isoformat()}; "
+        f"age {age}; decay {decay}; "
+        f"score {_format_pressure_score(action.extension_memory_score)}"
+    )
+
+
+def _extension_armed_read(action: RegimeActionState) -> str:
+    if action.extension_memory_status == "initializing":
+        return "no prior snapshot chain; run backfill before relying on single-date action"
+    if action.extension_armed:
+        return "prior extension setup can support extension-unwind protect"
+    if action.extension_armed_since is not None:
+        return "prior extension setup expired"
+    return "no recent extension setup armed"
 
 
 def _fragility_context_read(score: float) -> str:
@@ -3042,6 +3185,7 @@ def derive_regime_action_state(
     *,
     snapshot: RegimeSnapshot,
     signals: tuple[MarketSignal, ...] = (),
+    extension_memory: RegimeExtensionMemory | None = None,
 ) -> RegimeActionState:
     """Derive rare-action state from setup pressure and turn evidence."""
 
@@ -3090,8 +3234,13 @@ def derive_regime_action_state(
     )
     stretch_score = _action_setup_bucket(stretch_setup_score)
     washout_score = _action_setup_bucket(washout_setup_score)
+    extension_memory = extension_memory or _current_only_extension_memory(
+        snapshot=snapshot,
+        extension_setup_score=extension_setup_score,
+    )
     protect_gate = _protect_gate_result(
         extension_setup_score=extension_setup_score,
+        extension_memory=extension_memory,
         fragility_context_score=fragility_context_score,
         deterioration_score=deterioration_score,
         action_modules=action_modules,
@@ -3183,6 +3332,14 @@ def derive_regime_action_state(
         action_score=action_score,
         action_path=action_path,
         event_volatility_context=event_volatility_context,
+        extension_memory_status=extension_memory.status,
+        extension_armed=extension_memory.armed,
+        extension_armed_since=extension_memory.armed_since,
+        extension_armed_age=extension_memory.armed_age,
+        extension_armed_decay=extension_memory.armed_decay,
+        extension_armed_source_strength=extension_memory.armed_source_strength,
+        extension_memory_score=extension_memory.effective_score,
+        extension_memory_snapshot_count=extension_memory.snapshot_count,
         action_features=action_features,
         action_modules=action_modules,
     )
@@ -3208,6 +3365,14 @@ def _snapshot_with_action(
         action_reason=action.reason,
         action_path=action.action_path,
         event_volatility_context=action.event_volatility_context,
+        extension_memory_status=action.extension_memory_status,
+        extension_armed=action.extension_armed,
+        extension_armed_since=action.extension_armed_since,
+        extension_armed_age=action.extension_armed_age,
+        extension_armed_decay=action.extension_armed_decay,
+        extension_armed_source_strength=action.extension_armed_source_strength,
+        extension_memory_score=action.extension_memory_score,
+        extension_memory_snapshot_count=action.extension_memory_snapshot_count,
         action_features=action.action_features,
         action_modules=action.action_modules,
     )
@@ -3255,9 +3420,172 @@ def _action_feature_evidence(
     )
 
 
+def _current_only_extension_memory(
+    *,
+    snapshot: RegimeSnapshot,
+    extension_setup_score: float,
+) -> RegimeExtensionMemory:
+    armed = extension_setup_score >= ACTION_EXTENSION_SETUP_THRESHOLD
+    return RegimeExtensionMemory(
+        source_date=snapshot.source_date,
+        status="current_only",
+        armed=armed,
+        armed_since=snapshot.source_date if armed else None,
+        armed_age=0 if armed else None,
+        armed_decay=1.0 if armed else None,
+        armed_source_strength=extension_setup_score if armed else None,
+        effective_score=extension_setup_score,
+        snapshot_count=1,
+    )
+
+
+def extension_memory_rows_from_snapshots(
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> dict[date, RegimeExtensionMemory]:
+    """Return extension-unwind setup memory for an ordered snapshot chain."""
+
+    currently_elevated = False
+    armed_since: date | None = None
+    armed_index: int | None = None
+    source_strength: float | None = None
+    rows: dict[date, RegimeExtensionMemory] = {}
+    for index, snapshot in enumerate(sorted(snapshots, key=lambda item: item.source_date)):
+        setup_score = _optional_clamped_score(snapshot.extension_setup_score)
+        if _armed_extension_setup_active(setup_score):
+            if not currently_elevated:
+                armed_since = snapshot.source_date
+                armed_index = index
+                source_strength = setup_score
+            currently_elevated = True
+        else:
+            currently_elevated = False
+            if (
+                armed_index is not None
+                and index - armed_index > ACTION_EXTENSION_ARMED_MAX_AGE_DAYS
+            ):
+                armed_since = None
+                armed_index = None
+                source_strength = None
+
+        age = index - armed_index if armed_index is not None else None
+        is_armed = age is not None and age <= ACTION_EXTENSION_ARMED_MAX_AGE_DAYS
+        decay = (
+            max(0.0, 1.0 - age / ACTION_EXTENSION_ARMED_MAX_AGE_DAYS)
+            if is_armed and age is not None
+            else None
+        )
+        rows[snapshot.source_date] = RegimeExtensionMemory(
+            source_date=snapshot.source_date,
+            status="armed" if is_armed else "unarmed",
+            armed=is_armed,
+            armed_since=armed_since,
+            armed_age=age,
+            armed_decay=decay,
+            armed_source_strength=source_strength,
+            effective_score=_extension_memory_effective_score(
+                current_setup_score=setup_score,
+                armed=is_armed,
+                armed_source_strength=source_strength,
+                armed_decay=decay,
+            ),
+            snapshot_count=index + 1,
+        )
+    return rows
+
+
+def _extension_memory_from_snapshot_chain(
+    *,
+    snapshot: RegimeSnapshot,
+    prior_snapshots: tuple[RegimeSnapshot, ...],
+    require_prior_history: bool,
+) -> RegimeExtensionMemory:
+    prior_chain = tuple(
+        item
+        for item in sorted(prior_snapshots, key=lambda prior: prior.source_date)
+        if item.source_date < snapshot.source_date
+        and item.signal_time == snapshot.signal_time
+        and item.snapshot_version == snapshot.snapshot_version
+    )
+    if require_prior_history and not prior_chain:
+        raise RegimeError(
+            _missing_extension_memory_history_message(
+                source_date=snapshot.source_date,
+                snapshot_version=snapshot.snapshot_version,
+            )
+        )
+    chain = (*prior_chain[-ACTION_EXTENSION_ARMED_MAX_AGE_DAYS:], snapshot)
+    rows = extension_memory_rows_from_snapshots(chain)
+    memory = rows[snapshot.source_date]
+    if not prior_chain and not memory.armed:
+        return RegimeExtensionMemory(
+            source_date=memory.source_date,
+            status="initializing",
+            armed=memory.armed,
+            armed_since=memory.armed_since,
+            armed_age=memory.armed_age,
+            armed_decay=memory.armed_decay,
+            armed_source_strength=memory.armed_source_strength,
+            effective_score=memory.effective_score,
+            snapshot_count=memory.snapshot_count,
+        )
+    return memory
+
+
+def _optional_clamped_score(score: float | None) -> float | None:
+    if score is None:
+        return None
+    return _clamp(score, 0.0, 1.0)
+
+
+def _extension_memory_effective_score(
+    *,
+    current_setup_score: float | None,
+    armed: bool,
+    armed_source_strength: float | None,
+    armed_decay: float | None,
+) -> float:
+    current_score = _optional_clamped_score(current_setup_score) or 0.0
+    if not armed or armed_source_strength is None or armed_decay is None:
+        return current_score
+    return max(current_score, _clamp(armed_source_strength * armed_decay, 0.0, 1.0))
+
+
+def _armed_extension_setup_active(setup_score: float | None) -> bool:
+    return setup_score is not None and setup_score >= EXTENSION_ARMED_SETUP_THRESHOLD
+
+
+def _missing_extension_memory_history_message(
+    *,
+    source_date: date,
+    snapshot_version: str | None,
+) -> str:
+    suggested_start = source_date - timedelta(days=90)
+    version_read = snapshot_version or REGIME_SNAPSHOT_VERSION
+    return (
+        "Missing prior same-version regime snapshots for extension action memory: "
+        f"date={source_date.isoformat()} snapshot_version={version_read}. "
+        "Run a regime backfill first, for example "
+        f"`./bin/marketlab regime backfill --start {suggested_start.isoformat()} "
+        f"--end {source_date.isoformat()}`. "
+        "Backfill creates the saved snapshot chain used by single-date daily snapshots."
+    )
+
+
+def _extension_memory_reason(memory: RegimeExtensionMemory) -> str:
+    if memory.armed_since is None:
+        return "extension setup is armed"
+    if memory.armed_age is None:
+        return f"extension setup was armed on {memory.armed_since.isoformat()}"
+    return (
+        f"extension setup was armed on {memory.armed_since.isoformat()} "
+        f"({memory.armed_age} trading snapshots ago)"
+    )
+
+
 def _protect_gate_result(
     *,
     extension_setup_score: float,
+    extension_memory: RegimeExtensionMemory,
     fragility_context_score: float,
     deterioration_score: float,
     action_modules: tuple[RegimeActionModule, ...],
@@ -3269,14 +3597,14 @@ def _protect_gate_result(
     non_vol_confirming_families = tuple(
         family for family in confirming_families if family != "volatility"
     )
-    extension_strength = math.sqrt(extension_setup_score * deterioration_score)
+    extension_strength = math.sqrt(extension_memory.effective_score * deterioration_score)
     regime_break_strength = math.sqrt(fragility_context_score * deterioration_score)
     broad_confirmation = (
         len(confirming_families) >= ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES
         and bool(non_vol_confirming_families)
     )
     extension_ready = (
-        extension_setup_score >= ACTION_EXTENSION_SETUP_THRESHOLD
+        extension_memory.armed
         and extension_strength >= ACTION_STRENGTH_THRESHOLD
         and broad_confirmation
     )
@@ -3296,7 +3624,7 @@ def _protect_gate_result(
             non_vol_confirming_families=non_vol_confirming_families,
             warning_only=False,
             reason=(
-                "extension setup is elevated and broad deterioration confirms it "
+                f"{_extension_memory_reason(extension_memory)} and broad deterioration confirms it "
                 f"(families {families_read})"
             ),
         )
@@ -3324,7 +3652,10 @@ def _protect_gate_result(
             "volatility_only_warning: volatility deterioration is visible, "
             "but normal protect requires non-vol confirmation"
         )
-    elif max(extension_setup_score, fragility_context_score) >= ACTION_EXTENSION_SETUP_THRESHOLD:
+    elif (
+        extension_memory.armed
+        or max(extension_setup_score, fragility_context_score) >= ACTION_EXTENSION_SETUP_THRESHOLD
+    ):
         reason = (
             "protect setup present, but confirmation is not broad enough "
             f"(families {families_read})"
@@ -5130,6 +5461,14 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         action_score=snapshot.action_score,
         action_path=snapshot.action_path,
         event_volatility_context=snapshot.event_volatility_context,
+        extension_memory_status=snapshot.extension_memory_status,
+        extension_armed=snapshot.extension_armed,
+        extension_armed_since=snapshot.extension_armed_since,
+        extension_armed_age=snapshot.extension_armed_age,
+        extension_armed_decay=snapshot.extension_armed_decay,
+        extension_armed_source_strength=snapshot.extension_armed_source_strength,
+        extension_memory_score=snapshot.extension_memory_score,
+        extension_memory_snapshot_count=snapshot.extension_memory_snapshot_count,
         action_features=snapshot.action_features,
         action_modules=snapshot.action_modules,
     )
@@ -6215,6 +6554,32 @@ def _load_recent_regime_snapshots_through(
         filename=REGIME_SNAPSHOT_FILENAME,
     ):
         if snapshot_source_date <= source_date:
+            snapshot = load_regime_snapshot(
+                source_date=snapshot_source_date,
+                snapshot_root=snapshot_root,
+                signal_time=signal_time,
+                snapshot_version=snapshot_version,
+            )
+            if snapshot is not None and snapshot.price_date == snapshot.source_date:
+                snapshots.append(snapshot)
+    return tuple(snapshots[-lookback_days:])
+
+
+def _load_recent_regime_snapshots_before(
+    *,
+    source_date: date,
+    lookback_days: int,
+    snapshot_root: Path,
+    signal_time: SignalTime | str,
+    snapshot_version: str | None,
+) -> tuple[RegimeSnapshot, ...]:
+    snapshots: list[RegimeSnapshot] = []
+    for snapshot_source_date in snapshot_source_dates(
+        snapshot_root=snapshot_root,
+        legacy_suffix=".json",
+        filename=REGIME_SNAPSHOT_FILENAME,
+    ):
+        if snapshot_source_date < source_date:
             snapshot = load_regime_snapshot(
                 source_date=snapshot_source_date,
                 snapshot_root=snapshot_root,
@@ -7476,6 +7841,24 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         extension_setup_score=_optional_float(row.get("extension_setup_score")),
         fragility_context_score=_optional_float(row.get("fragility_context_score")),
         washout_setup_score=_optional_float(row.get("washout_setup_score")),
+        extension_memory_status=str(row.get("extension_memory_status", "not_computed")),
+        extension_armed=bool(row.get("extension_armed", False)),
+        extension_armed_since=(
+            date.fromisoformat(str(row["extension_armed_since"]))
+            if row.get("extension_armed_since")
+            else None
+        ),
+        extension_armed_age=(
+            int(row["extension_armed_age"])
+            if row.get("extension_armed_age") is not None
+            else None
+        ),
+        extension_armed_decay=_optional_float(row.get("extension_armed_decay")),
+        extension_armed_source_strength=_optional_float(
+            row.get("extension_armed_source_strength")
+        ),
+        extension_memory_score=_optional_float(row.get("extension_memory_score")) or 0.0,
+        extension_memory_snapshot_count=int(row.get("extension_memory_snapshot_count", 0)),
         pressure_confidence=str(row.get("pressure_confidence", "low")),
         pressure_features=pressure_features,
         pressure_modules=pressure_modules,
