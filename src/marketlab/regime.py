@@ -1855,6 +1855,28 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             ),
         ]
     )
+    if snapshot.extension_setup_score is not None:
+        rows.append(
+            [
+                "extension",
+                _gate_value(
+                    score=snapshot.extension_setup_score,
+                    threshold=ACTION_EXTENSION_SETUP_THRESHOLD,
+                ),
+                _extension_setup_read(snapshot.extension_setup_score),
+            ]
+        )
+    if snapshot.fragility_context_score is not None:
+        rows.append(
+            [
+                "fragility",
+                _gate_value(
+                    score=snapshot.fragility_context_score,
+                    threshold=ACTION_REGIME_BREAK_CONTEXT_THRESHOLD,
+                ),
+                _fragility_context_read(snapshot.fragility_context_score),
+            ]
+        )
     rows.append(
         [
             "input_gaps",
@@ -1871,7 +1893,7 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
                 f"redeploy {_format_pressure_score(action.redeploy_strength)}; "
                 f"net {action.action_score:+.2f}"
             ),
-            _action_read(action, missing_inputs=missing_inputs),
+            _action_read(action, snapshot=snapshot, missing_inputs=missing_inputs),
         ]
     )
     return _format_table(rows)
@@ -2015,7 +2037,12 @@ def _inactive_action_strength_read(label: str, strength: float) -> str:
     return f"{label} lean below action threshold"
 
 
-def _action_read(action: RegimeActionState, *, missing_inputs: tuple[str, ...]) -> str:
+def _action_read(
+    action: RegimeActionState,
+    *,
+    snapshot: RegimeSnapshot,
+    missing_inputs: tuple[str, ...],
+) -> str:
     parts = [
         _action_state_label(action.state),
         _action_strength_read(action),
@@ -2029,6 +2056,31 @@ def _action_read(action: RegimeActionState, *, missing_inputs: tuple[str, ...]) 
     if reason:
         parts.append(reason)
     return "; ".join(parts)
+
+
+def _gate_value(*, score: float, threshold: float) -> str:
+    operator = ">=" if score >= threshold else "<"
+    return f"{_format_pressure_score(score)} {operator} {threshold:.2f}"
+
+
+def _extension_setup_read(score: float) -> str:
+    if score >= ACTION_EXTENSION_SETUP_THRESHOLD:
+        return "extension-unwind setup armed"
+    if score >= ACTION_EXTENSION_SETUP_THRESHOLD - 0.10:
+        return "near extension-unwind setup gate"
+    if score >= 0.30:
+        return "partial extension; not armed"
+    return "low extension; extension-unwind setup not armed"
+
+
+def _fragility_context_read(score: float) -> str:
+    if score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD:
+        return "regime-break context active"
+    if score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD - 0.10:
+        return "near regime-break context gate"
+    if score >= 0.30:
+        return "some fragility; not enough for regime-break"
+    return "low fragility context"
 
 
 def _action_state_label(state: str) -> str:

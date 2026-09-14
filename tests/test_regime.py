@@ -14,10 +14,12 @@ from marketlab.market_signals import (
 from marketlab.prices import DailyPriceObservation, load_price_history, write_price_observations
 from marketlab.regime import (
     RegimeActionModule,
+    RegimeActionState,
     RegimeComponentScore,
     RegimeError,
     RegimePressureFeature,
     RegimeSnapshot,
+    RegimeSnapshotResult,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
@@ -381,6 +383,64 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert loaded.extension_setup_score == result.snapshot.extension_setup_score
     assert loaded.fragility_context_score == result.snapshot.fragility_context_score
     assert loaded.washout_setup_score == result.snapshot.washout_setup_score
+
+
+def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
+    source_date = date(2026, 9, 10)
+    snapshot = _snapshot(
+        source_date=source_date,
+        regime="neutral",
+        score=-1,
+        action_state="no_change",
+        action_confidence="medium",
+        action_reason=(
+            "No actionable setup; maintain current posture: "
+            "trend damage is already visible, credit/liquidity backdrop is not broken"
+        ),
+        event_volatility_context="near_term_event_premium_with_confirmation",
+        stretch_pressure_score=0.48,
+        washout_pressure_score=0.29,
+        extension_setup_score=0.08,
+        fragility_context_score=0.68,
+        washout_setup_score=0.29,
+        protect_strength=0.67,
+        redeploy_strength=0.24,
+        action_score=-0.43,
+    )
+    action = RegimeActionState(
+        source_date=source_date,
+        action_version="fixture_action",
+        state="no_change",
+        stretch_score=2,
+        washout_score=1,
+        confidence="medium",
+        reason=snapshot.action_reason,
+        evidence=(),
+        protect_strength=0.67,
+        redeploy_strength=0.24,
+        action_score=-0.43,
+        event_volatility_context="near_term_event_premium_with_confirmation",
+    )
+    result = RegimeSnapshotResult(
+        source_date=source_date,
+        snapshot=snapshot,
+        snapshot_path=None,
+        table="",
+        action=action,
+    )
+
+    summary_table = format_regime_key_signals(result)
+
+    assert "protect 0.67 / redeploy 0.24; net -0.43" in summary_table
+    assert "extension" in summary_table
+    assert "0.08 < 0.60" in summary_table
+    assert "extension-unwind setup not armed" in summary_table
+    assert "fragility" in summary_table
+    assert "0.68 < 0.70" in summary_table
+    assert "near regime-break context gate" in summary_table
+    assert "protect gates" not in summary_table
+    assert "near-term event vol premium with non-vol confirmation" in summary_table
+    assert "trend damage is already visible" in summary_table
 
 
 def test_compute_regime_snapshot_rejects_stale_vix_term_structure(tmp_path: Path) -> None:
