@@ -76,6 +76,11 @@ DEFAULT_REGIME_PRICE_SYMBOLS = (
     + DEFAULT_REGIME_BREADTH_SYMBOLS
 )
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
+DEFAULT_CORRECTION_EPISODE_LOOKBACK_DAYS = 20
+CORRECTION_EPISODE_FIRST_DAMAGE_DRAWDOWN = 0.03
+CORRECTION_EPISODE_MIN_DRAWDOWN = 0.05
+CORRECTION_EPISODE_SEVERE_DRAWDOWN = 0.08
+CORRECTION_EPISODE_ARMED_SETUP_THRESHOLD = 0.60
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
 REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
@@ -664,6 +669,37 @@ class RegimePressureOutcomeResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimeCorrectionEpisode:
+    """One SPY correction episode and whether current protect logic warned in time."""
+
+    peak_date: date
+    first_3pct_date: date | None
+    first_5pct_date: date
+    first_8pct_date: date | None
+    trough_date: date
+    recovery_date: date | None
+    max_drawdown: float
+    first_armed_date: date | None
+    armed_before_peak: bool
+    first_protect_date: date | None
+    protect_lead_days: int | None
+    protect_timing: str
+    first_redeploy_date: date | None
+    redeploy_timing: str
+    event_context: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeCorrectionEpisodeResult:
+    """Result of replaying protect/redeploy timing against SPY correction episodes."""
+
+    start_date: date
+    end_date: date
+    episodes: tuple[RegimeCorrectionEpisode, ...]
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
 class _SymbolFeatures:
     symbol: str
     price_date: date | None
@@ -690,6 +726,16 @@ class _PressureFeatureSpec:
 class _PressureFeatureSample:
     asof_date: date
     value: float
+
+
+@dataclass(frozen=True, slots=True)
+class _CorrectionEpisodeWindow:
+    peak_index: int
+    first_3pct_index: int | None
+    first_5pct_index: int
+    first_8pct_index: int | None
+    trough_index: int
+    recovery_index: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -4504,6 +4550,64 @@ def compute_regime_pressure_outcomes(
     )
 
 
+def compute_regime_correction_episodes(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    snapshot_version: str | None = None,
+    warning_lookback_days: int = DEFAULT_CORRECTION_EPISODE_LOOKBACK_DAYS,
+) -> RegimeCorrectionEpisodeResult:
+    """Replay current protect/redeploy timing against SPY correction episodes."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+    if warning_lookback_days < 0:
+        raise RegimeError("Warning lookback days must be non-negative")
+
+    histories = _load_histories(symbols=("SPY",), price_root=price_root)
+    spy_history = tuple(
+        row for row in histories.get("SPY", ()) if row.observed_date <= end_date
+    )
+    if not spy_history:
+        raise RegimeError(f"No SPY price history found through {end_date}")
+
+    windows = _spy_correction_episode_windows(
+        history=spy_history,
+        start_date=start_date,
+        end_date=end_date,
+        min_drawdown=CORRECTION_EPISODE_MIN_DRAWDOWN,
+        severe_drawdown=CORRECTION_EPISODE_SEVERE_DRAWDOWN,
+    )
+    snapshots = _load_regime_snapshots_through(
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
+    )
+    episodes = tuple(
+        _correction_episode_from_window(
+            window=window,
+            history=spy_history,
+            snapshots=snapshots,
+            warning_lookback_days=warning_lookback_days,
+        )
+        for window in windows
+    )
+    table = format_regime_correction_episodes(episodes)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        episode_count=len(episodes),
+    ).success("Computed SPY correction episode diagnostics")
+    return RegimeCorrectionEpisodeResult(
+        start_date=start_date,
+        end_date=end_date,
+        episodes=episodes,
+        table=table,
+    )
+
+
 def summarize_regime_outcomes(
     outcomes: tuple[RegimeForwardOutcome, ...],
 ) -> tuple[RegimeOutcomeSummaryRow, ...]:
@@ -4861,6 +4965,56 @@ def format_regime_pressure_outcome_summary(
     return _format_grouped_table(table, group_column=0)
 
 
+def format_regime_correction_episodes(
+    episodes: tuple[RegimeCorrectionEpisode, ...],
+) -> str:
+    """Format SPY correction episode diagnostics as a compact table."""
+
+    if not episodes:
+        return "No SPY correction episodes found."
+
+    table = [
+        [
+            "peak",
+            "first_3",
+            "first_5",
+            "first_8",
+            "trough",
+            "max_dd",
+            "recovery",
+            "armed",
+            "protect",
+            "lead",
+            "timing",
+            "redeploy",
+            "redeploy_timing",
+            "context",
+        ]
+    ]
+    for episode in episodes:
+        table.append(
+            [
+                episode.peak_date.isoformat(),
+                _format_optional_date(episode.first_3pct_date),
+                episode.first_5pct_date.isoformat(),
+                _format_optional_date(episode.first_8pct_date),
+                episode.trough_date.isoformat(),
+                _format_drawdown(episode.max_drawdown),
+                _format_optional_date(episode.recovery_date),
+                _format_optional_date(episode.first_armed_date)
+                if episode.armed_before_peak
+                else "-",
+                _format_optional_date(episode.first_protect_date),
+                _format_day_lead(episode.protect_lead_days),
+                episode.protect_timing,
+                _format_optional_date(episode.first_redeploy_date),
+                episode.redeploy_timing,
+                episode.event_context,
+            ]
+        )
+    return _format_table(table)
+
+
 def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
     if not rows:
         return ""
@@ -5042,6 +5196,242 @@ def _load_market_signals_by_source_date_through(
                 snapshot_version=snapshot_version,
             )
     return signals_by_date
+
+
+def _spy_correction_episode_windows(
+    *,
+    history: tuple[DailyPriceObservation, ...],
+    start_date: date,
+    end_date: date,
+    min_drawdown: float,
+    severe_drawdown: float,
+) -> tuple[_CorrectionEpisodeWindow, ...]:
+    if not history:
+        return ()
+
+    peak_index = 0
+    first_3pct_index: int | None = None
+    first_5pct_index: int | None = None
+    first_8pct_index: int | None = None
+    trough_index: int | None = None
+    windows: list[_CorrectionEpisodeWindow] = []
+
+    for index, row in enumerate(history):
+        if row.observed_date > end_date:
+            break
+
+        peak_close = history[peak_index].return_close
+        if peak_close == 0:
+            peak_index = index
+            first_3pct_index = None
+            first_5pct_index = None
+            first_8pct_index = None
+            trough_index = None
+            continue
+
+        close = row.return_close
+        if first_5pct_index is None:
+            if close >= peak_close:
+                peak_index = index
+                first_3pct_index = None
+                continue
+
+            drawdown = close / peak_close - 1.0
+            if (
+                first_3pct_index is None
+                and drawdown <= -CORRECTION_EPISODE_FIRST_DAMAGE_DRAWDOWN
+            ):
+                first_3pct_index = index
+            if drawdown <= -min_drawdown:
+                first_5pct_index = index
+                first_8pct_index = index if drawdown <= -severe_drawdown else None
+                trough_index = index
+            continue
+
+        drawdown = close / peak_close - 1.0
+        if first_8pct_index is None and drawdown <= -severe_drawdown:
+            first_8pct_index = index
+        if trough_index is None or close < history[trough_index].return_close:
+            trough_index = index
+        if close >= peak_close:
+            if start_date <= history[first_5pct_index].observed_date <= end_date:
+                windows.append(
+                    _CorrectionEpisodeWindow(
+                        peak_index=peak_index,
+                        first_3pct_index=first_3pct_index,
+                        first_5pct_index=first_5pct_index,
+                        first_8pct_index=first_8pct_index,
+                        trough_index=trough_index,
+                        recovery_index=index,
+                    )
+                )
+            peak_index = index
+            first_3pct_index = None
+            first_5pct_index = None
+            first_8pct_index = None
+            trough_index = None
+
+    if first_5pct_index is not None and trough_index is not None:
+        if start_date <= history[first_5pct_index].observed_date <= end_date:
+            windows.append(
+                _CorrectionEpisodeWindow(
+                    peak_index=peak_index,
+                    first_3pct_index=first_3pct_index,
+                    first_5pct_index=first_5pct_index,
+                    first_8pct_index=first_8pct_index,
+                    trough_index=trough_index,
+                    recovery_index=None,
+                )
+            )
+
+    return tuple(windows)
+
+
+def _correction_episode_from_window(
+    *,
+    window: _CorrectionEpisodeWindow,
+    history: tuple[DailyPriceObservation, ...],
+    snapshots: tuple[RegimeSnapshot, ...],
+    warning_lookback_days: int,
+) -> RegimeCorrectionEpisode:
+    peak = history[window.peak_index]
+    first_3pct = (
+        history[window.first_3pct_index] if window.first_3pct_index is not None else None
+    )
+    first_5pct = history[window.first_5pct_index]
+    first_8pct = (
+        history[window.first_8pct_index] if window.first_8pct_index is not None else None
+    )
+    trough = history[window.trough_index]
+    recovery = (
+        history[window.recovery_index] if window.recovery_index is not None else None
+    )
+    signal_start_date = history[
+        max(0, window.peak_index - warning_lookback_days)
+    ].observed_date
+    signal_end_date = recovery.observed_date if recovery is not None else history[-1].observed_date
+    signal_snapshots = tuple(
+        snapshot
+        for snapshot in snapshots
+        if signal_start_date <= snapshot.source_date <= signal_end_date
+    )
+    first_armed_date = _first_armed_setup_date(
+        snapshots=signal_snapshots,
+        through_date=peak.observed_date,
+    )
+    first_protect_date = _first_action_date(
+        snapshots=signal_snapshots,
+        action_state="scale_down_protect",
+    )
+    first_redeploy_date = _first_action_date(
+        snapshots=tuple(
+            snapshot
+            for snapshot in signal_snapshots
+            if snapshot.source_date >= first_5pct.observed_date
+        ),
+        action_state="scale_up_redeploy",
+    )
+
+    return RegimeCorrectionEpisode(
+        peak_date=peak.observed_date,
+        first_3pct_date=first_3pct.observed_date if first_3pct is not None else None,
+        first_5pct_date=first_5pct.observed_date,
+        first_8pct_date=first_8pct.observed_date if first_8pct is not None else None,
+        trough_date=trough.observed_date,
+        recovery_date=recovery.observed_date if recovery is not None else None,
+        max_drawdown=trough.return_close / peak.return_close - 1.0,
+        first_armed_date=first_armed_date,
+        armed_before_peak=first_armed_date is not None,
+        first_protect_date=first_protect_date,
+        protect_lead_days=_trading_day_distance(
+            history=history,
+            start_date=first_protect_date,
+            end_date=first_5pct.observed_date,
+        ),
+        protect_timing=_protect_timing(
+            protect_date=first_protect_date,
+            first_3pct_date=first_3pct.observed_date if first_3pct is not None else None,
+            first_5pct_date=first_5pct.observed_date,
+        ),
+        first_redeploy_date=first_redeploy_date,
+        redeploy_timing=_redeploy_timing(
+            redeploy_date=first_redeploy_date,
+            trough_date=trough.observed_date,
+            recovery_date=recovery.observed_date if recovery is not None else None,
+        ),
+        event_context="unclassified",
+    )
+
+
+def _first_armed_setup_date(
+    *,
+    snapshots: tuple[RegimeSnapshot, ...],
+    through_date: date,
+) -> date | None:
+    for snapshot in snapshots:
+        if snapshot.source_date > through_date:
+            break
+        if (snapshot.extension_setup_score or 0.0) >= CORRECTION_EPISODE_ARMED_SETUP_THRESHOLD:
+            return snapshot.source_date
+    return None
+
+
+def _first_action_date(
+    *,
+    snapshots: tuple[RegimeSnapshot, ...],
+    action_state: str,
+) -> date | None:
+    for snapshot in snapshots:
+        if snapshot.action_state == action_state:
+            return snapshot.source_date
+    return None
+
+
+def _protect_timing(
+    *,
+    protect_date: date | None,
+    first_3pct_date: date | None,
+    first_5pct_date: date,
+) -> str:
+    if protect_date is None:
+        return "none"
+    if first_3pct_date is not None and protect_date <= first_3pct_date:
+        return "before_3pct"
+    if protect_date <= first_5pct_date:
+        return "before_5pct"
+    return "after_5pct"
+
+
+def _redeploy_timing(
+    *,
+    redeploy_date: date | None,
+    trough_date: date,
+    recovery_date: date | None,
+) -> str:
+    if redeploy_date is None:
+        return "none"
+    if redeploy_date <= trough_date:
+        return "before_trough"
+    if recovery_date is None:
+        return "after_trough_open"
+    if redeploy_date <= recovery_date:
+        return "before_recovery"
+    return "after_recovery"
+
+
+def _trading_day_distance(
+    *,
+    history: tuple[DailyPriceObservation, ...],
+    start_date: date | None,
+    end_date: date,
+) -> int | None:
+    if start_date is None:
+        return None
+    start_index = _asof_index(history, start_date)
+    end_index = _exact_date_index(history, end_date)
+    if start_index is None or end_index is None:
+        return None
+    return end_index - start_index
 
 
 def _existing_regime_snapshot_path(
@@ -5972,6 +6362,22 @@ def _format_drawdown(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{min(0.0, value) * 100:.1f}%"
+
+
+def _format_optional_date(value: date | None) -> str:
+    if value is None:
+        return "-"
+    return value.isoformat()
+
+
+def _format_day_lead(value: int | None) -> str:
+    if value is None:
+        return "-"
+    if value > 0:
+        return f"+{value}d"
+    if value < 0:
+        return f"{value}d"
+    return "0d"
 
 
 def _format_share(value: float) -> str:

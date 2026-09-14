@@ -64,6 +64,8 @@ from marketlab.regime import (
     RegimeActionState,
     RegimeBackfillResult,
     RegimeComponentScore,
+    RegimeCorrectionEpisode,
+    RegimeCorrectionEpisodeResult,
     RegimeForwardOutcome,
     RegimeOutcomeResult,
     RegimeOutcomeSummaryRow,
@@ -2925,6 +2927,85 @@ def test_regime_outcomes_save_writes_versioned_report(
     assert "outcome_horizons=20" in report
     assert "frequency_table:" in report
     assert "summary_table:" in report
+
+
+def test_regime_outcomes_episode_outputs_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_correction_episodes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        snapshot_version: str | None,
+    ) -> RegimeCorrectionEpisodeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert snapshot_version == "v1.0"
+        return RegimeCorrectionEpisodeResult(
+            start_date=start_date,
+            end_date=end_date,
+            episodes=(
+                RegimeCorrectionEpisode(
+                    peak_date=date(2026, 2, 1),
+                    first_3pct_date=date(2026, 2, 3),
+                    first_5pct_date=date(2026, 2, 5),
+                    first_8pct_date=None,
+                    trough_date=date(2026, 2, 8),
+                    recovery_date=date(2026, 2, 20),
+                    max_drawdown=-0.06,
+                    first_armed_date=date(2026, 1, 28),
+                    armed_before_peak=True,
+                    first_protect_date=date(2026, 2, 2),
+                    protect_lead_days=3,
+                    protect_timing="before_3pct",
+                    first_redeploy_date=date(2026, 2, 8),
+                    redeploy_timing="before_trough",
+                    event_context="unclassified",
+                ),
+            ),
+            table="peak        first_5     timing\n2026-02-01  2026-02-05  before_3pct",
+        )
+
+    snapshot_root_arg = snapshot_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_correction_episodes",
+        fake_compute_regime_correction_episodes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--by",
+            "episode",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+            "--snapshot-version",
+            "v1.0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_correction_episode_count=1" in result.output
+    assert "regime_correction_episode_protect_count=1" in result.output
+    assert "summary_table:" in result.output
+    assert "before_3pct" in result.output
 
 
 def test_regime_pressure_outcomes_outputs_summary_table(

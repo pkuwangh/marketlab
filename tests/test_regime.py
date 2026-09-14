@@ -20,6 +20,7 @@ from marketlab.regime import (
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
+    compute_regime_correction_episodes,
     compute_regime_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_recent_report,
@@ -1859,6 +1860,74 @@ def test_compute_regime_pressure_outcomes_summarizes_top_pressure_buckets(
     assert "\n---" in result.table
 
 
+def test_compute_regime_correction_episodes_reports_protect_timing(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 102.0, 101.0, 98.5, 96.0, 93.0, 97.0, 102.0],
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=5,
+            extension_setup_score=0.72,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=3),
+            regime="risk_on",
+            score=4,
+            action_state="scale_down_protect",
+            extension_setup_score=0.68,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=5),
+            regime="risk_off",
+            score=-4,
+            action_state="scale_up_redeploy",
+        ),
+        snapshot_root=snapshot_root,
+    )
+
+    result = compute_regime_correction_episodes(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=7),
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+    )
+
+    assert len(result.episodes) == 1
+    episode = result.episodes[0]
+    assert episode.peak_date == start_date + timedelta(days=1)
+    assert episode.first_3pct_date == start_date + timedelta(days=3)
+    assert episode.first_5pct_date == start_date + timedelta(days=4)
+    assert episode.first_8pct_date == start_date + timedelta(days=5)
+    assert episode.trough_date == start_date + timedelta(days=5)
+    assert episode.recovery_date == start_date + timedelta(days=7)
+    assert round(episode.max_drawdown, 4) == round(93.0 / 102.0 - 1.0, 4)
+    assert episode.first_armed_date == start_date + timedelta(days=1)
+    assert episode.armed_before_peak is True
+    assert episode.first_protect_date == start_date + timedelta(days=3)
+    assert episode.protect_lead_days == 1
+    assert episode.protect_timing == "before_3pct"
+    assert episode.first_redeploy_date == start_date + timedelta(days=5)
+    assert episode.redeploy_timing == "before_trough"
+    assert "before_3pct" in result.table
+    assert "unclassified" in result.table
+
+
 def test_compute_regime_recent_report_summarizes_recent_snapshot_trends(
     tmp_path: Path,
 ) -> None:
@@ -1970,6 +2039,7 @@ def _snapshot(
     action_score: float = 0.0,
     stretch_pressure_score: float | None = None,
     washout_pressure_score: float | None = None,
+    extension_setup_score: float | None = None,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
     model_version: str = "fixture_model",
     signal_time: str = "eod",
@@ -2018,6 +2088,7 @@ def _snapshot(
         action_score=action_score,
         stretch_pressure_score=stretch_pressure_score,
         washout_pressure_score=washout_pressure_score,
+        extension_setup_score=extension_setup_score,
         pressure_features=pressure_features,
         signal_time=signal_time,
         snapshot_version=snapshot_version,

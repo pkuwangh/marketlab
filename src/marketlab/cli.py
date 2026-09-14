@@ -97,6 +97,7 @@ from marketlab.regime import (
     MarketSignalOutcomeResult,
     RegimeActionOutcomeResult,
     RegimeBackfillResult,
+    RegimeCorrectionEpisodeResult,
     RegimeError,
     RegimeOutcomeResult,
     RegimePressureOutcomeResult,
@@ -106,6 +107,7 @@ from marketlab.regime import (
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
+    compute_regime_correction_episodes,
     compute_regime_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_recent_report,
@@ -153,6 +155,7 @@ class RegimeOutcomeGroup(StrEnum):
     SIGNAL = "signal"
     ACTION = "action"
     PRESSURE = "pressure"
+    EPISODE = "episode"
     POLICY = "policy"
 
 
@@ -1481,7 +1484,10 @@ def regime_outcomes(
     outcome_group: RegimeOutcomeGroup = typer.Option(
         RegimeOutcomeGroup.ACTION,
         "--by",
-        help="Outcome grouping to replay: regime, signal, action, pressure, or policy.",
+        help=(
+            "Outcome grouping to replay: regime, signal, action, pressure, episode, "
+            "or policy."
+        ),
     ),
 ) -> None:
     """Replay forward SPY/QQQ outcomes for market-regime research buckets."""
@@ -1555,6 +1561,28 @@ def regime_outcomes(
             raise typer.BadParameter(str(exc)) from exc
         _emit_regime_outcome_report(
             _regime_pressure_outcome_report_text(pressure_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
+        return
+    if outcome_group == RegimeOutcomeGroup.EPISODE:
+        try:
+            episode_result = compute_regime_correction_episodes(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                price_root=price_root,
+                snapshot_version=snapshot_version,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _emit_regime_outcome_report(
+            _regime_correction_episode_report_text(episode_result),
             save_report=save_report,
             outcome_group=outcome_group.value,
             artifact_version=outcome_version,
@@ -3091,6 +3119,21 @@ def _regime_pressure_outcome_report_text(result: RegimePressureOutcomeResult) ->
     )
 
 
+def _regime_correction_episode_report_text(
+    result: RegimeCorrectionEpisodeResult,
+) -> str:
+    return _format_outcome_tables(
+        (
+            ("regime_correction_episode_count", len(result.episodes)),
+            (
+                "regime_correction_episode_protect_count",
+                _protected_correction_episode_count(result),
+            ),
+        ),
+        summary_table=result.table,
+    )
+
+
 def _echo_store_refresh_result(result: StoreRefreshResult) -> None:
     typer.echo(f"research_db_path={result.db_path}")
     typer.echo(f"research_store_schema={result.schema_version}")
@@ -3220,6 +3263,10 @@ def _available_regime_pressure_outcome_count(result: RegimePressureOutcomeResult
         for outcome in result.outcomes
         if outcome.spy_return is not None and outcome.qqq_return is not None
     )
+
+
+def _protected_correction_episode_count(result: RegimeCorrectionEpisodeResult) -> int:
+    return sum(1 for episode in result.episodes if episode.first_protect_date is not None)
 
 
 def _available_market_signal_outcome_count(result: MarketSignalOutcomeResult) -> int:
