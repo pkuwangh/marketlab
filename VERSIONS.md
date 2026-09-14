@@ -16,6 +16,9 @@ This file records the current research versions. Code constants live in
 - Same-version outputs may be overwritten while the project is pre-debut research.
 - Do not bump for formatting, report/export changes, logging, or bug fixes that do not change signal meaning.
 - Bump the affected pillar version when a change meaningfully changes generated signals, action/policy decisions, candidate validation labels, or outcome comparability.
+- Each pillar's default snapshot version must stay tied to that pillar's current version in
+  `src/marketlab/versions.py`. For example, when `REGIME_VERSION` becomes `v0.1`,
+  `REGIME_SNAPSHOT_VERSION` must also resolve to `v0.1`.
 - Keep old versioned snapshots for side-by-side outcome replay when comparing a new version against an older one.
 
 ## Version Ownership

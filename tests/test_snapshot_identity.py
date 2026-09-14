@@ -11,6 +11,14 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
+from marketlab.versions import (
+    BULLTARD_SNAPSHOT_VERSION,
+    BULLTARD_VERSION,
+    POLICY_SNAPSHOT_VERSION,
+    POLICY_VERSION,
+    REGIME_SNAPSHOT_VERSION,
+    REGIME_VERSION,
+)
 
 
 def test_snapshot_identity_serializes_versions() -> None:
@@ -47,6 +55,23 @@ def test_default_snapshot_version_is_working_v0_0() -> None:
     assert default_snapshot_version(date(2026, 8, 24), signal_time=SignalTime.EOD) == "v0.0"
 
 
+def test_pillar_snapshot_versions_track_pillar_versions() -> None:
+    assert REGIME_SNAPSHOT_VERSION == REGIME_VERSION
+    assert BULLTARD_SNAPSHOT_VERSION == BULLTARD_VERSION
+    assert POLICY_SNAPSHOT_VERSION == POLICY_VERSION
+
+
+def test_default_snapshot_version_accepts_caller_default() -> None:
+    assert (
+        default_snapshot_version(
+            date(2026, 8, 24),
+            signal_time=SignalTime.EOD,
+            default_version="v9.9",
+        )
+        == "v9.9"
+    )
+
+
 def test_versioned_snapshot_path_uses_date_time_version_file_layout(tmp_path: Path) -> None:
     source_date = date(2026, 8, 24)
     path = versioned_snapshot_path(
@@ -58,6 +83,20 @@ def test_versioned_snapshot_path_uses_date_time_version_file_layout(tmp_path: Pa
     )
 
     assert path == tmp_path / "2026-08-24" / "eod" / "v0.0" / "regime.json"
+
+
+def test_versioned_snapshot_path_uses_caller_default_version(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 24)
+    path = versioned_snapshot_path(
+        snapshot_root=tmp_path,
+        source_date=source_date,
+        signal_time=SignalTime.EOD,
+        snapshot_version=None,
+        filename="regime.json",
+        default_version="v9.9",
+    )
+
+    assert path == tmp_path / "2026-08-24" / "eod" / "v9.9" / "regime.json"
 
 
 def test_resolve_snapshot_path_returns_same_version_snapshot(tmp_path: Path) -> None:
@@ -81,6 +120,52 @@ def test_resolve_snapshot_path_returns_same_version_snapshot(tmp_path: Path) -> 
             legacy_suffix="-regime.json",
         )
         == path
+    )
+
+
+def test_resolve_snapshot_path_uses_caller_default_version(tmp_path: Path) -> None:
+    source_date = date(2026, 8, 24)
+    path = versioned_snapshot_path(
+        snapshot_root=tmp_path,
+        source_date=source_date,
+        signal_time=SignalTime.EOD,
+        snapshot_version=None,
+        filename="regime.json",
+        default_version="v9.9",
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text("{}", encoding="utf-8")
+
+    assert (
+        resolve_snapshot_path(
+            snapshot_root=tmp_path,
+            source_date=source_date,
+            signal_time=SignalTime.EOD,
+            filename="regime.json",
+            legacy_suffix="-regime.json",
+            default_version="v9.9",
+        )
+        == path
+    )
+
+
+def test_resolve_snapshot_path_preserves_legacy_fallback_with_caller_default(
+    tmp_path: Path,
+) -> None:
+    source_date = date(2026, 8, 24)
+    legacy_path = tmp_path / "2026-08-24-regime.json"
+    legacy_path.write_text("{}", encoding="utf-8")
+
+    assert (
+        resolve_snapshot_path(
+            snapshot_root=tmp_path,
+            source_date=source_date,
+            signal_time=SignalTime.EOD,
+            filename="regime.json",
+            legacy_suffix="-regime.json",
+            default_version="v9.9",
+        )
+        == legacy_path
     )
 
 

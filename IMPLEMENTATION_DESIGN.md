@@ -2,6 +2,22 @@
 
 **Status:** local-first pre-debut implementation, current as of September 2026.
 
+- [MarketLab Implementation Design](#marketlab-implementation-design)
+  - [Application Shape](#application-shape)
+  - [Command Surface](#command-surface)
+  - [Routine Workflow](#routine-workflow)
+  - [Data Layout](#data-layout)
+  - [Observation and Snapshot Semantics](#observation-and-snapshot-semantics)
+  - [Time Semantics](#time-semantics)
+  - [Source Handling](#source-handling)
+  - [Bulltard Access Boundary](#bulltard-access-boundary)
+  - [Market-Regime Outputs](#market-regime-outputs)
+  - [Portfolio Policy Outputs](#portfolio-policy-outputs)
+  - [Bulltard Outputs](#bulltard-outputs)
+  - [DuckDB Store](#duckdb-store)
+  - [Testing and Code Change Expectations](#testing-and-code-change-expectations)
+  - [Later Infrastructure Triggers](#later-infrastructure-triggers)
+
 This document describes how the current tool runs. It should stay factual and concise. For model
 theory and research proposals, see [ALGORITHM_DESIGN.md](./ALGORITHM_DESIGN.md).
 
@@ -9,7 +25,7 @@ theory and research proposals, see [ALGORITHM_DESIGN.md](./ALGORITHM_DESIGN.md).
 
 MarketLab is a conventional Python research application with a Typer CLI. Deterministic Python
 code owns data acquisition, feature calculation, snapshot writing, outcome replay, policy mapping,
-chart/report rendering, and DuckDB refresh. Agent-style work is limited to future bounded
+report/export rendering, and DuckDB refresh. Agent-style work is limited to future bounded
 extraction or analysis tasks; the database and JSON/JSONL files are the project memory.
 
 Current source modules:
@@ -25,7 +41,6 @@ Current source modules:
 | `marketlab.policy` | Portfolio-policy snapshots, backfills, outcomes, daily policy report. |
 | `marketlab.bulltard.*` | Recap parsing, app-view ingestion, candidate review, validation, outcomes. |
 | `marketlab.gmail` | Read-only Gmail OAuth and recap acquisition. |
-| `marketlab.charts` | Regime and opportunity chart rendering. |
 | `marketlab.store` | Rebuildable DuckDB query store. |
 | `marketlab.snapshots` | Shared snapshot path/version helpers. |
 
@@ -36,8 +51,8 @@ Top-level commands are grouped by user intent:
 | Command group | Role |
 | --- | --- |
 | `marketlab daily` | Routine market + Bulltard daily workflow. |
-| `marketlab regime ...` | Market-regime pillar: snapshots, backfills, outcomes, reports, charts, policy. |
-| `marketlab bulltard ...` | Bulltard capture, parsing, candidate validation, outcomes, charts. |
+| `marketlab regime ...` | Market-regime pillar: snapshots, backfills, outcomes, reports, exports, policy. |
+| `marketlab bulltard ...` | Bulltard capture, parsing, candidate validation, and outcomes. |
 | `marketlab data ...` | Source data download/import and local store utilities. |
 | `marketlab tools ...` | External integrations and one-off helpers, currently Gmail. |
 

@@ -11,6 +11,7 @@ from marketlab.policy import (
     compute_portfolio_policy_backfill,
     compute_portfolio_policy_outcomes,
     compute_portfolio_policy_snapshot,
+    derive_portfolio_policy_snapshot,
     load_portfolio_policy_snapshot,
 )
 from marketlab.prices import DailyPriceObservation, write_price_observations
@@ -70,6 +71,33 @@ def test_compute_policy_snapshot_maps_protective_regime_to_bounded_posture(
 
     loaded = load_portfolio_policy_snapshot(source_date=source_date, snapshot_root=policy_root)
     assert loaded == result.snapshot
+
+
+def test_derive_policy_snapshot_uses_policy_version_and_preserves_upstream_versions() -> None:
+    source_date = date(2026, 8, 28)
+    regime_snapshot = _regime_snapshot(
+        source_date=source_date,
+        action_state="scale_down_protect",
+        snapshot_version="regime-v9",
+        market_signal_snapshot_version="signal-v9",
+    )
+    candidate = _candidate(
+        source_date=source_date,
+        symbol="META",
+        validation_status="confirm",
+        snapshot_version="bulltard-v9",
+    )
+
+    snapshot = derive_portfolio_policy_snapshot(
+        regime_snapshot=regime_snapshot,
+        candidate_snapshots=(candidate,),
+        snapshot_version="policy-v9",
+    )
+
+    assert snapshot.snapshot_version == "policy-v9"
+    assert snapshot.regime_snapshot_version == "regime-v9"
+    assert snapshot.market_signal_snapshot_version == "signal-v9"
+    assert snapshot.candidate_snapshot_version == "bulltard-v9"
 
 
 def test_daily_policy_report_shows_policy_change_and_signal_context(tmp_path: Path) -> None:
@@ -302,6 +330,8 @@ def _regime_snapshot(
     qqq_return_20d: float = 0.04,
     qqq_ma50_distance: float = 0.03,
     vix_close: float = 14.0,
+    snapshot_version: str | None = None,
+    market_signal_snapshot_version: str | None = None,
 ) -> RegimeSnapshot:
     return RegimeSnapshot(
         source_date=source_date,
@@ -340,6 +370,8 @@ def _regime_snapshot(
         pressure_confidence="medium",
         stretch_pressure_score=stretch_pressure_score,
         washout_pressure_score=washout_pressure_score,
+        snapshot_version=snapshot_version,
+        market_signal_snapshot_version=market_signal_snapshot_version,
     )
 
 
@@ -374,6 +406,7 @@ def _candidate(
     source_date: date,
     symbol: str,
     validation_status: str,
+    snapshot_version: str | None = None,
 ) -> CandidateValidationSnapshot:
     return CandidateValidationSnapshot(
         source_date=source_date,
@@ -402,6 +435,7 @@ def _candidate(
         options_liquidity_status="unknown",
         validation_status=validation_status,
         validation_reasons=("positive_20d", "rs_spy_positive"),
+        snapshot_version=snapshot_version,
     )
 
 

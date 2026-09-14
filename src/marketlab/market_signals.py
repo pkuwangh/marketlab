@@ -20,7 +20,7 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
-from marketlab.versions import REGIME_VERSION, versioned_label
+from marketlab.versions import REGIME_SNAPSHOT_VERSION, REGIME_VERSION, versioned_label
 
 DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT = Path("data/snapshots/market/signals")
 MARKET_SIGNAL_FEATURE_VERSION = versioned_label("market_signals", REGIME_VERSION)
@@ -79,7 +79,11 @@ class MarketSignal:
             object.__setattr__(
                 self,
                 "snapshot_version",
-                default_snapshot_version(self.source_date, signal_time=signal_time),
+                default_snapshot_version(
+                    self.source_date,
+                    signal_time=signal_time,
+                    default_version=REGIME_SNAPSHOT_VERSION,
+                ),
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -190,6 +194,7 @@ def load_market_signal_snapshot(
             snapshot_version=snapshot_version,
             filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
             legacy_suffix=".jsonl",
+            default_version=REGIME_SNAPSHOT_VERSION,
         )
     except ValueError as exc:
         raise MarketSignalError(str(exc)) from exc
@@ -881,7 +886,11 @@ def _signal_from_dict(row: dict[str, Any]) -> MarketSignal:
         details=_optional_details(row.get("details")),
         signal_time=signal_time,
         snapshot_version=_optional_str(row.get("snapshot_version"))
-        or default_snapshot_version(source_date, signal_time=signal_time),
+        or default_snapshot_version(
+            source_date,
+            signal_time=signal_time,
+            default_version=REGIME_SNAPSHOT_VERSION,
+        ),
         model_version=_optional_str(row.get("model_version")) or MARKET_SIGNAL_MODEL_VERSION,
         created_at=_optional_str(row.get("created_at")),
         code_revision=_optional_str(row.get("code_revision")),

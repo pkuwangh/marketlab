@@ -52,7 +52,7 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
-from marketlab.versions import POLICY_VERSION, versioned_label
+from marketlab.versions import POLICY_SNAPSHOT_VERSION, POLICY_VERSION, versioned_label
 
 DEFAULT_POLICY_SNAPSHOT_ROOT = Path("data/snapshots/portfolio/policy")
 PORTFOLIO_POLICY_VERSION = versioned_label("portfolio_policy", POLICY_VERSION)
@@ -146,7 +146,11 @@ class PortfolioPolicySnapshot:
             object.__setattr__(
                 self,
                 "snapshot_version",
-                default_snapshot_version(self.source_date, signal_time=signal_time),
+                default_snapshot_version(
+                    self.source_date,
+                    signal_time=signal_time,
+                    default_version=POLICY_SNAPSHOT_VERSION,
+                ),
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -317,6 +321,7 @@ def compute_portfolio_policy_snapshot(
     snapshot = derive_portfolio_policy_snapshot(
         regime_snapshot=regime_snapshot,
         candidate_snapshots=candidate_snapshots,
+        snapshot_version=snapshot_version,
     )
     snapshot_path = (
         write_portfolio_policy_snapshot(snapshot, snapshot_root=policy_snapshot_root)
@@ -450,6 +455,7 @@ def derive_portfolio_policy_snapshot(
     *,
     regime_snapshot: RegimeSnapshot,
     candidate_snapshots: tuple[CandidateValidationSnapshot, ...] = (),
+    snapshot_version: str | None = None,
 ) -> PortfolioPolicySnapshot:
     """Map regime action evidence into a bounded marginal portfolio policy."""
 
@@ -478,7 +484,7 @@ def derive_portfolio_policy_snapshot(
         source_date=regime_snapshot.source_date,
         policy_version=PORTFOLIO_POLICY_VERSION,
         signal_time=regime_snapshot.signal_time,
-        snapshot_version=regime_snapshot.snapshot_version,
+        snapshot_version=snapshot_version or POLICY_SNAPSHOT_VERSION,
         regime_snapshot_version=regime_snapshot.snapshot_version,
         market_signal_snapshot_version=regime_snapshot.market_signal_snapshot_version,
         candidate_snapshot_version=_shared_candidate_snapshot_version(candidate_snapshots),
@@ -581,6 +587,7 @@ def load_portfolio_policy_snapshot(
             snapshot_version=snapshot_version,
             filename=POLICY_SNAPSHOT_FILENAME,
             legacy_suffix=".json",
+            default_version=POLICY_SNAPSHOT_VERSION,
         )
     except ValueError as exc:
         raise PortfolioPolicyError(str(exc)) from exc
@@ -1297,7 +1304,11 @@ def _policy_snapshot_from_dict(row: dict[str, Any]) -> PortfolioPolicySnapshot:
         policy_version=str(row["policy_version"]),
         signal_time=signal_time,
         snapshot_version=_optional_str(row.get("snapshot_version"))
-        or default_snapshot_version(source_date, signal_time=signal_time),
+        or default_snapshot_version(
+            source_date,
+            signal_time=signal_time,
+            default_version=POLICY_SNAPSHOT_VERSION,
+        ),
         regime_snapshot_version=_optional_str(row.get("regime_snapshot_version")),
         market_signal_snapshot_version=_optional_str(row.get("market_signal_snapshot_version")),
         candidate_snapshot_version=_optional_str(row.get("candidate_snapshot_version")),

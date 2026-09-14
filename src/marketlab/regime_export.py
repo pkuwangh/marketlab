@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import csv
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile
 
 from loguru import logger
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from marketlab.prices import DEFAULT_PRICE_OBSERVATIONS_ROOT, load_price_history
@@ -149,8 +152,6 @@ def export_regime_workbook(
 
     if start_date > end_date:
         raise RegimeExportError("Export start date must be on or before end date")
-    _validate_sheet_name(DEFAULT_REGIME_EXPORT_SHEET_NAME)
-    _validate_table_name(DEFAULT_REGIME_EXPORT_TABLE_NAME)
 
     snapshots = _load_snapshots(
         start_date=start_date,
@@ -167,14 +168,24 @@ def export_regime_workbook(
 
     headers = _headers_for_snapshots(snapshots)
     rows = _rows_for_snapshots(snapshots, price_root=price_root, headers=headers)
-    _write_csv(csv_path=csv_path, headers=headers, rows=rows)
-    _write_workbook(
-        workbook_path=workbook_path,
-        sheet_name=DEFAULT_REGIME_EXPORT_SHEET_NAME,
-        table_name=DEFAULT_REGIME_EXPORT_TABLE_NAME,
-        headers=headers,
-        rows=rows,
-    )
+    workbook_temp_path = _temporary_export_path(workbook_path)
+    csv_temp_path = _temporary_export_path(csv_path)
+    try:
+        _write_workbook(
+            workbook_path=workbook_path,
+            output_path=workbook_temp_path,
+            sheet_name=DEFAULT_REGIME_EXPORT_SHEET_NAME,
+            table_name=DEFAULT_REGIME_EXPORT_TABLE_NAME,
+            headers=headers,
+            rows=rows,
+        )
+        _write_csv(csv_path=csv_temp_path, headers=headers, rows=rows)
+        _replace_export_file(temp_path=workbook_temp_path, final_path=workbook_path)
+        _replace_export_file(temp_path=csv_temp_path, final_path=csv_path)
+    except RegimeExportError:
+        _cleanup_temp_export(workbook_temp_path)
+        _cleanup_temp_export(csv_temp_path)
+        raise
 
     logger.bind(
         start_date=start_date.isoformat(),
@@ -425,25 +436,32 @@ def _write_csv(
     headers: tuple[str, ...],
     rows: list[dict[str, Any]],
 ) -> None:
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=headers, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({header: _csv_value(row.get(header)) for header in headers})
+    try:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=headers, extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({header: _csv_value(row.get(header)) for header in headers})
+    except OSError as exc:
+        raise RegimeExportError(f"Failed to write CSV export: {csv_path}") from exc
 
 
 def _write_workbook(
     *,
     workbook_path: Path,
+    output_path: Path,
     sheet_name: str,
     table_name: str,
     headers: tuple[str, ...],
     rows: list[dict[str, Any]],
 ) -> None:
-    workbook_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     if workbook_path.is_file():
-        workbook = load_workbook(workbook_path)
+        try:
+            workbook = load_workbook(workbook_path)
+        except (OSError, InvalidFileException, BadZipFile) as exc:
+            raise RegimeExportError(f"Failed to load workbook export: {workbook_path}") from exc
         worksheet = (
             workbook[sheet_name]
             if sheet_name in workbook.sheetnames
@@ -471,7 +489,27 @@ def _write_workbook(
     worksheet.auto_filter.ref = table_ref
     _replace_table(worksheet, table_name=table_name, table_ref=table_ref)
     _size_columns(worksheet, headers=headers, rows=rows)
-    workbook.save(workbook_path)
+    try:
+        workbook.save(output_path)
+    except (OSError, InvalidFileException, BadZipFile) as exc:
+        raise RegimeExportError(f"Failed to write workbook export: {output_path}") from exc
+
+
+def _temporary_export_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.tmp")
+
+
+def _replace_export_file(*, temp_path: Path, final_path: Path) -> None:
+    try:
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.replace(final_path)
+    except OSError as exc:
+        raise RegimeExportError(f"Failed to replace export file: {final_path}") from exc
+
+
+def _cleanup_temp_export(path: Path) -> None:
+    with suppress(OSError):
+        path.unlink()
 
 
 def _clear_sheet_values(worksheet: Any, *, min_rows: int, min_cols: int) -> None:
@@ -509,9 +547,13 @@ def _size_columns(
 ) -> None:
     for column_index, header in enumerate(headers, start=1):
         values = [header]
-        values.extend(str(row.get(header) or "") for row in rows[:100])
+        values.extend(_column_width_value(row.get(header)) for row in rows[:100])
         width = min(max(len(value) for value in values) + 2, 42)
         worksheet.column_dimensions[get_column_letter(column_index)].width = width
+
+
+def _column_width_value(value: Any) -> str:
+    return "" if value is None else str(value)
 
 
 def _range_ref(*, row_count: int, column_count: int) -> str:
@@ -587,18 +629,3 @@ def _number_format(header: str) -> str | None:
     if header.endswith("_close") or header.endswith("_ratio"):
         return "0.00"
     return None
-
-
-def _validate_sheet_name(sheet_name: str) -> None:
-    if not sheet_name.strip():
-        raise RegimeExportError("Excel sheet name cannot be empty")
-    if len(sheet_name) > 31 or any(char in sheet_name for char in "[]:*?/\\"):
-        raise RegimeExportError(f"Invalid Excel sheet name: {sheet_name!r}")
-
-
-def _validate_table_name(table_name: str) -> None:
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table_name):
-        raise RegimeExportError(
-            "Excel table name must start with a letter or underscore and contain "
-            "only letters, numbers, and underscores"
-        )

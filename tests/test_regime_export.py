@@ -2,6 +2,7 @@ import csv
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook, load_workbook
 
 from marketlab.prices import DailyPriceObservation, write_price_observations
@@ -14,7 +15,7 @@ from marketlab.regime import (
     RegimeSnapshot,
     write_regime_snapshot,
 )
-from marketlab.regime_export import export_regime_workbook
+from marketlab.regime_export import RegimeExportError, _column_width_value, export_regime_workbook
 
 
 def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
@@ -114,6 +115,41 @@ def test_export_regime_workbook_preserves_other_sheets_and_clears_stale_rows(
     assert data_sheet.tables["RegimeData"].ref.endswith("2")
     with csv_path.open(encoding="utf-8", newline="") as handle:
         assert len(list(csv.DictReader(handle))) == 1
+
+
+def test_export_regime_workbook_keeps_csv_unchanged_when_workbook_load_fails(
+    tmp_path: Path,
+) -> None:
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    workbook_path = tmp_path / "regime.xlsx"
+    csv_path = tmp_path / "regime.csv"
+    source_date = date(2026, 9, 4)
+    _write_prices(price_root, symbol="SPY", start=source_date, closes=(100.0,))
+    _write_prices(price_root, symbol="QQQ", start=source_date, closes=(200.0,))
+    write_regime_snapshot(_snapshot(source_date=source_date), snapshot_root=snapshot_root)
+    workbook_path.write_text("not a workbook", encoding="utf-8")
+    csv_path.write_text("stale\n", encoding="utf-8")
+
+    with pytest.raises(RegimeExportError, match="Failed to load workbook export"):
+        export_regime_workbook(
+            start_date=source_date,
+            end_date=source_date,
+            workbook_path=workbook_path,
+            csv_path=csv_path,
+            snapshot_root=snapshot_root,
+            price_root=price_root,
+        )
+
+    assert csv_path.read_text(encoding="utf-8") == "stale\n"
+    assert not (tmp_path / ".regime.xlsx.tmp").exists()
+    assert not (tmp_path / ".regime.csv.tmp").exists()
+
+
+def test_column_width_value_preserves_zero_values() -> None:
+    assert _column_width_value(0) == "0"
+    assert _column_width_value(0.0) == "0.0"
+    assert _column_width_value(None) == ""
 
 
 def _snapshot(

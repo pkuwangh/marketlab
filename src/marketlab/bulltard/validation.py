@@ -33,7 +33,7 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
-from marketlab.versions import BULLTARD_VERSION, versioned_label
+from marketlab.versions import BULLTARD_SNAPSHOT_VERSION, BULLTARD_VERSION, versioned_label
 
 DEFAULT_CANDIDATE_SNAPSHOT_ROOT = Path("data/snapshots/bulltard/candidates")
 FEATURE_VERSION = versioned_label("bulltard_candidate_validation", BULLTARD_VERSION)
@@ -95,7 +95,11 @@ class CandidateValidationSnapshot:
             object.__setattr__(
                 self,
                 "snapshot_version",
-                default_snapshot_version(self.source_date, signal_time=signal_time),
+                default_snapshot_version(
+                    self.source_date,
+                    signal_time=signal_time,
+                    default_version=BULLTARD_SNAPSHOT_VERSION,
+                ),
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -208,6 +212,7 @@ def validate_bulltard_candidates(
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
         signal_time=signal_time_text,
+        default_version=BULLTARD_SNAPSHOT_VERSION,
     )
     snapshots = tuple(
         replace(
@@ -363,6 +368,7 @@ def load_candidate_validation_snapshots(
             snapshot_version=snapshot_version,
             filename=CANDIDATE_VALIDATION_SNAPSHOT_FILENAME,
             legacy_suffix=".jsonl",
+            default_version=BULLTARD_SNAPSHOT_VERSION,
         )
     except ValueError as exc:
         raise CandidateValidationError(str(exc)) from exc
@@ -693,7 +699,11 @@ def _snapshot_from_dict(row: dict[str, Any]) -> CandidateValidationSnapshot:
         feature_version=str(row["feature_version"]),
         signal_time=signal_time,
         snapshot_version=_optional_str(row.get("snapshot_version"))
-        or default_snapshot_version(source_date, signal_time=signal_time),
+        or default_snapshot_version(
+            source_date,
+            signal_time=signal_time,
+            default_version=BULLTARD_SNAPSHOT_VERSION,
+        ),
         model_version=_optional_str(row.get("model_version")) or CANDIDATE_VALIDATION_MODEL_VERSION,
         opportunity_version=_optional_str(row.get("opportunity_version")) or OPPORTUNITY_VERSION,
         symbol=str(row["symbol"]),

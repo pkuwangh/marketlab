@@ -52,7 +52,7 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
-from marketlab.versions import REGIME_VERSION, versioned_label
+from marketlab.versions import REGIME_SNAPSHOT_VERSION, REGIME_VERSION, versioned_label
 
 DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
 DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS = (
@@ -327,7 +327,11 @@ class RegimeSnapshot:
             object.__setattr__(
                 self,
                 "snapshot_version",
-                default_snapshot_version(self.source_date, signal_time=signal_time),
+                default_snapshot_version(
+                    self.source_date,
+                    signal_time=signal_time,
+                    default_version=REGIME_SNAPSHOT_VERSION,
+                ),
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1119,6 +1123,7 @@ def _compute_regime_snapshot_from_histories(
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
         signal_time=signal_time_text,
+        default_version=REGIME_SNAPSHOT_VERSION,
     )
     market_series = {
         series_id: _market_series_asof(history, source_date)
@@ -1324,6 +1329,7 @@ def load_regime_snapshot(
             snapshot_version=snapshot_version,
             filename=REGIME_SNAPSHOT_FILENAME,
             legacy_suffix=".json",
+            default_version=REGIME_SNAPSHOT_VERSION,
         )
     except ValueError as exc:
         raise RegimeError(str(exc)) from exc
@@ -5008,6 +5014,7 @@ def _existing_regime_snapshot_path(
             signal_time=signal_time,
             snapshot_version=snapshot_version,
             filename=REGIME_SNAPSHOT_FILENAME,
+            default_version=REGIME_SNAPSHOT_VERSION,
         )
     except ValueError as exc:
         raise RegimeError(str(exc)) from exc
@@ -5028,6 +5035,7 @@ def _existing_market_signal_snapshot_path(
             signal_time=signal_time,
             snapshot_version=snapshot_version,
             filename=MARKET_SIGNAL_SNAPSHOT_FILENAME,
+            default_version=REGIME_SNAPSHOT_VERSION,
         )
     except ValueError as exc:
         raise RegimeError(str(exc)) from exc
@@ -5739,7 +5747,11 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         pressure_modules=pressure_modules,
         signal_time=signal_time,
         snapshot_version=_optional_str(row.get("snapshot_version"))
-        or default_snapshot_version(source_date, signal_time=signal_time),
+        or default_snapshot_version(
+            source_date,
+            signal_time=signal_time,
+            default_version=REGIME_SNAPSHOT_VERSION,
+        ),
         market_signal_snapshot_version=_optional_str(row.get("market_signal_snapshot_version")),
         created_at=_optional_str(row.get("created_at")),
         code_revision=_optional_str(row.get("code_revision")),

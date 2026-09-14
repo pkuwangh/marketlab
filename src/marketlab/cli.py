@@ -52,15 +52,6 @@ from marketlab.bulltard.validation import (
     CandidateValidationSummary,
     validate_bulltard_candidates,
 )
-from marketlab.charts import (
-    DEFAULT_OPPORTUNITY_FORWARD_DAYS,
-    DEFAULT_OPPORTUNITY_LOOKBACK_DAYS,
-    ChartError,
-    OpportunityChartResult,
-    RegimeChartResult,
-    render_opportunity_chart,
-    render_regime_chart,
-)
 from marketlab.gmail import (
     DEFAULT_GMAIL_CLIENT_SECRET_PATH,
     DEFAULT_GMAIL_RECAP_CACHE_ROOT,
@@ -128,7 +119,7 @@ from marketlab.regime_export import (
     RegimeExportResult,
     export_regime_workbook,
 )
-from marketlab.snapshots.models import SignalTime, default_snapshot_version, snapshot_source_dates
+from marketlab.snapshots.models import SignalTime, snapshot_source_dates
 from marketlab.store import (
     DEFAULT_RESEARCH_DB_PATH,
     ResearchStoreError,
@@ -138,6 +129,11 @@ from marketlab.store import (
     query_research_store,
     refresh_research_store,
     summarize_research_store,
+)
+from marketlab.versions import (
+    BULLTARD_SNAPSHOT_VERSION,
+    POLICY_SNAPSHOT_VERSION,
+    REGIME_SNAPSHOT_VERSION,
 )
 
 
@@ -608,11 +604,12 @@ def daily_run(
 
     typer.echo(f"daily_date={source_date.isoformat()}")
     typer.echo(f"signal_time={signal_time}")
-    resolved_snapshot_version = snapshot_version or default_snapshot_version(
-        source_date,
-        signal_time=signal_time,
-    )
-    typer.echo(f"snapshot_version={resolved_snapshot_version}")
+    resolved_regime_snapshot_version = snapshot_version or REGIME_SNAPSHOT_VERSION
+    resolved_bulltard_snapshot_version = snapshot_version or BULLTARD_SNAPSHOT_VERSION
+    resolved_policy_snapshot_version = snapshot_version or POLICY_SNAPSHOT_VERSION
+    typer.echo(f"regime_snapshot_version={resolved_regime_snapshot_version}")
+    typer.echo(f"bulltard_snapshot_version={resolved_bulltard_snapshot_version}")
+    typer.echo(f"policy_snapshot_version={resolved_policy_snapshot_version}")
     typer.echo("")
 
     if refresh_prices_flag:
@@ -1945,177 +1942,6 @@ def regime_export(
     _echo_regime_export_result(result)
 
 
-@regime_app.command("chart", no_args_is_help=True)
-def chart_regime(
-    start_date_value: str = typer.Option(
-        ...,
-        "--start",
-        metavar="YYYY-MM-DD",
-        help="First chart date.",
-    ),
-    end_date_value: str = typer.Option(
-        ...,
-        "--end",
-        metavar="YYYY-MM-DD",
-        help="Last chart date.",
-    ),
-    symbol: str = typer.Option(
-        "SPY",
-        "--symbol",
-        help="Primary index or ETF price series.",
-    ),
-    comparison_symbol: str | None = typer.Option(
-        "QQQ",
-        "--compare",
-        help="Optional comparison index or ETF price series.",
-    ),
-    price_root: Path = typer.Option(
-        DEFAULT_PRICE_OBSERVATIONS_ROOT,
-        "--price-root",
-        file_okay=False,
-        help="Root directory containing daily price observations.",
-    ),
-    regime_snapshot_root: Path = typer.Option(
-        DEFAULT_REGIME_SNAPSHOT_ROOT,
-        "--regime-root",
-        file_okay=False,
-        help="Root directory containing market regime snapshots.",
-    ),
-    market_signal_snapshot_root: Path = typer.Option(
-        DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
-        "--signal-root",
-        file_okay=False,
-        help="Root directory containing market signal snapshots.",
-    ),
-    policy_snapshot_root: Path = typer.Option(
-        DEFAULT_POLICY_SNAPSHOT_ROOT,
-        "--policy-root",
-        file_okay=False,
-        help="Root directory containing portfolio policy snapshots.",
-    ),
-    signal_time: SignalTime = typer.Option(
-        SignalTime.EOD,
-        "--signal-time",
-        help="Signal timing label for snapshots used in the chart.",
-    ),
-    snapshot_version: str | None = typer.Option(
-        None,
-        "--snapshot-version",
-        help="Snapshot version to render. Defaults to current pillar version.",
-    ),
-    output_path: Path | None = typer.Option(
-        None,
-        "--output",
-        dir_okay=False,
-        help="HTML chart path. Defaults under reports/regime/market/DATE/eod/v0.0/.",
-    ),
-) -> None:
-    """Render a reproducible market regime chart."""
-
-    start_date = _parse_date_option(start_date_value, option_name="--start")
-    end_date = _parse_date_option(end_date_value, option_name="--end")
-    try:
-        result = render_regime_chart(
-            start_date=start_date,
-            end_date=end_date,
-            symbol=symbol,
-            comparison_symbol=comparison_symbol,
-            price_root=price_root,
-            regime_snapshot_root=regime_snapshot_root,
-            market_signal_snapshot_root=market_signal_snapshot_root,
-            policy_snapshot_root=policy_snapshot_root,
-            signal_time=signal_time,
-            snapshot_version=snapshot_version,
-            output_path=output_path,
-        )
-    except ChartError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    _echo_regime_chart_result(result)
-
-
-@bulltard_app.command("chart", no_args_is_help=True)
-def chart_opportunity(
-    symbol: str = typer.Argument(
-        ...,
-        metavar="SYMBOL",
-        help="Bulltard candidate ticker symbol.",
-    ),
-    source_date_value: str = typer.Option(
-        ...,
-        "--date",
-        metavar="YYYY-MM-DD",
-        help="Bulltard candidate snapshot date.",
-    ),
-    lookback_days: int = typer.Option(
-        DEFAULT_OPPORTUNITY_LOOKBACK_DAYS,
-        "--lookback-days",
-        min=0,
-        help="Calendar days to show before the Bulltard date.",
-    ),
-    forward_days: int = typer.Option(
-        DEFAULT_OPPORTUNITY_FORWARD_DAYS,
-        "--forward-days",
-        min=0,
-        help="Calendar days to show after the Bulltard date.",
-    ),
-    price_root: Path = typer.Option(
-        DEFAULT_PRICE_OBSERVATIONS_ROOT,
-        "--price-root",
-        file_okay=False,
-        help="Root directory containing daily price observations.",
-    ),
-    candidate_snapshot_root: Path = typer.Option(
-        DEFAULT_CANDIDATE_SNAPSHOT_ROOT,
-        "--candidate-root",
-        file_okay=False,
-        help="Root directory containing Bulltard candidate validation snapshots.",
-    ),
-    observations_root: Path = typer.Option(
-        DEFAULT_OBSERVATIONS_ROOT,
-        "--observations-root",
-        file_okay=False,
-        help="Root directory containing Bulltard observations.",
-    ),
-    signal_time: SignalTime = typer.Option(
-        SignalTime.EOD,
-        "--signal-time",
-        help="Signal timing label for the candidate snapshot.",
-    ),
-    snapshot_version: str | None = typer.Option(
-        None,
-        "--snapshot-version",
-        help="Candidate snapshot version. Defaults to current pillar version.",
-    ),
-    output_path: Path | None = typer.Option(
-        None,
-        "--output",
-        dir_okay=False,
-        help="HTML chart path. Defaults under reports/bulltard/opportunity/SYMBOL/DATE/eod/v0.0/.",
-    ),
-) -> None:
-    """Render a reproducible single-name opportunity chart."""
-
-    source_date = _parse_source_date(source_date_value)
-    try:
-        result = render_opportunity_chart(
-            source_date=source_date,
-            symbol=symbol,
-            lookback_days=lookback_days,
-            forward_days=forward_days,
-            price_root=price_root,
-            candidate_snapshot_root=candidate_snapshot_root,
-            observations_root=observations_root,
-            signal_time=signal_time,
-            snapshot_version=snapshot_version,
-            output_path=output_path,
-        )
-    except ChartError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    _echo_opportunity_chart_result(result)
-
-
 @bulltard_app.command("inspect-recap", no_args_is_help=True)
 def inspect_recap(
     recap_path: Path = typer.Argument(
@@ -3167,32 +2993,6 @@ def _echo_regime_export_result(result: RegimeExportResult) -> None:
     typer.echo(f"export_end={result.end_date.isoformat()}")
     typer.echo(f"export_row_count={result.row_count}")
     typer.echo(f"export_column_count={result.column_count}")
-
-
-def _echo_regime_chart_result(result: RegimeChartResult) -> None:
-    typer.echo(f"chart_path={result.output_path}")
-    typer.echo(f"chart_version={result.chart_version}")
-    typer.echo(f"chart_start={result.start_date.isoformat()}")
-    typer.echo(f"chart_end={result.end_date.isoformat()}")
-    typer.echo(f"chart_price_symbols={','.join(result.price_symbols)}")
-    typer.echo(f"chart_price_point_count={result.price_point_count}")
-    typer.echo(f"regime_snapshot_count={result.regime_snapshot_count}")
-    typer.echo(f"market_signal_count={result.market_signal_count}")
-    typer.echo(f"policy_snapshot_count={result.policy_snapshot_count}")
-
-
-def _echo_opportunity_chart_result(result: OpportunityChartResult) -> None:
-    typer.echo(f"chart_path={result.output_path}")
-    typer.echo(f"chart_version={result.chart_version}")
-    typer.echo(f"chart_symbol={result.symbol}")
-    typer.echo(f"chart_source_date={result.source_date.isoformat()}")
-    typer.echo(f"chart_start={result.chart_start_date.isoformat()}")
-    typer.echo(f"chart_end={result.chart_end_date.isoformat()}")
-    typer.echo(f"chart_price_symbols={','.join(result.price_symbols)}")
-    typer.echo(f"chart_price_point_count={result.price_point_count}")
-    typer.echo(f"flow_event_count={result.flow_event_count}")
-    typer.echo(f"available_forward_outcome_count={result.available_forward_outcome_count}")
-    typer.echo(f"validation_status={result.validation_status}")
 
 
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:

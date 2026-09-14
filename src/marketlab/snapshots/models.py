@@ -50,11 +50,12 @@ def default_snapshot_version(
     signal_date: date,
     *,
     signal_time: SignalTime | str = SignalTime.EOD,
+    default_version: str | None = None,
 ) -> str:
     """Return the default working snapshot-version label."""
 
     _ = signal_date, signal_time
-    return DEFAULT_SNAPSHOT_VERSION
+    return default_version or DEFAULT_SNAPSHOT_VERSION
 
 
 def versioned_snapshot_path(
@@ -64,6 +65,7 @@ def versioned_snapshot_path(
     signal_time: SignalTime | str,
     snapshot_version: str | None,
     filename: str,
+    default_version: str | None = None,
 ) -> Path:
     """Return the canonical versioned path for one snapshot file."""
 
@@ -71,6 +73,7 @@ def versioned_snapshot_path(
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
         signal_time=signal_time_text,
+        default_version=default_version,
     )
     return (
         snapshot_root
@@ -89,6 +92,7 @@ def resolve_snapshot_path(
     snapshot_version: str | None = None,
     filename: str,
     legacy_suffix: str,
+    default_version: str | None = None,
 ) -> Path | None:
     """Resolve a snapshot path, preferring canonical files over legacy flat files."""
 
@@ -98,6 +102,7 @@ def resolve_snapshot_path(
         signal_time=signal_time,
         snapshot_version=snapshot_version,
         filename=filename,
+        default_version=default_version,
     )
     if candidates:
         return candidates[-1]
@@ -119,12 +124,14 @@ def find_snapshot_paths(
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
     filename: str,
+    default_version: str | None = None,
 ) -> tuple[Path, ...]:
     """Find canonical snapshot files for one date/version tuple."""
 
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
         signal_time=signal_time,
+        default_version=default_version,
     )
     base_path = (
         snapshot_root

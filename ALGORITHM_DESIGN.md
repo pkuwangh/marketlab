@@ -2,6 +2,29 @@
 
 **Status:** pre-debut research design, current as of September 2026.
 
+- [MarketLab Algorithm Design](#marketlab-algorithm-design)
+  - [Portfolio Objective](#portfolio-objective)
+  - [Non-Goals](#non-goals)
+  - [Market-Regime Views](#market-regime-views)
+  - [Evidence Families](#evidence-families)
+  - [Current Market-Regime Model](#current-market-regime-model)
+  - [Setup, Confirmation, Action](#setup-confirmation-action)
+  - [Research Observations and Proposals](#research-observations-and-proposals)
+    - [Data-Driven Protect Review](#data-driven-protect-review)
+    - [Problem: Stretch Is Not Bearish By Itself](#problem-stretch-is-not-bearish-by-itself)
+    - [Problem: Protect Currently Mixes Different States](#problem-protect-currently-mixes-different-states)
+    - [Problem: Geometric Compensation Hides Weak Setup](#problem-geometric-compensation-hides-weak-setup)
+    - [Problem: Same-Day Setup And Confirmation Are Too Rigid](#problem-same-day-setup-and-confirmation-are-too-rigid)
+    - [Problem: Event Volatility Can Masquerade As Deterioration](#problem-event-volatility-can-masquerade-as-deterioration)
+    - [Problem: Washout Is A Setup, Not An Automatic Buy](#problem-washout-is-a-setup-not-an-automatic-buy)
+    - [Problem: Shock Windows Distort Ordinary Correction Research](#problem-shock-windows-distort-ordinary-correction-research)
+    - [Problem: Action Events Are Not Portfolio Posture](#problem-action-events-are-not-portfolio-posture)
+  - [Outcome Research](#outcome-research)
+  - [Portfolio Translation](#portfolio-translation)
+  - [Bulltard and Single-Name Research](#bulltard-and-single-name-research)
+  - [Backtesting Standards](#backtesting-standards)
+  - [Near-Term Algorithm Backlog](#near-term-algorithm-backlog)
+
 MarketLab is a local research system for two related alpha questions:
 
 1. How should marginal SPY/QQQ exposure be managed around a permanent long-term core?
@@ -41,12 +64,13 @@ or redeploy after a washed-out tape begins to stabilize.
 
 ## Market-Regime Views
 
-The regime engine should keep three views separate:
+The regime engine should keep the main views separate:
 
 | View | Purpose | Portfolio question |
 | --- | --- | --- |
 | Directional regime | Summarize whether the current tape is risk-on, neutral, or risk-off. | Should marginal beta be above, near, or below neutral? |
-| Protect setup pressure | Detect extension, complacency, narrow participation, or early funding weakness. | Is the tape vulnerable enough to watch for deterioration? |
+| Protect extension setup | Detect price extension and volatility complacency. | Is the tape extended enough to arm a later protect check? |
+| Fragility / deterioration context | Track breadth, credit, liquidity, volatility, and trend damage. | Is internal support weakening or confirming a break? |
 | Redeploy setup pressure | Detect stress, forced selling, panic, and broad washout. | Is the tape washed out enough to watch for stabilization? |
 
 The headline regime is background context. It is not the action. A strong `risk_on` market can be
@@ -77,7 +101,9 @@ The current v0.0 implementation computes:
 - Rare action states: `no_change`, `scale_down_protect`, `scale_up_redeploy`.
 - A provisional portfolio policy mapping from action state to marginal beta/cash/overlay posture.
 
-This is useful research scaffolding, not a finished model.
+This is useful research scaffolding, not a finished model. The current implementation is v0.0
+research code. It still mixes some extension and fragility evidence in the pressure/action
+outputs; the redesign below describes what should be improved next, not what is already guaranteed.
 
 ## Setup, Confirmation, Action
 
@@ -91,9 +117,11 @@ setup + confirmation => action
 For protect:
 
 ```text
-protect_setup    = stretched / extended / complacent tape
-protect_confirm  = later breadth, credit, volatility, or term-structure deterioration
-protect_action   = setup was armed and confirmation appears
+extension_setup   = price extension / volatility complacency
+fragility_context = breadth, credit, liquidity, volatility, or trend weakness
+protect_confirm   = broad deterioration; volatility-only is not enough by itself
+protect_action    = armed extension setup + broad confirmation,
+                    or a harder regime-break path fires
 ```
 
 For redeploy:
@@ -114,6 +142,25 @@ future reviewers, collaborators, and coding agents enough context to challenge t
 rather than blindly tuning thresholds. These observations come from initial local outcome replays
 and recent snapshot reviews. They are not implemented guarantees.
 
+### Data-Driven Protect Review
+
+The first protect review shows that current `scale_down_protect` is not a reliable correction
+warning yet:
+
+- 88 protect days collapsed into 42 distinct signal clusters using a 5-trading-day grouping rule.
+- 32 of 42 clusters had no 5% SPY drawdown in the next 40 trading days.
+- Protect forward returns looked baseline rather than defensive: 20d +1.8% versus +1.3% for all
+  days, and 40d +2.8% versus +2.5% for all days.
+- 10 of 42 clusters were volatility-only confirmation; 9 of those 10 had no 5% drawdown in the
+  next 40 trading days.
+- 8 of 42 clusters started after SPY was already more than 5% below its trailing 40-day high.
+- Excluding COVID, only 4 of 14 SPY corrections of at least 5% had protect between 20 trading days
+  before the peak and the first -5% crossing. A 40-day window covered only 6 of 14.
+
+Conclusion: protect should be redesigned before threshold tuning. The current action combines
+different market states, fires too often on volatility-only moves, and misses corrections where
+extension and deterioration occur at different times.
+
 ### Problem: Stretch Is Not Bearish By Itself
 
 Initial outcome replays show that high stretch pressure has often been followed by positive
@@ -122,10 +169,11 @@ momentum, not a standalone de-risk signal.
 
 Proposals:
 
-- Treat stretch as `protect_setup`, not `protect_action`.
-- Rename or explain the concept more clearly in outputs, for example `risk_on_extension` or
-  `protect_setup`.
-- Validate stretch as a setup-only bucket before using it to change portfolio posture.
+- Split current stretch pressure into cleaner `extension_setup` and `fragility_context` features.
+- Keep price extension and volatility complacency in `extension_setup`.
+- Move breadth, credit, liquidity, and trend weakness into fragility/confirmation context.
+- Treat extension as an arming condition, not an immediate portfolio action.
+- Validate extension-only buckets before using them to change portfolio posture.
 
 ### Problem: Protect Currently Mixes Different States
 
@@ -139,10 +187,33 @@ action state can mean several different things:
 
 Proposals:
 
-- Split protect research into `protect_setup`, `protect_confirmation`, and `protect_action`.
-- Require setup plus confirmation for action, but study each component separately.
-- Report why protect fired: price extension, breadth damage, credit damage, vol turn, event-vol,
-  or some combination.
+- Split protect into at least two paths:
+  - `extension_unwind`: extension setup was armed, then broad deterioration appears.
+  - `regime_break`: no prior extension is required, but broad deterioration must be stronger.
+- Require at least two deterioration families for normal protect, with at least one non-volatility
+  internal family such as breadth, credit, liquidity, or trend.
+- Treat volatility-only confirmation as warning/context, not a normal `scale_down_protect`.
+- Report which path fired and which families confirmed it.
+
+### Problem: Geometric Compensation Hides Weak Setup
+
+The current protect strength is approximately:
+
+```text
+protect_strength = sqrt(stretch * deterioration)
+```
+
+This lets very strong deterioration compensate for mediocre setup. More than half of current
+protect days have stretch below the empirical stretch p90, around 0.49 in the reviewed sample.
+That explains many false positives: the signal can fire from one extreme input even when the setup
+is not actually extended.
+
+Proposals:
+
+- Replace geometric compensation with hard gates.
+- Extension-unwind path: `extension_setup_gate AND broad_confirmation_gate`.
+- Regime-break path: `strong_broad_deterioration_gate`.
+- Study strength scores after the gates pass, not as a substitute for the gates.
 
 ### Problem: Same-Day Setup And Confirmation Are Too Rigid
 
@@ -152,10 +223,11 @@ breadth, credit, or volatility deteriorates days or weeks later.
 
 Proposals:
 
-- Add an armed setup state: high stretch arms protect for a bounded number of trading days.
+- Add an armed setup state: high extension setup arms protect for a bounded number of trading days.
 - Let the armed setup decay over time rather than disappear immediately.
 - Trigger protect only when confirmation appears while setup is armed.
-- Compare decay windows, such as 10, 20, and 40 trading days, against correction episodes.
+- Use a rolling percentile threshold, roughly p90, instead of a fixed score.
+- Compare decay windows, such as 20 and 40 trading days, against correction episodes.
 
 ### Problem: Event Volatility Can Masquerade As Deterioration
 
@@ -170,6 +242,7 @@ Proposals:
   scheduled macro/event dates.
 - Downweight volatility-turn confirmation near scheduled events unless breadth, credit, trend, or
   liquidity also confirms.
+- Do not let volatility-only deterioration activate normal protect.
 - Split volatility evidence into generic deterioration and event-premium components.
 - In output, distinguish `vol rising before known event` from `vol rising with broad internal
   deterioration`.
@@ -222,9 +295,14 @@ Forward replay should evaluate each layer separately:
 Use episode-level diagnostics for corrections. Daily overlapping forward windows are useful, but
 they can overcount one event. A correction episode report should show:
 
+- correction threshold, such as 5% or 8%;
+- whether warning arrived before the first -3% or -5% drawdown crossing;
 - first warning date;
+- warning lead time in trading days;
 - worst start date;
 - trough date;
+- whether the signal was early, timely, or already late;
+- false-alert rate, defined as no 5% SPY drawdown within 40 trading days;
 - prior 5/10/20 trading-day setup and confirmation history;
 - action/posture active at each phase;
 - whether the episode is ordinary, shock-driven, or unclear.
@@ -236,7 +314,7 @@ The action output controls only the tactical sleeve:
 | State | Intent | Typical bounded response |
 | --- | --- | --- |
 | `no_change` | Evidence is too balanced or incomplete. | Maintain current posture. |
-| `scale_down_protect` | Stretched setup has confirmed deterioration. | Reduce marginal beta, rebuild cash, sell covered calls, avoid fresh long calls. |
+| `scale_down_protect` | Armed extension has confirmed deterioration, or a harder regime-break path has fired. | Reduce marginal beta, rebuild cash, sell covered calls, avoid fresh long calls. |
 | `scale_up_redeploy` | Washout setup has confirmed stabilization. | Deploy cash in tranches, consider 60-90 DTE calls/call spreads, underwrite lower entries with defined risk. |
 
 Future posture replay must make state persistent. After protect activates, later `no_change` dates
@@ -280,9 +358,13 @@ context, and realized outcome.
 
 ## Near-Term Algorithm Backlog
 
-1. Build correction episode diagnostics with shock-window labeling.
-2. Split current protect/redeploy outputs into setup, confirmation, and action research buckets.
-3. Test armed setup decay windows for protect and redeploy.
-4. Add stateful posture replay.
-5. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
-6. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.
+1. Split protect pressure into `extension_setup` and `fragility_context`.
+2. Build correction episode diagnostics with shock/event labeling.
+3. Add armed setup memory and decay for extension-unwind protect.
+4. Add broad confirmation gates and prevent volatility-only normal protect.
+5. Add a separate, harder regime-break protect path for corrections without prior extension.
+6. Re-run episode-level correction coverage and false-alert analysis before threshold tuning.
+7. Add stateful posture replay so action events become portfolio posture episodes.
+8. Leave redeploy mostly unchanged for now, except for separate validation.
+9. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
+10. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.

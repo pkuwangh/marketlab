@@ -38,7 +38,7 @@ generation, then independently validate and measure it.
   - Reports named turn, divergence, confirmation, and contradiction evidence across trend, volatility, breadth, credit, and liquidity modules.
   - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
   - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
-  - Renders the daily policy report; regime charts are available through the explicit `regime chart` command.
+  - Renders the daily policy report and refreshable XLSX/CSV exports for manual charting.
 
 - Bulltard and single-name candidates, secondary pillar:
   - Fetches the daily Bulltard recap from Gmail and uses the original signed link to capture targeted app views.
@@ -46,7 +46,6 @@ generation, then independently validate and measure it.
   - Treats Bulltard names as a research funnel, not trade recommendations: `confirm` means independent price/liquidity/relative-strength evidence is aligned, `watch` means evidence is incomplete or mixed, and `avoid` means the name fails basic independent checks.
   - Builds candidate review and validation snapshots with independent price, volume, trend, drawdown, and relative-strength features.
   - Replays candidate outcomes over 1, 5, 20, 40, 65, and 126 trading-day horizons, with cohort views for source, validation status, ranked side, ticker-flow subtype, and market regime when available.
-  - Renders a reproducible opportunity chart for one saved candidate.
 
 - Research record for iteration:
   - Preserves point-in-time observations and research snapshots with source-date, signal-time, version, and provenance fields.
@@ -177,12 +176,6 @@ The export refreshes `workbooks/regime.xlsx` and writes the same rows to
 once in Excel and refresh the same workbook after each new backfill or daily run. Both
 formats include SPY/QQQ closes, indexed prices, headline regime/action fields, normalized
 pressure feature values, and protect/redeploy action evidence.
-
-Render a reproducible market-regime chart:
-
-```bash
-./bin/marketlab regime chart --start 2026-08-28 --end 2026-08-28
-```
 
 ### Portfolio Policy
 
@@ -442,16 +435,6 @@ point-in-time candidate episode, then grouped into cohorts such as Trades Of Int
 ranked-only, `confirm` versus `watch`, ranked bullish/bearish side, detailed ticker-flow subtype
 such as put selling or call buying, and same-day market regime when a regime snapshot exists.
 The 40- and 65-trading-day horizons approximate the 60-90 calendar-day window.
-
-Render a reproducible chart for one saved candidate:
-
-```bash
-./bin/marketlab bulltard chart MRVL --date 2026-08-28
-```
-
-The opportunity chart shows the candidate versus SPY/QQQ, Bulltard flow-premium event bars,
-20d relative strength, the point-in-time validation snapshot, and a separate forward-outcome
-table that stays marked `waiting` until enough future local price rows exist.
 
 If you need a manual fallback, pass a local recap file or a small text file containing the
 recap's database/app link to the lower-level Bulltard commands. Gmail may wrap the useful Substack
