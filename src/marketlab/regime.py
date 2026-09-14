@@ -2008,6 +2008,13 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             ),
         ]
     )
+    rows.append(
+        [
+            "event_vol",
+            _event_volatility_context_value(action.event_volatility_context),
+            _event_volatility_context_read(action.event_volatility_context),
+        ]
+    )
     if snapshot.washout_setup_score is not None:
         rows.append(
             [
@@ -2051,8 +2058,8 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
     rows.append(
         [
             "action",
-            _action_state_label(action.state),
-            _action_decision_read(action, missing_inputs=missing_inputs),
+            f"{_action_state_label(action.state)}; {action.confidence} confidence",
+            _action_decision_read(action),
         ]
     )
     return _format_table(rows)
@@ -2196,22 +2203,13 @@ def _inactive_action_strength_read(label: str, strength: float) -> str:
     return f"{label} lean below action threshold"
 
 
-def _action_decision_read(
-    action: RegimeActionState,
-    *,
-    missing_inputs: tuple[str, ...],
-) -> str:
-    parts = [
-        _data_quality_read(missing_inputs),
-        f"{action.confidence} confidence",
-    ]
-    event_context = _event_volatility_context_read(action.event_volatility_context)
-    if event_context is not None:
-        parts.append(event_context)
+def _action_decision_read(action: RegimeActionState) -> str:
     reason = _nonredundant_action_reason(action)
     if reason:
-        parts.append(reason)
-    return "; ".join(parts)
+        return reason
+    if action.state == "no_change":
+        return "no action trigger"
+    return "action threshold crossed"
 
 
 def _action_confirmation_read(
@@ -2312,14 +2310,24 @@ def _nonredundant_action_reason(action: RegimeActionState) -> str | None:
     return action.reason
 
 
-def _event_volatility_context_read(context: str) -> str | None:
+def _event_volatility_context_value(context: str) -> str:
     if context == "near_term_event_premium":
-        return "near-term event vol premium"
+        return "near-term premium"
     if context == "near_term_event_premium_with_confirmation":
-        return "near-term event vol premium with non-vol confirmation"
+        return "near-term premium + confirmation"
     if context == "volatility_only_warning":
-        return "volatility-only warning"
-    return None
+        return "vol-only warning"
+    return "none"
+
+
+def _event_volatility_context_read(context: str) -> str:
+    if context == "near_term_event_premium":
+        return "event-vol premium is visible; needs non-vol confirmation"
+    if context == "near_term_event_premium_with_confirmation":
+        return "event-vol premium is visible with breadth/credit confirmation"
+    if context == "volatility_only_warning":
+        return "volatility deterioration lacks non-vol confirmation"
+    return "no near-term event-vol premium detected"
 
 
 def format_regime_action_modules(

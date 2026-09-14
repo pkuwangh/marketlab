@@ -491,10 +491,12 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "stabilization" in summary_table
     assert "low redeploy confirmation; families none" in summary_table
     assert "strength" in summary_table
+    assert "event_vol" in summary_table
+    assert "near-term premium + confirmation" in summary_table
+    assert "event-vol premium is visible with breadth/credit confirmation" in summary_table
     assert "action" in summary_table
-    assert "maintain" in summary_table
+    assert "maintain; medium confidence" in summary_table
     assert "protect gates" not in summary_table
-    assert "near-term event vol premium with non-vol confirmation" in summary_table
     assert "trend damage is already visible" in summary_table
 
 
