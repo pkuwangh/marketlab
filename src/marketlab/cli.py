@@ -578,7 +578,7 @@ def daily_run(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version. Defaults to v0.",
+        help="Snapshot version. Defaults to current pillar version.",
     ),
 ) -> None:
     """Run the normal daily MarketLab research cycle."""
@@ -1219,7 +1219,7 @@ def regime_snapshot(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version. Defaults to v0.",
+        help="Snapshot version. Defaults to current pillar version.",
     ),
     show_detail: bool = typer.Option(
         False,
@@ -1365,7 +1365,7 @@ def regime_backfill(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version. Defaults to v0.",
+        help="Snapshot version. Defaults to current pillar version.",
     ),
     recompute_existing: bool = typer.Option(
         True,
@@ -1470,6 +1470,11 @@ def regime_outcomes(
         "--horizons",
         help="Comma-separated forward trading-day horizons.",
     ),
+    snapshot_version: str | None = typer.Option(
+        None,
+        "--snapshot-version",
+        help="Snapshot version to replay. Defaults to current pillar version.",
+    ),
     outcome_group: RegimeOutcomeGroup = typer.Option(
         RegimeOutcomeGroup.ACTION,
         "--by",
@@ -1489,6 +1494,7 @@ def regime_outcomes(
                 signal_snapshot_root=signal_snapshot_root,
                 price_root=price_root,
                 horizons=horizons,
+                snapshot_version=snapshot_version,
             )
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -1503,6 +1509,7 @@ def regime_outcomes(
                 signal_snapshot_root=signal_snapshot_root,
                 price_root=price_root,
                 horizons=horizons,
+                snapshot_version=snapshot_version,
             )
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -1517,6 +1524,7 @@ def regime_outcomes(
                 signal_snapshot_root=signal_snapshot_root,
                 price_root=price_root,
                 horizons=horizons,
+                snapshot_version=snapshot_version,
             )
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -1530,6 +1538,7 @@ def regime_outcomes(
                 policy_snapshot_root=policy_snapshot_root,
                 price_root=price_root,
                 horizons=horizons,
+                snapshot_version=snapshot_version,
             )
         except PortfolioPolicyError as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -1542,6 +1551,7 @@ def regime_outcomes(
             snapshot_root=snapshot_root,
             price_root=price_root,
             horizons=horizons,
+            snapshot_version=snapshot_version,
         )
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1716,7 +1726,7 @@ def policy_snapshot(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version. Defaults to v0.",
+        help="Snapshot version. Defaults to current pillar version.",
     ),
     write_snapshot: bool = typer.Option(
         True,
@@ -1799,7 +1809,7 @@ def policy_backfill(
         None,
         "--snapshot-version",
         help=(
-            "Snapshot version. Defaults to v0 for each date."
+            "Snapshot version. Defaults to current pillar version for each date."
         ),
     ),
     write_snapshot: bool = typer.Option(
@@ -1858,7 +1868,7 @@ def report_daily(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version. Defaults to v0.",
+        help="Snapshot version. Defaults to current pillar version.",
     ),
 ) -> None:
     """Render recent market-regime trend tables."""
@@ -1912,7 +1922,7 @@ def regime_export(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version to export. Defaults to v0.",
+        help="Snapshot version to export. Defaults to current pillar version.",
     ),
 ) -> None:
     """Export saved regime snapshots to standard XLSX and CSV files."""
@@ -1991,13 +2001,13 @@ def chart_regime(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version to render. Defaults to v0.",
+        help="Snapshot version to render. Defaults to current pillar version.",
     ),
     output_path: Path | None = typer.Option(
         None,
         "--output",
         dir_okay=False,
-        help="HTML chart path. Defaults under reports/regime/market/DATE/eod/v0/.",
+        help="HTML chart path. Defaults under reports/regime/market/DATE/eod/v0.0/.",
     ),
 ) -> None:
     """Render a reproducible market regime chart."""
@@ -2075,13 +2085,13 @@ def chart_opportunity(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Candidate snapshot version. Defaults to v0.",
+        help="Candidate snapshot version. Defaults to current pillar version.",
     ),
     output_path: Path | None = typer.Option(
         None,
         "--output",
         dir_okay=False,
-        help="HTML chart path. Defaults under reports/bulltard/opportunity/SYMBOL/DATE/eod/v0/.",
+        help="HTML chart path. Defaults under reports/bulltard/opportunity/SYMBOL/DATE/eod/v0.0/.",
     ),
 ) -> None:
     """Render a reproducible single-name opportunity chart."""
@@ -2353,7 +2363,7 @@ def validate_candidates(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Snapshot version. Defaults to v0.",
+        help="Snapshot version. Defaults to current pillar version.",
     ),
     write_snapshot: bool = typer.Option(
         True,
@@ -2660,7 +2670,7 @@ def daily(
     snapshot_version: str | None = typer.Option(
         None,
         "--snapshot-version",
-        help="Candidate validation snapshot version. Defaults to v0.",
+        help="Candidate validation snapshot version. Defaults to current pillar version.",
     ),
     compute_outcomes_flag: bool = typer.Option(
         False,

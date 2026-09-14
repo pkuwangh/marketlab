@@ -79,10 +79,10 @@ data/
     market/series/                    # source FRED rows
     bulltard/                         # parsed subscription observations
   snapshots/
-    market/signals/YYYY-MM-DD/eod/v0/
-    regime/market/YYYY-MM-DD/eod/v0/
-    portfolio/policy/YYYY-MM-DD/eod/v0/
-    bulltard/candidates/YYYY-MM-DD/eod/v0/
+    market/signals/YYYY-MM-DD/eod/v0.0/
+    regime/market/YYYY-MM-DD/eod/v0.0/
+    portfolio/policy/YYYY-MM-DD/eod/v0.0/
+    bulltard/candidates/YYYY-MM-DD/eod/v0.0/
 reports/
 marketlab.duckdb
 secrets/
@@ -100,12 +100,13 @@ Use these terms consistently:
 | Snapshot | Calculated MarketLab output for a source date, signal time, and version. |
 | `source_date` | Date represented by the calculation. |
 | `signal_time` | Timing label, currently `eod` for supported official workflows. |
-| `snapshot_version` | Output-contract version such as `v0`. |
+| `snapshot_version` | Output-contract version such as `v0.0`. |
 | `feature_version` | Feature definition version used inside a snapshot. |
 | `model_version` | Model or rule version used inside a snapshot. |
 
+Current pillar versions are listed in `VERSIONS.md` and defined in `marketlab.versions`.
 Source observations are the reproducibility boundary. Calculated snapshots are model outputs that
-can be regenerated. During pre-debut iteration, same-version `v0` snapshots may be overwritten by
+can be regenerated. During pre-debut iteration, same-version `v0.0` snapshots may be overwritten by
 their producing workflow. After a workflow becomes a live research record, meaningful behavior
 changes should bump the relevant version rather than silently rewriting history.
 
@@ -173,7 +174,7 @@ charts can be maintained manually and refreshed in place.
 
 ## Portfolio Policy Outputs
 
-The v0 policy maps market-regime action states into provisional marginal posture:
+The v0.0 policy maps market-regime action states into provisional marginal posture:
 
 - `maintain`;
 - `protect`;

@@ -21,6 +21,7 @@ Design is split between research logic and implementation mechanics.
 ## Design Docs
 
 - [DESIGN.md](./DESIGN.md): short index to the design documents.
+- [VERSIONS.md](./VERSIONS.md): current pillar versions and bump rules.
 - [ALGORITHM_DESIGN.md](./ALGORITHM_DESIGN.md): market-regime, portfolio, Bulltard candidate, and outcome-research logic.
 - [IMPLEMENTATION_DESIGN.md](./IMPLEMENTATION_DESIGN.md): CLI, storage, source handling, snapshot/version semantics, and local workflow architecture.
 
@@ -49,7 +50,7 @@ generation, then independently validate and measure it.
 
 - Research record for iteration:
   - Preserves point-in-time observations and research snapshots with source-date, signal-time, version, and provenance fields.
-  - Keeps calculated snapshots under `data/snapshots/`; same-version `v0` outputs are overwritten during pre-debut iteration.
+  - Keeps calculated snapshots under `data/snapshots/`; same-version `v0.0` outputs are overwritten during pre-debut iteration.
   - Rebuilds a local DuckDB query store from JSON/JSONL source files for analysis and outcome review.
 
 Current limitations:
@@ -210,7 +211,7 @@ Backfill and replay policy snapshots:
 ./bin/marketlab regime outcomes --by policy --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 ```
 
-The v0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only maps the marginal tactical sleeve:
+The v0.0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only maps the marginal tactical sleeve:
 
 - `maintain`: target roughly neutral tactical beta and make no forced change.
 - `protect`: reduce marginal beta, preserve or raise cash, and consider covered calls.

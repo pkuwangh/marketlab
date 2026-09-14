@@ -10,7 +10,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Self
 
-DEFAULT_SNAPSHOT_VERSION = "v0"
+from marketlab.versions import DEFAULT_WORKING_VERSION
+
+DEFAULT_SNAPSHOT_VERSION = DEFAULT_WORKING_VERSION
 
 
 class SignalTime(StrEnum):

@@ -55,10 +55,11 @@ from marketlab.snapshots.models import (
     signal_time_value,
     snapshot_source_dates,
 )
+from marketlab.versions import BULLTARD_VERSION, REGIME_VERSION, versioned_label
 
 DEFAULT_CHART_REPORT_ROOT = Path("reports")
-REGIME_CHART_VERSION = "regime_chart_v0"
-OPPORTUNITY_CHART_VERSION = "opportunity_chart_v0"
+REGIME_CHART_VERSION = versioned_label("regime_chart", REGIME_VERSION)
+OPPORTUNITY_CHART_VERSION = versioned_label("opportunity_chart", BULLTARD_VERSION)
 DEFAULT_OPPORTUNITY_LOOKBACK_DAYS = 120
 DEFAULT_OPPORTUNITY_FORWARD_DAYS = 65
 OPPORTUNITY_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)

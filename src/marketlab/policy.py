@@ -52,9 +52,10 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
+from marketlab.versions import POLICY_VERSION, versioned_label
 
 DEFAULT_POLICY_SNAPSHOT_ROOT = Path("data/snapshots/portfolio/policy")
-PORTFOLIO_POLICY_VERSION = "portfolio_policy_v0"
+PORTFOLIO_POLICY_VERSION = versioned_label("portfolio_policy", POLICY_VERSION)
 POLICY_SNAPSHOT_FILENAME = "portfolio-policy.json"
 PORTFOLIO_POLICY_STATES = ("maintain", "protect", "redeploy")
 POLICY_BENCHMARK_PROXY = "50/50 SPY/QQQ beta-scaled proxy; option overlays excluded"
@@ -603,6 +604,7 @@ def compute_portfolio_policy_outcomes(
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
 ) -> PortfolioPolicyOutcomeResult:
     """Replay policy snapshots against a fixed 50/50 SPY/QQQ beta-scaled benchmark."""
 
@@ -613,6 +615,7 @@ def compute_portfolio_policy_outcomes(
         start_date=start_date,
         end_date=end_date,
         snapshot_root=policy_snapshot_root,
+        snapshot_version=snapshot_version,
     )
     if not policies:
         raise PortfolioPolicyError(
@@ -1104,6 +1107,7 @@ def _load_policy_snapshots_in_range(
     start_date: date,
     end_date: date,
     snapshot_root: Path,
+    snapshot_version: str | None = None,
 ) -> tuple[PortfolioPolicySnapshot, ...]:
     snapshots: list[PortfolioPolicySnapshot] = []
     for source_date in _snapshot_dates_in_range(
@@ -1116,6 +1120,7 @@ def _load_policy_snapshots_in_range(
         snapshot = load_portfolio_policy_snapshot(
             source_date=source_date,
             snapshot_root=snapshot_root,
+            snapshot_version=snapshot_version,
         )
         if snapshot is not None:
             snapshots.append(snapshot)

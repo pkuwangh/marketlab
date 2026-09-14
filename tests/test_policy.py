@@ -58,7 +58,7 @@ def test_compute_policy_snapshot_maps_protective_regime_to_bounded_posture(
 
     assert result.snapshot_path == _policy_snapshot_path(policy_root, source_date)
     assert result.snapshot_path.is_file()
-    assert result.snapshot.snapshot_version == "v0"
+    assert result.snapshot.snapshot_version == "v0.0"
     assert result.snapshot.policy_state == "protect"
     assert result.snapshot.marginal_beta_target == 0.90
     assert result.snapshot.candidate_count == 3
@@ -436,6 +436,6 @@ def _policy_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
         snapshot_root
         / source_date_value
         / "eod"
-        / "v0"
+        / "v0.0"
         / "portfolio-policy.json"
     )

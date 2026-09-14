@@ -52,6 +52,7 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
+from marketlab.versions import REGIME_VERSION, versioned_label
 
 DEFAULT_REGIME_SNAPSHOT_ROOT = Path("data/snapshots/regime/market")
 DEFAULT_REGIME_YAHOO_PRICE_SYMBOLS = (
@@ -75,11 +76,11 @@ DEFAULT_REGIME_PRICE_SYMBOLS = (
     + DEFAULT_REGIME_BREADTH_SYMBOLS
 )
 DEFAULT_REGIME_OUTCOME_HORIZONS = (1, 5, 20, 40, 65, 126)
-REGIME_FEATURE_VERSION = "market_regime_features_v0"
-REGIME_MODEL_VERSION = "market_regime_score_v0"
-REGIME_ACTION_VERSION = "regime_action_v0"
+REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
+REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
+REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
 REGIME_ACTION_STATES = ("no_change", "scale_down_protect", "scale_up_redeploy")
-REGIME_PRESSURE_VERSION = "regime_pressure_v0"
+REGIME_PRESSURE_VERSION = versioned_label("regime_pressure", REGIME_VERSION)
 REGIME_SNAPSHOT_FILENAME = "regime.json"
 REGIME_KEY_SIGNALS_CAPTION = "headline regime, pressure, input gaps, and final action"
 REGIME_MARKET_SIGNALS_CAPTION = (
@@ -4196,6 +4197,7 @@ def compute_regime_outcomes(
     snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
 ) -> RegimeOutcomeResult:
     """Replay forward SPY/QQQ outcomes for saved market regime snapshots."""
 
@@ -4206,6 +4208,7 @@ def compute_regime_outcomes(
         start_date=start_date,
         end_date=end_date,
         snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
     )
     if not snapshots:
         raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
@@ -4244,6 +4247,7 @@ def compute_market_signal_outcomes(
     signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
 ) -> MarketSignalOutcomeResult:
     """Replay forward SPY/QQQ outcomes for saved market signal rows."""
 
@@ -4254,6 +4258,7 @@ def compute_market_signal_outcomes(
         start_date=start_date,
         end_date=end_date,
         signal_snapshot_root=signal_snapshot_root,
+        snapshot_version=snapshot_version,
     )
     if not signals:
         raise RegimeError(f"No market signal snapshots found from {start_date} to {end_date}")
@@ -4293,6 +4298,7 @@ def compute_regime_action_outcomes(
     signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
 ) -> RegimeActionOutcomeResult:
     """Replay rare-action states against forward SPY/QQQ outcomes."""
 
@@ -4303,6 +4309,7 @@ def compute_regime_action_outcomes(
         start_date=start_date,
         end_date=end_date,
         snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
     )
     if not snapshots:
         raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
@@ -4373,6 +4380,7 @@ def compute_regime_pressure_outcomes(
     signal_snapshot_root: Path = DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
 ) -> RegimePressureOutcomeResult:
     """Replay normalized pressure buckets against forward SPY/QQQ outcomes."""
 
@@ -4382,6 +4390,7 @@ def compute_regime_pressure_outcomes(
     snapshots = _load_regime_snapshots_through(
         end_date=end_date,
         snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
     )
     target_snapshots = tuple(
         snapshot for snapshot in snapshots if start_date <= snapshot.source_date <= end_date
@@ -4392,6 +4401,7 @@ def compute_regime_pressure_outcomes(
     signals_by_date = _load_market_signals_by_source_date_through(
         end_date=end_date,
         signal_snapshot_root=signal_snapshot_root,
+        snapshot_version=snapshot_version,
     )
     feature_history = _pressure_feature_history_from_snapshots(
         snapshots=snapshots,
@@ -4869,6 +4879,7 @@ def _load_regime_snapshots_in_range(
     start_date: date,
     end_date: date,
     snapshot_root: Path,
+    snapshot_version: str | None = None,
 ) -> tuple[RegimeSnapshot, ...]:
     snapshots: list[RegimeSnapshot] = []
     for source_date in snapshot_source_dates(
@@ -4877,7 +4888,11 @@ def _load_regime_snapshots_in_range(
         filename=REGIME_SNAPSHOT_FILENAME,
     ):
         if start_date <= source_date <= end_date:
-            snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+            snapshot = load_regime_snapshot(
+                source_date=source_date,
+                snapshot_root=snapshot_root,
+                snapshot_version=snapshot_version,
+            )
             if snapshot is not None:
                 snapshots.append(snapshot)
     return tuple(snapshots)
@@ -4913,6 +4928,7 @@ def _load_regime_snapshots_through(
     *,
     end_date: date,
     snapshot_root: Path,
+    snapshot_version: str | None = None,
 ) -> tuple[RegimeSnapshot, ...]:
     snapshots: list[RegimeSnapshot] = []
     for source_date in snapshot_source_dates(
@@ -4921,7 +4937,11 @@ def _load_regime_snapshots_through(
         filename=REGIME_SNAPSHOT_FILENAME,
     ):
         if source_date <= end_date:
-            snapshot = load_regime_snapshot(source_date=source_date, snapshot_root=snapshot_root)
+            snapshot = load_regime_snapshot(
+                source_date=source_date,
+                snapshot_root=snapshot_root,
+                snapshot_version=snapshot_version,
+            )
             if snapshot is not None:
                 snapshots.append(snapshot)
     return tuple(snapshots)
@@ -4932,6 +4952,7 @@ def _load_market_signals_in_range(
     start_date: date,
     end_date: date,
     signal_snapshot_root: Path,
+    snapshot_version: str | None = None,
 ) -> tuple[MarketSignal, ...]:
     signals: list[MarketSignal] = []
     for source_date in snapshot_source_dates(
@@ -4944,6 +4965,7 @@ def _load_market_signals_in_range(
                 load_market_signal_snapshot(
                     source_date=source_date,
                     snapshot_root=signal_snapshot_root,
+                    snapshot_version=snapshot_version,
                 )
             )
     return tuple(signals)

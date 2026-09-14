@@ -1319,7 +1319,7 @@ def test_chart_regime_outputs_chart_metadata(
 
     assert result.exit_code == 0
     assert f"chart_path={output_path}" in result.output
-    assert "chart_version=regime_chart_v0" in result.output
+    assert "chart_version=regime_chart_v0.0" in result.output
     assert "chart_price_symbols=SPY,QQQ" in result.output
     assert "chart_price_point_count=420" in result.output
     assert "regime_snapshot_count=20" in result.output
@@ -1468,7 +1468,7 @@ def test_chart_opportunity_outputs_chart_metadata(
 
     assert result.exit_code == 0
     assert f"chart_path={output_path}" in result.output
-    assert "chart_version=opportunity_chart_v0" in result.output
+    assert "chart_version=opportunity_chart_v0.0" in result.output
     assert "chart_symbol=MRVL" in result.output
     assert "chart_source_date=2026-08-28" in result.output
     assert "chart_price_symbols=MRVL,SPY,QQQ" in result.output
@@ -2852,12 +2852,14 @@ def test_regime_outcomes_outputs_summary_table(
         snapshot_root: Path,
         price_root: Path,
         horizons: tuple[int, ...],
+        snapshot_version: str | None,
     ) -> RegimeOutcomeResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 8, 28)
         assert snapshot_root == snapshot_root_arg
         assert price_root == price_root_arg
         assert horizons == (20, 65)
+        assert snapshot_version == "v0.0"
         return RegimeOutcomeResult(
             start_date=start_date,
             end_date=end_date,
@@ -2911,6 +2913,8 @@ def test_regime_outcomes_outputs_summary_table(
             str(price_root),
             "--horizons",
             "20,65",
+            "--snapshot-version",
+            "v0.0",
         ],
     )
 
@@ -2938,6 +2942,7 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
         signal_snapshot_root: Path,
         price_root: Path,
         horizons: tuple[int, ...],
+        snapshot_version: str | None,
     ) -> RegimeActionOutcomeResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 8, 28)
@@ -2945,6 +2950,7 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
         assert signal_snapshot_root == signal_root_arg
         assert price_root == price_root_arg
         assert horizons == (20, 65)
+        assert snapshot_version is None
         return RegimeActionOutcomeResult(
             start_date=start_date,
             end_date=end_date,
@@ -3052,6 +3058,7 @@ def test_regime_pressure_outcomes_outputs_summary_table(
         signal_snapshot_root: Path,
         price_root: Path,
         horizons: tuple[int, ...],
+        snapshot_version: str | None,
     ) -> RegimePressureOutcomeResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 8, 28)
@@ -3059,6 +3066,7 @@ def test_regime_pressure_outcomes_outputs_summary_table(
         assert signal_snapshot_root == signal_root_arg
         assert price_root == price_root_arg
         assert horizons == (20, 65)
+        assert snapshot_version is None
         return RegimePressureOutcomeResult(
             start_date=start_date,
             end_date=end_date,
@@ -3158,12 +3166,14 @@ def test_regime_signal_outcomes_outputs_summary_table(
         signal_snapshot_root: Path,
         price_root: Path,
         horizons: tuple[int, ...],
+        snapshot_version: str | None,
     ) -> MarketSignalOutcomeResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 8, 28)
         assert signal_snapshot_root == signal_root_arg
         assert price_root == price_root_arg
         assert horizons == (20, 65)
+        assert snapshot_version is None
         return MarketSignalOutcomeResult(
             start_date=start_date,
             end_date=end_date,
@@ -3248,12 +3258,14 @@ def test_regime_policy_outcomes_outputs_summary_table(
         policy_snapshot_root: Path,
         price_root: Path,
         horizons: tuple[int, ...],
+        snapshot_version: str | None,
     ) -> PortfolioPolicyOutcomeResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 8, 28)
         assert policy_snapshot_root == policy_root_arg
         assert price_root == price_root_arg
         assert horizons == (20, 65)
+        assert snapshot_version is None
         return PortfolioPolicyOutcomeResult(
             start_date=start_date,
             end_date=end_date,

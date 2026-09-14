@@ -20,10 +20,11 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
+from marketlab.versions import REGIME_VERSION, versioned_label
 
 DEFAULT_MARKET_SIGNAL_SNAPSHOT_ROOT = Path("data/snapshots/market/signals")
-MARKET_SIGNAL_FEATURE_VERSION = "market_signals_v0"
-MARKET_SIGNAL_MODEL_VERSION = "market_signals_model_v0"
+MARKET_SIGNAL_FEATURE_VERSION = versioned_label("market_signals", REGIME_VERSION)
+MARKET_SIGNAL_MODEL_VERSION = versioned_label("market_signals_model", REGIME_VERSION)
 MARKET_SIGNAL_SNAPSHOT_FILENAME = "market-signals.jsonl"
 MARKET_SIGNAL_FAMILY_ORDER = {
     "trend": 0,

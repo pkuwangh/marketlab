@@ -12,9 +12,10 @@ from marketlab.bulltard.models import (
     RankedTradeSide,
     TickerFlowObservation,
 )
+from marketlab.versions import BULLTARD_VERSION, versioned_label
 
 _MONEY_RE = re.compile(r"^\$?([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*([KMB])?$", re.IGNORECASE)
-PARSER_VERSION = "bulltard_html_parsers_v0"
+PARSER_VERSION = versioned_label("bulltard_html_parsers", BULLTARD_VERSION)
 
 
 class ParserError(ValueError):

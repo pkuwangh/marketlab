@@ -1,0 +1,25 @@
+# MarketLab Versions
+
+This file records the current research versions. Code constants live in
+`src/marketlab/versions.py`; this document is the human-readable ledger.
+
+## Current Versions
+
+| Pillar | Current version | Snapshot version | Derived labels |
+| --- | --- | --- | --- |
+| Market regime | `v0.0` | `v0.0` | `market_signals_v0.0`, `market_signals_model_v0.0`, `market_regime_features_v0.0`, `market_regime_score_v0.0`, `regime_pressure_v0.0`, `regime_action_v0.0` |
+| Bulltard | `v0.0` | `v0.0` | `bulltard_html_parsers_v0.0`, `bulltard_ingest_v0.0`, `bulltard_candidate_validation_v0.0`, `bulltard_candidate_validation_rules_v0.0`, `candidate_validation_only_v0.0` |
+| Portfolio policy | `v0.0` | `v0.0` | `portfolio_policy_v0.0` |
+
+## Bump Rules
+
+- Same-version outputs may be overwritten while the project is pre-debut research.
+- Do not bump for formatting, report/export changes, logging, or bug fixes that do not change signal meaning.
+- Bump the affected pillar version when a change meaningfully changes generated signals, action/policy decisions, candidate validation labels, or outcome comparability.
+- Keep old versioned snapshots for side-by-side outcome replay when comparing a new version against an older one.
+
+## Version Ownership
+
+- Market regime owns market-signal snapshots, headline regime, pressure, and action evidence.
+- Bulltard owns Gmail/app parsing, Bulltard observations, candidate validation, and candidate outcome cohorts.
+- Portfolio policy owns portfolio posture mapping across pillars.

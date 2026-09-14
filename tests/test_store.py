@@ -266,7 +266,7 @@ def test_refresh_research_store_builds_query_tables(tmp_path: Path) -> None:
         {
             "source": "bulltard",
             "record_type": "bulltard-ingest-run",
-            "schema_version": "bulltard_ingest_v0",
+            "schema_version": "bulltard_ingest_v0.0",
             "ingest_id": "fixture-ingest",
             "source_date": "2026-08-28",
             "retrieved_at": "2026-08-28T22:00:00Z",

@@ -17,12 +17,12 @@ def test_snapshot_identity_serializes_versions() -> None:
     identity = SnapshotIdentity(
         signal_date=date(2026, 8, 24),
         signal_time=SignalTime.EOD,
-        snapshot_version="v0",
-        feature_version="features_v0",
-        model_version="regime_v0",
-        universe_version="largecap_v0",
-        opportunity_version="opportunity_v0",
-        policy_version="policy_v0",
+        snapshot_version="v0.0",
+        feature_version="features_v0.0",
+        model_version="regime_v0.0",
+        universe_version="largecap_v0.0",
+        opportunity_version="opportunity_v0.0",
+        policy_version="policy_v0.0",
     )
 
     data = identity.to_dict()
@@ -38,13 +38,13 @@ def test_snapshot_identity_requires_core_versions() -> None:
             signal_date=date(2026, 8, 24),
             signal_time=SignalTime.EOD,
             snapshot_version="",
-            feature_version="features_v0",
-            model_version="regime_v0",
+            feature_version="features_v0.0",
+            model_version="regime_v0.0",
         )
 
 
-def test_default_snapshot_version_is_working_v0() -> None:
-    assert default_snapshot_version(date(2026, 8, 24), signal_time=SignalTime.EOD) == "v0"
+def test_default_snapshot_version_is_working_v0_0() -> None:
+    assert default_snapshot_version(date(2026, 8, 24), signal_time=SignalTime.EOD) == "v0.0"
 
 
 def test_versioned_snapshot_path_uses_date_time_version_file_layout(tmp_path: Path) -> None:
@@ -57,7 +57,7 @@ def test_versioned_snapshot_path_uses_date_time_version_file_layout(tmp_path: Pa
         filename="regime.json",
     )
 
-    assert path == tmp_path / "2026-08-24" / "eod" / "v0" / "regime.json"
+    assert path == tmp_path / "2026-08-24" / "eod" / "v0.0" / "regime.json"
 
 
 def test_resolve_snapshot_path_returns_same_version_snapshot(tmp_path: Path) -> None:

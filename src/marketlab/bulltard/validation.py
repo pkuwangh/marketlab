@@ -33,11 +33,15 @@ from marketlab.snapshots.models import (
     versioned_snapshot_path,
     write_snapshot_payload,
 )
+from marketlab.versions import BULLTARD_VERSION, versioned_label
 
 DEFAULT_CANDIDATE_SNAPSHOT_ROOT = Path("data/snapshots/bulltard/candidates")
-FEATURE_VERSION = "bulltard_candidate_validation_v0"
-CANDIDATE_VALIDATION_MODEL_VERSION = "bulltard_candidate_validation_rules_v0"
-OPPORTUNITY_VERSION = "candidate_validation_only_v0"
+FEATURE_VERSION = versioned_label("bulltard_candidate_validation", BULLTARD_VERSION)
+CANDIDATE_VALIDATION_MODEL_VERSION = versioned_label(
+    "bulltard_candidate_validation_rules",
+    BULLTARD_VERSION,
+)
+OPPORTUNITY_VERSION = versioned_label("candidate_validation_only", BULLTARD_VERSION)
 CANDIDATE_VALIDATION_SNAPSHOT_FILENAME = "candidate-validation.jsonl"
 DEFAULT_MIN_DOLLAR_VOLUME = 50_000_000.0
 BENCHMARK_SYMBOLS = ("SPY", "QQQ")

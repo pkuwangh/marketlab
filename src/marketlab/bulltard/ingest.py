@@ -26,13 +26,14 @@ from marketlab.bulltard.recaps import (
     redact_capability_url,
 )
 from marketlab.snapshots.models import utc_timestamp, write_snapshot_payload
+from marketlab.versions import BULLTARD_VERSION, versioned_label
 
 DEFAULT_OBSERVATIONS_ROOT = Path("data/observations/bulltard")
 DEFAULT_DEBUG_ROOT = Path("data/debug/bulltard")
 APP_HOST = "app.jamesbulltard.com"
 APP_ORIGIN = f"https://{APP_HOST}"
 HTTP_TIMEOUT_SECONDS = 30.0
-BULLTARD_INGEST_SCHEMA_VERSION = "bulltard_ingest_v0"
+BULLTARD_INGEST_SCHEMA_VERSION = versioned_label("bulltard_ingest", BULLTARD_VERSION)
 _DATE_IN_NAME_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,15}$")
 

@@ -68,7 +68,7 @@ history length, and licensing are clear enough for replay.
 
 ## Current Market-Regime Model
 
-The current v0 implementation computes:
+The current v0.0 implementation computes:
 
 - Directional regime score from family-level market signals.
 - Stretch/washout pressure from rolling percentile-normalized features.
@@ -248,7 +248,7 @@ that backtest.
 Bulltard is candidate-generation evidence for the single-name engine. It is not the market-regime
 source of truth and does not override independent regime evidence.
 
-The v0 candidate strategy is:
+The v0.0 candidate strategy is:
 
 - capture Bulltard evidence with provenance;
 - rank source attention before validation;
