@@ -12,8 +12,8 @@ This file tracks implementation progress separately from the design plan. Do not
 - [x] Version workbook and canonical outcome artifacts.
 - [x] Split `extension_setup` from `fragility_context`.
 - [x] Add correction-episode diagnostics.
-- [ ] Replace protect with gated paths.
-- [ ] Make volatility-only protect warning-only.
+- [x] Replace protect with gated paths.
+- [x] Make volatility-only protect warning-only.
 - [ ] Add event-volatility context.
 - [ ] Export armed setup memory as research output.
 - [ ] Add posture replay in outcomes/export flows.

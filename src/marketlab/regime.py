@@ -97,6 +97,11 @@ MIN_PRESSURE_FEATURE_SAMPLES = 20
 MIN_PRESSURE_BUCKET_SAMPLES = 20
 ACTION_STRENGTH_THRESHOLD = 0.55
 ACTION_STRENGTH_MARGIN = 0.15
+ACTION_EXTENSION_SETUP_THRESHOLD = 0.60
+ACTION_REGIME_BREAK_CONTEXT_THRESHOLD = 0.70
+ACTION_CONFIRMATION_THRESHOLD = 0.35
+ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES = 2
+ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES = 2
 
 
 class RegimeError(ValueError):
@@ -736,6 +741,17 @@ class _CorrectionEpisodeWindow:
     first_8pct_index: int | None
     trough_index: int
     recovery_index: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProtectGateResult:
+    path: str | None
+    extension_strength: float
+    regime_break_strength: float
+    confirming_families: tuple[str, ...]
+    non_vol_confirming_families: tuple[str, ...]
+    warning_only: bool
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -2718,16 +2734,6 @@ def derive_regime_action_state(
 
     stretch_evidence = _stretch_evidence(snapshot=snapshot, signals=signals)
     washout_evidence = _washout_evidence(snapshot=snapshot, signals=signals)
-    stretch_setup_score = _action_setup_score(
-        snapshot.stretch_pressure_score,
-        fallback_evidence_count=len(stretch_evidence),
-    )
-    washout_setup_score = _action_setup_score(
-        snapshot.washout_pressure_score,
-        fallback_evidence_count=len(washout_evidence),
-    )
-    stretch_score = _action_setup_bucket(stretch_setup_score)
-    washout_score = _action_setup_bucket(washout_setup_score)
     action_features = _action_features(snapshot=snapshot, signals=signals)
     action_modules = _action_modules(action_features)
     deterioration_score = _action_module_average(
@@ -2738,7 +2744,49 @@ def derive_regime_action_state(
         action_modules,
         field_name="stabilization_score",
     )
-    protect_strength = math.sqrt(stretch_setup_score * deterioration_score)
+    stretch_setup_score = _action_setup_score(
+        snapshot.stretch_pressure_score,
+        fallback_evidence_count=len(stretch_evidence),
+    )
+    extension_setup_score = (
+        _action_setup_score(
+            snapshot.extension_setup_score,
+            fallback_evidence_count=len(stretch_evidence),
+        )
+        if snapshot.extension_setup_score is not None
+        else stretch_setup_score
+    )
+    fragility_context_score = (
+        _action_setup_score(
+            snapshot.fragility_context_score,
+            fallback_evidence_count=0,
+        )
+        if snapshot.fragility_context_score is not None
+        else 0.0
+    )
+    washout_setup_score = (
+        _action_setup_score(
+            snapshot.washout_setup_score,
+            fallback_evidence_count=len(washout_evidence),
+        )
+        if snapshot.washout_setup_score is not None
+        else _action_setup_score(
+            snapshot.washout_pressure_score,
+            fallback_evidence_count=len(washout_evidence),
+        )
+    )
+    stretch_score = _action_setup_bucket(stretch_setup_score)
+    washout_score = _action_setup_bucket(washout_setup_score)
+    protect_gate = _protect_gate_result(
+        extension_setup_score=extension_setup_score,
+        fragility_context_score=fragility_context_score,
+        deterioration_score=deterioration_score,
+        action_modules=action_modules,
+    )
+    protect_strength = max(
+        protect_gate.extension_strength,
+        protect_gate.regime_break_strength,
+    )
     redeploy_strength = math.sqrt(washout_setup_score * stabilization_score)
     action_score = redeploy_strength - protect_strength
     severe_funding_stress = _severe_funding_stress(signals)
@@ -2765,19 +2813,26 @@ def derive_regime_action_state(
         )
         reason = "Washout setup plus stabilization evidence supports staged redeploy"
     elif (
-        protect_strength >= ACTION_STRENGTH_THRESHOLD
+        protect_gate.path is not None
         and protect_strength - redeploy_strength >= ACTION_STRENGTH_MARGIN
     ):
         state = "scale_down_protect"
         evidence = _action_feature_evidence(
             action_features,
             field_name="deterioration_score",
-        )
-        reason = "Stretch setup plus deterioration evidence supports protection"
+        ) + _protect_gate_evidence(protect_gate)
+        reason = f"{protect_gate.path} protect: {protect_gate.reason}"
+    elif protect_gate.warning_only and protect_strength >= ACTION_STRENGTH_THRESHOLD:
+        state = "no_change"
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="deterioration_score",
+        ) + _protect_gate_evidence(protect_gate)
+        reason = protect_gate.reason
     elif max(stretch_setup_score, washout_setup_score) >= 0.65:
         state = "no_change"
         evidence = stretch_evidence + washout_evidence
-        reason = "Setup pressure present, but turn evidence is not strong enough"
+        reason = "Setup pressure present, but broad confirmation is not strong enough"
     else:
         state = "no_change"
         evidence = stretch_evidence + washout_evidence
@@ -2871,6 +2926,123 @@ def _action_feature_evidence(
         for feature in sorted(features, key=lambda item: getattr(item, field_name), reverse=True)
         if getattr(feature, field_name) >= 0.25
     )
+
+
+def _protect_gate_result(
+    *,
+    extension_setup_score: float,
+    fragility_context_score: float,
+    deterioration_score: float,
+    action_modules: tuple[RegimeActionModule, ...],
+) -> _ProtectGateResult:
+    confirming_families = _confirming_families(
+        modules=action_modules,
+        field_name="deterioration_score",
+    )
+    non_vol_confirming_families = tuple(
+        family for family in confirming_families if family != "volatility"
+    )
+    extension_strength = math.sqrt(extension_setup_score * deterioration_score)
+    regime_break_strength = math.sqrt(fragility_context_score * deterioration_score)
+    broad_confirmation = (
+        len(confirming_families) >= ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES
+        and bool(non_vol_confirming_families)
+    )
+    extension_ready = (
+        extension_setup_score >= ACTION_EXTENSION_SETUP_THRESHOLD
+        and extension_strength >= ACTION_STRENGTH_THRESHOLD
+        and broad_confirmation
+    )
+    regime_break_ready = (
+        fragility_context_score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD
+        and regime_break_strength >= ACTION_STRENGTH_THRESHOLD
+        and len(non_vol_confirming_families) >= ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES
+    )
+    families_read = _family_list_read(confirming_families)
+    non_vol_read = _family_list_read(non_vol_confirming_families)
+    if extension_ready:
+        return _ProtectGateResult(
+            path="extension_unwind",
+            extension_strength=extension_strength,
+            regime_break_strength=regime_break_strength,
+            confirming_families=confirming_families,
+            non_vol_confirming_families=non_vol_confirming_families,
+            warning_only=False,
+            reason=(
+                "extension setup is elevated and broad deterioration confirms it "
+                f"(families {families_read})"
+            ),
+        )
+    if regime_break_ready:
+        return _ProtectGateResult(
+            path="regime_break",
+            extension_strength=extension_strength,
+            regime_break_strength=regime_break_strength,
+            confirming_families=confirming_families,
+            non_vol_confirming_families=non_vol_confirming_families,
+            warning_only=False,
+            reason=(
+                "fragility context plus broad non-vol deterioration bypasses extension setup "
+                f"(non-vol families {non_vol_read})"
+            ),
+        )
+
+    volatility_only = confirming_families == ("volatility",)
+    warning_only = volatility_only and (
+        extension_strength >= ACTION_STRENGTH_THRESHOLD
+        or regime_break_strength >= ACTION_STRENGTH_THRESHOLD
+    )
+    if warning_only:
+        reason = (
+            "volatility_only_warning: volatility deterioration is visible, "
+            "but normal protect requires non-vol confirmation"
+        )
+    elif max(extension_setup_score, fragility_context_score) >= ACTION_EXTENSION_SETUP_THRESHOLD:
+        reason = (
+            "protect setup present, but confirmation is not broad enough "
+            f"(families {families_read})"
+        )
+    else:
+        reason = "no protect gate passed"
+    return _ProtectGateResult(
+        path=None,
+        extension_strength=extension_strength,
+        regime_break_strength=regime_break_strength,
+        confirming_families=confirming_families,
+        non_vol_confirming_families=non_vol_confirming_families,
+        warning_only=warning_only,
+        reason=reason,
+    )
+
+
+def _confirming_families(
+    *,
+    modules: tuple[RegimeActionModule, ...],
+    field_name: str,
+) -> tuple[str, ...]:
+    return tuple(
+        module.family
+        for module in modules
+        if getattr(module, field_name) >= ACTION_CONFIRMATION_THRESHOLD
+    )
+
+
+def _protect_gate_evidence(gate: _ProtectGateResult) -> tuple[str, ...]:
+    if not gate.confirming_families:
+        return ()
+    evidence = (f"confirming families {_family_list_read(gate.confirming_families)}",)
+    if gate.non_vol_confirming_families:
+        evidence += (
+            "non-vol families "
+            f"{_family_list_read(gate.non_vol_confirming_families)}",
+        )
+    return evidence
+
+
+def _family_list_read(families: tuple[str, ...]) -> str:
+    if not families:
+        return "none"
+    return ",".join(families)
 
 
 _ACTION_MODULE_SPECS = (

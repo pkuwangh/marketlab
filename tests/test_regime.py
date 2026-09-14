@@ -763,7 +763,7 @@ def test_compute_regime_backfill_skips_existing_same_version_snapshot(
     assert second.skipped_snapshot_paths == first.snapshot_paths
 
 
-def test_derive_regime_action_state_flags_stretched_market() -> None:
+def test_derive_regime_action_state_keeps_volatility_only_warning_out_of_protect() -> None:
     snapshot = _snapshot(
         source_date=date(2026, 1, 1),
         regime="risk_on",
@@ -803,12 +803,13 @@ def test_derive_regime_action_state_flags_stretched_market() -> None:
         ),
     )
 
-    assert action.state == "scale_down_protect"
+    assert action.state == "no_change"
     assert action.stretch_score >= 3
     assert action.washout_score == 0
     assert action.protect_strength >= 0.55
     assert action.redeploy_strength < action.protect_strength
-    assert "Stretch setup plus deterioration evidence" in action.reason
+    assert "volatility_only_warning" in action.reason
+    assert "requires non-vol confirmation" in action.reason
     assert "VVIX 5d chg" in action.reason
 
 
@@ -873,6 +874,7 @@ def test_derive_regime_action_state_detects_paired_divergence_inside_turn_module
 
     features = {feature.name: feature for feature in action.action_features}
     assert action.state == "scale_down_protect"
+    assert "extension_unwind protect" in action.reason
     assert features["price_breadth_divergence"].family == "breadth"
     assert features["price_breadth_divergence"].evidence_kind == "divergence"
     assert features["price_breadth_divergence"].deterioration_score > 0.0
@@ -885,6 +887,62 @@ def test_derive_regime_action_state_detects_paired_divergence_inside_turn_module
     assert "equity_credit_divergence" in credit_module.feature_names
     assert breadth_module.deterioration_score > 0.0
     assert credit_module.deterioration_score > 0.0
+
+
+def test_derive_regime_action_state_allows_regime_break_without_extension() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="neutral",
+        score=0,
+        spy_return_20d=0.01,
+        qqq_return_20d=0.01,
+        stretch_pressure_score=0.20,
+        washout_pressure_score=0.05,
+        extension_setup_score=0.20,
+        fragility_context_score=0.85,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="breadth",
+                name="price_proxy",
+                status="narrow",
+                score=-1,
+                value="weak breadth",
+                details={
+                    "rsp_spy_relative_5d": -0.035,
+                    "iwm_spy_relative_5d": -0.045,
+                },
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="credit",
+                name="credit_spread",
+                status="stressed",
+                score=-1,
+                value=5.0,
+                details={"credit_spread_change_5d": 0.35},
+            ),
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="liquidity",
+                name="financial_conditions",
+                status="tight",
+                score=-1,
+                value=0.2,
+                details={"financial_conditions_change_4w": 0.20},
+            ),
+        ),
+    )
+
+    assert action.state == "scale_down_protect"
+    assert action.stretch_score <= 1
+    assert action.protect_strength >= 0.55
+    assert "regime_break protect" in action.reason
+    assert "non-vol families" in action.reason
 
 
 def test_action_modules_bound_each_family_contribution() -> None:
@@ -2040,6 +2098,8 @@ def _snapshot(
     stretch_pressure_score: float | None = None,
     washout_pressure_score: float | None = None,
     extension_setup_score: float | None = None,
+    fragility_context_score: float | None = None,
+    washout_setup_score: float | None = None,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
     model_version: str = "fixture_model",
     signal_time: str = "eod",
@@ -2089,6 +2149,8 @@ def _snapshot(
         stretch_pressure_score=stretch_pressure_score,
         washout_pressure_score=washout_pressure_score,
         extension_setup_score=extension_setup_score,
+        fragility_context_score=fragility_context_score,
+        washout_setup_score=washout_setup_score,
         pressure_features=pressure_features,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
