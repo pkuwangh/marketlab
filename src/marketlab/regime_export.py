@@ -1,7 +1,8 @@
-"""Excel exports for saved market-regime research snapshots."""
+"""Workbook exports for saved market-regime research snapshots."""
 
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -26,7 +27,9 @@ from marketlab.regime import (
 )
 from marketlab.snapshots.models import SignalTime, signal_time_value, snapshot_source_dates
 
-DEFAULT_REGIME_EXPORT_WORKBOOK_PATH = Path("workbooks/regime.xlsx")
+DEFAULT_REGIME_EXPORT_ROOT = Path("workbooks")
+DEFAULT_REGIME_EXPORT_WORKBOOK_PATH = DEFAULT_REGIME_EXPORT_ROOT / "regime.xlsx"
+DEFAULT_REGIME_EXPORT_CSV_PATH = DEFAULT_REGIME_EXPORT_ROOT / "regime.csv"
 DEFAULT_REGIME_EXPORT_SHEET_NAME = "regime_data"
 DEFAULT_REGIME_EXPORT_TABLE_NAME = "RegimeData"
 
@@ -120,36 +123,34 @@ class RegimeExportError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class RegimeXlsxExportResult:
-    """Metadata for one regime Excel export."""
+class RegimeExportResult:
+    """Metadata for one regime workbook export."""
 
     start_date: date
     end_date: date
     workbook_path: Path
-    sheet_name: str
-    table_name: str
+    csv_path: Path
     row_count: int
     column_count: int
 
 
-def export_regime_xlsx(
+def export_regime_workbook(
     *,
     start_date: date,
     end_date: date,
     workbook_path: Path = DEFAULT_REGIME_EXPORT_WORKBOOK_PATH,
-    sheet_name: str = DEFAULT_REGIME_EXPORT_SHEET_NAME,
-    table_name: str = DEFAULT_REGIME_EXPORT_TABLE_NAME,
+    csv_path: Path = DEFAULT_REGIME_EXPORT_CSV_PATH,
     snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
     price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
-) -> RegimeXlsxExportResult:
-    """Export saved regime snapshots into a refreshable Excel workbook."""
+) -> RegimeExportResult:
+    """Export saved regime snapshots into refreshable XLSX and CSV files."""
 
     if start_date > end_date:
         raise RegimeExportError("Export start date must be on or before end date")
-    _validate_sheet_name(sheet_name)
-    _validate_table_name(table_name)
+    _validate_sheet_name(DEFAULT_REGIME_EXPORT_SHEET_NAME)
+    _validate_table_name(DEFAULT_REGIME_EXPORT_TABLE_NAME)
 
     snapshots = _load_snapshots(
         start_date=start_date,
@@ -162,14 +163,15 @@ def export_regime_xlsx(
         raise RegimeExportError(
             "No market regime snapshots found for "
             f"{start_date.isoformat()} through {end_date.isoformat()}"
-        )
+    )
 
     headers = _headers_for_snapshots(snapshots)
     rows = _rows_for_snapshots(snapshots, price_root=price_root, headers=headers)
+    _write_csv(csv_path=csv_path, headers=headers, rows=rows)
     _write_workbook(
         workbook_path=workbook_path,
-        sheet_name=sheet_name,
-        table_name=table_name,
+        sheet_name=DEFAULT_REGIME_EXPORT_SHEET_NAME,
+        table_name=DEFAULT_REGIME_EXPORT_TABLE_NAME,
         headers=headers,
         rows=rows,
     )
@@ -178,17 +180,15 @@ def export_regime_xlsx(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         workbook_path=str(workbook_path),
-        sheet_name=sheet_name,
-        table_name=table_name,
+        csv_path=str(csv_path),
         row_count=len(rows),
         column_count=len(headers),
-    ).success("Exported regime snapshots to Excel")
-    return RegimeXlsxExportResult(
+    ).success("Exported regime snapshots to workbook files")
+    return RegimeExportResult(
         start_date=start_date,
         end_date=end_date,
         workbook_path=workbook_path,
-        sheet_name=sheet_name,
-        table_name=table_name,
+        csv_path=csv_path,
         row_count=len(rows),
         column_count=len(headers),
     )
@@ -419,6 +419,20 @@ def _add_action_modules(row: dict[str, Any], snapshot: RegimeSnapshot) -> None:
         row[f"{prefix}__reason"] = module.reason
 
 
+def _write_csv(
+    *,
+    csv_path: Path,
+    headers: tuple[str, ...],
+    rows: list[dict[str, Any]],
+) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({header: _csv_value(row.get(header)) for header in headers})
+
+
 def _write_workbook(
     *,
     workbook_path: Path,
@@ -529,6 +543,14 @@ def _indexed_value(close: float | None, base: float | None) -> float | None:
     if close is None or base in (None, 0):
         return None
     return close / base * 100.0
+
+
+def _csv_value(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def _ordered_names(

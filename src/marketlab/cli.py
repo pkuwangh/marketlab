@@ -123,12 +123,10 @@ from marketlab.regime import (
     refresh_regime_prices,
 )
 from marketlab.regime_export import (
-    DEFAULT_REGIME_EXPORT_SHEET_NAME,
-    DEFAULT_REGIME_EXPORT_TABLE_NAME,
     DEFAULT_REGIME_EXPORT_WORKBOOK_PATH,
     RegimeExportError,
-    RegimeXlsxExportResult,
-    export_regime_xlsx,
+    RegimeExportResult,
+    export_regime_workbook,
 )
 from marketlab.snapshots.models import SignalTime, default_snapshot_version, snapshot_source_dates
 from marketlab.store import (
@@ -1880,8 +1878,8 @@ def report_daily(
     _echo_regime_recent_report_result(result)
 
 
-@regime_app.command("export-xlsx", no_args_is_help=True)
-def regime_export_xlsx(
+@regime_app.command("export", no_args_is_help=True)
+def regime_export(
     start_date_value: str = typer.Option(
         ...,
         "--start",
@@ -1893,24 +1891,6 @@ def regime_export_xlsx(
         "--end",
         metavar="YYYY-MM-DD",
         help="Last saved regime snapshot date to export.",
-    ),
-    workbook_path: Path = typer.Option(
-        DEFAULT_REGIME_EXPORT_WORKBOOK_PATH,
-        "--workbook",
-        dir_okay=False,
-        help=(
-            "Excel workbook to create or update. Existing non-data sheets are preserved."
-        ),
-    ),
-    sheet_name: str = typer.Option(
-        DEFAULT_REGIME_EXPORT_SHEET_NAME,
-        "--sheet",
-        help="Worksheet name for the refreshed regime data range.",
-    ),
-    table_name: str = typer.Option(
-        DEFAULT_REGIME_EXPORT_TABLE_NAME,
-        "--table",
-        help="Excel table name for the refreshed data range.",
     ),
     snapshot_root: Path = typer.Option(
         DEFAULT_REGIME_SNAPSHOT_ROOT,
@@ -1935,17 +1915,15 @@ def regime_export_xlsx(
         help="Snapshot version to export. Defaults to v0.",
     ),
 ) -> None:
-    """Export saved regime snapshots to a refreshable Excel workbook."""
+    """Export saved regime snapshots to standard XLSX and CSV files."""
 
     start_date = _parse_date_option(start_date_value, option_name="--start")
     end_date = _parse_date_option(end_date_value, option_name="--end")
     try:
-        result = export_regime_xlsx(
+        result = export_regime_workbook(
             start_date=start_date,
             end_date=end_date,
-            workbook_path=workbook_path,
-            sheet_name=sheet_name,
-            table_name=table_name,
+            workbook_path=DEFAULT_REGIME_EXPORT_WORKBOOK_PATH,
             snapshot_root=snapshot_root,
             price_root=price_root,
             signal_time=signal_time,
@@ -1954,7 +1932,7 @@ def regime_export_xlsx(
     except RegimeExportError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    _echo_regime_xlsx_export_result(result)
+    _echo_regime_export_result(result)
 
 
 @regime_app.command("chart", no_args_is_help=True)
@@ -3172,14 +3150,13 @@ def _echo_regime_recent_report_result(result: RegimeRecentReportResult) -> None:
     typer.echo(result.report)
 
 
-def _echo_regime_xlsx_export_result(result: RegimeXlsxExportResult) -> None:
+def _echo_regime_export_result(result: RegimeExportResult) -> None:
     typer.echo(f"xlsx_path={result.workbook_path}")
-    typer.echo(f"xlsx_sheet={result.sheet_name}")
-    typer.echo(f"xlsx_table={result.table_name}")
-    typer.echo(f"xlsx_start={result.start_date.isoformat()}")
-    typer.echo(f"xlsx_end={result.end_date.isoformat()}")
-    typer.echo(f"xlsx_row_count={result.row_count}")
-    typer.echo(f"xlsx_column_count={result.column_count}")
+    typer.echo(f"csv_path={result.csv_path}")
+    typer.echo(f"export_start={result.start_date.isoformat()}")
+    typer.echo(f"export_end={result.end_date.isoformat()}")
+    typer.echo(f"export_row_count={result.row_count}")
+    typer.echo(f"export_column_count={result.column_count}")
 
 
 def _echo_regime_chart_result(result: RegimeChartResult) -> None:

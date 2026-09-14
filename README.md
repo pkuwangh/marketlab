@@ -164,17 +164,18 @@ Replay headline regime labels, normalized pressure buckets, market-signal rows, 
 ./bin/marketlab regime outcomes --by policy   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
 
-Export saved regime snapshots to Excel for manual charting:
+Export saved regime snapshots for Excel and CSV analysis:
 
 ```bash
-./bin/marketlab regime export-xlsx --start 2020-01-01 --end 2026-09-04 --workbook workbooks/regime.xlsx
+./bin/marketlab regime export --start 2020-01-01 --end 2026-09-04
 ```
 
-The XLSX export refreshes the `regime_data` worksheet and `RegimeData` table in place.
-Other workbook sheets are preserved, so you can create charts once in Excel and refresh the
-same workbook after each new backfill or daily run. The export includes SPY/QQQ closes,
-indexed prices, headline regime/action fields, normalized pressure feature values, and
-protect/redeploy action evidence.
+The export refreshes `workbooks/regime.xlsx` and writes the same rows to
+`workbooks/regime.csv`. The XLSX output refreshes the `regime_data` worksheet and
+`RegimeData` table in place. Other workbook sheets are preserved, so you can create charts
+once in Excel and refresh the same workbook after each new backfill or daily run. Both
+formats include SPY/QQQ closes, indexed prices, headline regime/action fields, normalized
+pressure feature values, and protect/redeploy action evidence.
 
 Render a reproducible market-regime chart:
 

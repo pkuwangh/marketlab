@@ -1,3 +1,4 @@
+import csv
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -13,13 +14,16 @@ from marketlab.regime import (
     RegimeSnapshot,
     write_regime_snapshot,
 )
-from marketlab.regime_export import export_regime_xlsx
+from marketlab.regime_export import export_regime_workbook
 
 
-def test_export_regime_xlsx_writes_refreshable_data_sheet(tmp_path: Path) -> None:
+def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
+    tmp_path: Path,
+) -> None:
     snapshot_root = tmp_path / "snapshots"
     price_root = tmp_path / "prices"
     workbook_path = tmp_path / "regime.xlsx"
+    csv_path = tmp_path / "regime.csv"
     first_date = date(2026, 9, 4)
     second_date = date(2026, 9, 8)
     _write_prices(price_root, symbol="SPY", start=first_date, closes=(100.0, 103.0))
@@ -33,16 +37,19 @@ def test_export_regime_xlsx_writes_refreshable_data_sheet(tmp_path: Path) -> Non
         snapshot_root=snapshot_root,
     )
 
-    result = export_regime_xlsx(
+    result = export_regime_workbook(
         start_date=first_date,
         end_date=second_date,
         workbook_path=workbook_path,
+        csv_path=csv_path,
         snapshot_root=snapshot_root,
         price_root=price_root,
     )
 
     assert result.row_count == 2
     assert result.column_count > 40
+    assert result.workbook_path == workbook_path
+    assert result.csv_path == csv_path
     workbook = load_workbook(workbook_path)
     worksheet = workbook["regime_data"]
     headers = [cell.value for cell in worksheet[1]]
@@ -56,14 +63,20 @@ def test_export_regime_xlsx_writes_refreshable_data_sheet(tmp_path: Path) -> Non
     assert first_row["action_module__volatility_turn__redeploy"] == 0.10
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
+    with csv_path.open(encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert csv_rows[0]["date"] == first_date.isoformat()
+    assert csv_rows[0]["SPY_close"] == "100.0"
+    assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
 
 
-def test_export_regime_xlsx_preserves_other_sheets_and_clears_stale_rows(
+def test_export_regime_workbook_preserves_other_sheets_and_clears_stale_rows(
     tmp_path: Path,
 ) -> None:
     snapshot_root = tmp_path / "snapshots"
     price_root = tmp_path / "prices"
     workbook_path = tmp_path / "regime.xlsx"
+    csv_path = tmp_path / "regime.csv"
     first_date = date(2026, 9, 4)
     second_date = date(2026, 9, 8)
     _write_prices(price_root, symbol="SPY", start=first_date, closes=(100.0, 103.0))
@@ -76,17 +89,19 @@ def test_export_regime_xlsx_preserves_other_sheets_and_clears_stale_rows(
     worksheet.title = "manual_charts"
     worksheet["A1"] = "keep this sheet"
     workbook.save(workbook_path)
-    export_regime_xlsx(
+    export_regime_workbook(
         start_date=first_date,
         end_date=second_date,
         workbook_path=workbook_path,
+        csv_path=csv_path,
         snapshot_root=snapshot_root,
         price_root=price_root,
     )
-    export_regime_xlsx(
+    export_regime_workbook(
         start_date=first_date,
         end_date=first_date,
         workbook_path=workbook_path,
+        csv_path=csv_path,
         snapshot_root=snapshot_root,
         price_root=price_root,
     )
@@ -97,6 +112,8 @@ def test_export_regime_xlsx_preserves_other_sheets_and_clears_stale_rows(
     assert _as_date(data_sheet["A2"].value) == first_date
     assert data_sheet["A3"].value is None
     assert data_sheet.tables["RegimeData"].ref.endswith("2")
+    with csv_path.open(encoding="utf-8", newline="") as handle:
+        assert len(list(csv.DictReader(handle))) == 1
 
 
 def _snapshot(
