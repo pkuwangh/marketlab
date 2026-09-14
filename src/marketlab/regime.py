@@ -1209,6 +1209,10 @@ def compute_regime_snapshot(
 ) -> RegimeSnapshotResult:
     """Compute and optionally persist one market regime snapshot."""
 
+    _require_current_regime_compute_snapshot_version(
+        snapshot_version,
+        workflow="Market regime snapshot",
+    )
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
     histories = _load_histories(symbols=DEFAULT_REGIME_PRICE_SYMBOLS, price_root=price_root)
     market_series_histories = _load_market_series_histories(
@@ -1244,6 +1248,10 @@ def compute_regime_backfill(
 ) -> RegimeBackfillResult:
     """Compute market regime snapshots for each SPY observation date in a range."""
 
+    _require_current_regime_compute_snapshot_version(
+        snapshot_version,
+        workflow="Market regime backfill",
+    )
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime backfill")
     if end_date < start_date:
         raise RegimeError("Backfill end date must be on or after start date")
@@ -1350,6 +1358,10 @@ def _compute_regime_snapshot_from_histories(
     overwrite_snapshot: bool,
     pressure_feature_history: dict[str, tuple[_PressureFeatureSample, ...]] | None = None,
 ) -> RegimeSnapshotResult:
+    _require_current_regime_compute_snapshot_version(
+        snapshot_version,
+        workflow="Market regime snapshot",
+    )
     signal_time_text = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
@@ -1455,6 +1467,20 @@ def _compute_regime_snapshot_from_histories(
             action.action_modules,
             action_features=action.action_features,
         ),
+    )
+
+
+def _require_current_regime_compute_snapshot_version(
+    snapshot_version: str | None,
+    *,
+    workflow: str,
+) -> None:
+    if snapshot_version is None or snapshot_version == REGIME_SNAPSHOT_VERSION:
+        return
+    raise RegimeError(
+        f"{workflow} can only compute current regime snapshot version "
+        f"{REGIME_SNAPSHOT_VERSION}; got {snapshot_version}. "
+        "Use --snapshot-version only with read/replay workflows for older saved snapshots."
     )
 
 

@@ -584,11 +584,6 @@ def daily_run(
         "--signal-time",
         help="Signal timing label. Regime date-level workflows currently support only eod.",
     ),
-    snapshot_version: str | None = typer.Option(
-        None,
-        "--snapshot-version",
-        help="Snapshot version. Defaults to current pillar version.",
-    ),
 ) -> None:
     """Run the normal daily MarketLab research cycle."""
 
@@ -617,12 +612,9 @@ def daily_run(
 
     typer.echo(f"daily_date={source_date.isoformat()}")
     typer.echo(f"signal_time={signal_time}")
-    resolved_regime_snapshot_version = snapshot_version or REGIME_SNAPSHOT_VERSION
-    resolved_bulltard_snapshot_version = snapshot_version or BULLTARD_SNAPSHOT_VERSION
-    resolved_policy_snapshot_version = snapshot_version or POLICY_SNAPSHOT_VERSION
-    typer.echo(f"regime_snapshot_version={resolved_regime_snapshot_version}")
-    typer.echo(f"bulltard_snapshot_version={resolved_bulltard_snapshot_version}")
-    typer.echo(f"policy_snapshot_version={resolved_policy_snapshot_version}")
+    typer.echo(f"regime_snapshot_version={REGIME_SNAPSHOT_VERSION}")
+    typer.echo(f"bulltard_snapshot_version={BULLTARD_SNAPSHOT_VERSION}")
+    typer.echo(f"policy_snapshot_version={POLICY_SNAPSHOT_VERSION}")
     typer.echo("")
 
     if refresh_prices_flag:
@@ -672,7 +664,7 @@ def daily_run(
             snapshot_root=regime_snapshot_root,
             signal_snapshot_root=market_signal_snapshot_root,
             signal_time=signal_time,
-            snapshot_version=snapshot_version,
+            snapshot_version=None,
             write_snapshot=True,
             overwrite_snapshot=True,
         )
@@ -783,7 +775,7 @@ def daily_run(
                     limit=limit,
                     min_dollar_volume=min_dollar_volume,
                     signal_time=signal_time,
-                    snapshot_version=snapshot_version,
+                    snapshot_version=None,
                     write_snapshot=True,
                 )
             except CandidateValidationError as exc:
@@ -839,7 +831,7 @@ def daily_run(
             candidate_snapshot_root=candidate_snapshot_root,
             policy_snapshot_root=policy_snapshot_root,
             signal_time=signal_time,
-            snapshot_version=snapshot_version,
+            snapshot_version=None,
             write_snapshot=True,
         )
     except PortfolioPolicyError as exc:
@@ -1226,11 +1218,6 @@ def regime_snapshot(
         "--signal-time",
         help="Signal timing label. Regime date-level workflows currently support only eod.",
     ),
-    snapshot_version: str | None = typer.Option(
-        None,
-        "--snapshot-version",
-        help="Snapshot version. Defaults to current pillar version.",
-    ),
     show_detail: bool = typer.Option(
         False,
         "--detail/--no-detail",
@@ -1298,7 +1285,7 @@ def regime_snapshot(
             snapshot_root=snapshot_root,
             signal_snapshot_root=signal_snapshot_root,
             signal_time=signal_time,
-            snapshot_version=snapshot_version,
+            snapshot_version=None,
             write_snapshot=True,
             overwrite_snapshot=True,
         )
@@ -1372,11 +1359,6 @@ def regime_backfill(
         "--signal-time",
         help="Signal timing label. Regime date-level workflows currently support only eod.",
     ),
-    snapshot_version: str | None = typer.Option(
-        None,
-        "--snapshot-version",
-        help="Snapshot version. Defaults to current pillar version.",
-    ),
     recompute_existing: bool = typer.Option(
         True,
         "--recompute-existing/--skip-existing",
@@ -1426,7 +1408,7 @@ def regime_backfill(
             snapshot_root=snapshot_root,
             signal_snapshot_root=signal_snapshot_root,
             signal_time=signal_time,
-            snapshot_version=snapshot_version,
+            snapshot_version=None,
             write_snapshot=True,
             skip_existing=not recompute_existing,
             overwrite_snapshot=True,

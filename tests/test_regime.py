@@ -68,6 +68,20 @@ def test_compute_regime_snapshot_rejects_non_eod_signal_time(tmp_path: Path) -> 
         )
 
 
+def test_compute_regime_snapshot_rejects_non_current_snapshot_version(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RegimeError, match="can only compute current regime snapshot version"):
+        compute_regime_snapshot(
+            source_date=date(2026, 8, 28),
+            price_root=tmp_path / "prices",
+            market_series_root=tmp_path / "market_series",
+            snapshot_root=tmp_path / "snapshots",
+            signal_snapshot_root=tmp_path / "signals",
+            snapshot_version="not-current",
+        )
+
+
 def test_compute_regime_backfill_rejects_non_eod_signal_time(tmp_path: Path) -> None:
     with pytest.raises(RegimeError, match="supports only signal_time=eod"):
         compute_regime_backfill(
@@ -78,6 +92,21 @@ def test_compute_regime_backfill_rejects_non_eod_signal_time(tmp_path: Path) -> 
             snapshot_root=tmp_path / "snapshots",
             signal_snapshot_root=tmp_path / "signals",
             signal_time="prior_close",
+        )
+
+
+def test_compute_regime_backfill_rejects_non_current_snapshot_version(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RegimeError, match="can only compute current regime snapshot version"):
+        compute_regime_backfill(
+            start_date=date(2026, 8, 28),
+            end_date=date(2026, 8, 29),
+            price_root=tmp_path / "prices",
+            market_series_root=tmp_path / "market_series",
+            snapshot_root=tmp_path / "snapshots",
+            signal_snapshot_root=tmp_path / "signals",
+            snapshot_version="not-current",
         )
 
 

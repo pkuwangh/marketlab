@@ -144,6 +144,10 @@ Backfill market-regime and market-signal snapshots over local price dates:
 ./bin/marketlab regime backfill --start 2016-01-01 --end 2026-09-04 --refresh-sources
 ```
 
+Snapshot and backfill commands always compute the current market-regime version. Older versions are
+selected only by read/replay workflows such as `regime outcomes`, `regime report`, and
+`regime export`.
+
 ### Backtesting
 
 Backfill recomputes and overwrites same-version snapshots by default. Use `--skip-existing` when

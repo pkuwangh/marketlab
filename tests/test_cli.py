@@ -123,6 +123,14 @@ def test_typer_no_args_shows_help_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
+def test_top_level_daily_help_does_not_offer_snapshot_version() -> None:
+    result = CliRunner().invoke(app, ["daily", "--help"])
+
+    assert result.exit_code == 0
+    assert "Run the normal daily MarketLab research cycle" in result.output
+    assert "--snapshot-version" not in result.output
+
+
 def test_daily_run_skips_missing_recap_and_runs_core_workflow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1064,8 +1072,19 @@ def test_regime_snapshot_no_args_shows_help_without_missing_option_error() -> No
     assert "--date" in result.output
     assert "--fetch-prices" in result.output
     assert "--detail" in result.output
+    assert "--snapshot-version" not in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
+
+
+def test_regime_snapshot_rejects_snapshot_version_option() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["regime", "snapshot", "--date", "2026-09-11", "--snapshot-version", "v0.0"],
+    )
+
+    assert result.exit_code != 0
+    assert "No such option: --snapshot-version" in result.output
 
 
 def test_regime_backfill_no_args_shows_help_without_missing_option_error() -> None:
@@ -1075,8 +1094,28 @@ def test_regime_backfill_no_args_shows_help_without_missing_option_error() -> No
     assert "Backfill daily market regime and market signal snapshots" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
+    assert "--snapshot-version" not in result.output
     assert "Missing option" not in result.output
     assert "Traceback" not in result.output
+
+
+def test_regime_backfill_rejects_snapshot_version_option() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "backfill",
+            "--start",
+            "2026-09-10",
+            "--end",
+            "2026-09-11",
+            "--snapshot-version",
+            "v0.0",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "No such option: --snapshot-version" in result.output
 
 
 def test_regime_outcomes_no_args_shows_help_without_missing_option_error() -> None:
