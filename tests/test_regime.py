@@ -34,6 +34,7 @@ from marketlab.regime import (
     compute_regime_snapshot,
     derive_regime_action_state,
     derive_regime_postures,
+    extension_memory_rows_from_snapshots,
     format_regime_key_signals,
     load_regime_snapshot,
     refresh_regime_prices,
@@ -1100,6 +1101,9 @@ def test_derive_regime_action_state_uses_armed_extension_memory_after_setup_cool
             armed_age=5,
             armed_decay=0.875,
             armed_source_strength=0.72,
+            arm_rule="persistent",
+            arm_hit_count=2,
+            arm_window=5,
             effective_score=0.63,
             snapshot_count=6,
         ),
@@ -1111,6 +1115,73 @@ def test_derive_regime_action_state_uses_armed_extension_memory_after_setup_cool
     assert with_memory.extension_armed is True
     assert with_memory.extension_armed_age == 5
     assert "extension setup was armed" in with_memory.reason
+
+
+def test_extension_memory_requires_strong_or_persistent_extension_setup() -> None:
+    start_date = date(2026, 1, 1)
+    snapshots = (
+        _snapshot(
+            source_date=start_date,
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.65,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.20,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=2),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.62,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=3),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.76,
+        ),
+    )
+
+    memory = extension_memory_rows_from_snapshots(snapshots)
+
+    assert memory[start_date].armed is False
+    assert memory[start_date].arm_rule is None
+    assert memory[start_date].arm_hit_count == 1
+    assert memory[start_date + timedelta(days=1)].armed is False
+    persistent = memory[start_date + timedelta(days=2)]
+    assert persistent.armed is True
+    assert persistent.armed_since == start_date + timedelta(days=2)
+    assert persistent.arm_rule == "persistent"
+    assert persistent.arm_hit_count == 2
+    assert persistent.arm_window == 3
+    strong = memory[start_date + timedelta(days=3)]
+    assert strong.armed is True
+    assert strong.armed_since == persistent.armed_since
+    assert strong.arm_rule == "persistent"
+
+
+def test_extension_memory_strong_setup_arms_without_persistence() -> None:
+    source_date = date(2026, 1, 1)
+    memory = extension_memory_rows_from_snapshots(
+        (
+            _snapshot(
+                source_date=source_date,
+                regime="risk_on",
+                score=4,
+                extension_setup_score=0.76,
+            ),
+        )
+    )[source_date]
+
+    assert memory.armed is True
+    assert memory.armed_since == source_date
+    assert memory.arm_rule == "strong"
+    assert memory.arm_hit_count == 1
+    assert memory.arm_window == 1
 
 
 def test_derive_regime_action_state_allows_regime_break_without_extension() -> None:

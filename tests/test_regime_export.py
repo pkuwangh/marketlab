@@ -36,7 +36,7 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     _write_prices(price_root, symbol="SPY", start=first_date, closes=(100.0, 103.0))
     _write_prices(price_root, symbol="QQQ", start=first_date, closes=(200.0, 202.0))
     write_regime_snapshot(
-        _snapshot(source_date=first_date, spy_return_20d=0.01, extension_setup_score=0.65),
+        _snapshot(source_date=first_date, spy_return_20d=0.01, extension_setup_score=0.76),
         snapshot_root=snapshot_root,
     )
     write_regime_snapshot(
@@ -69,7 +69,7 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["action__vvix_turn__protect"] == 0.70
     assert first_row["action_module__volatility_turn__redeploy"] == 0.10
     assert first_row["action_path"] == "extension_unwind"
-    assert first_row["extension_setup"] == 0.65
+    assert first_row["extension_setup"] == 0.76
     assert first_row["fragility_context"] == 0.20
     assert first_row["washout_setup"] == 0.11
     assert first_row["event_volatility_context"] == "near_term_event_premium"
@@ -84,13 +84,17 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert _as_date(first_row["extension_armed_since"]) == first_date
     assert first_row["extension_armed_age"] == 0
     assert first_row["extension_armed_decay"] == 1.0
-    assert first_row["extension_armed_source_strength"] == 0.65
+    assert first_row["extension_armed_source_strength"] == 0.76
+    assert first_row["extension_arm_rule"] == "strong"
+    assert first_row["extension_arm_hit_count"] == 1
+    assert first_row["extension_arm_window"] == 1
     second_row = dict(zip(headers, (cell.value for cell in worksheet[3]), strict=True))
     assert second_row["extension_elevated_since"] is None
     assert second_row["extension_elevated_age"] is None
     assert second_row["extension_armed"] is True
     assert _as_date(second_row["extension_armed_since"]) == first_date
     assert second_row["extension_armed_age"] == 1
+    assert second_row["extension_arm_rule"] == "strong"
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
     with csv_path.open(encoding="utf-8", newline="") as handle:
@@ -105,6 +109,7 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert csv_rows[1]["extension_elevated_age"] == ""
     assert csv_rows[0]["extension_armed"] == "True"
     assert csv_rows[1]["extension_armed_age"] == "1"
+    assert csv_rows[0]["extension_arm_rule"] == "strong"
     assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
 
 
@@ -116,7 +121,7 @@ def test_export_regime_workbook_does_not_rearm_continuous_extension_run(
     workbook_path = tmp_path / "regime.xlsx"
     csv_path = tmp_path / "regime.csv"
     first_date = date(2026, 1, 2)
-    row_count = 42
+    row_count = 43
     dates = tuple(first_date + timedelta(days=index * 4) for index in range(row_count))
     _write_prices(
         price_root,
@@ -152,9 +157,10 @@ def test_export_regime_workbook_does_not_rearm_continuous_extension_run(
     assert _as_date(last_row["extension_elevated_since"]) == first_date
     assert last_row["extension_elevated_age"] == row_count - 1
     assert last_row["extension_armed"] is False
-    assert _as_date(last_row["extension_armed_since"]) == first_date
-    assert last_row["extension_armed_age"] == row_count - 1
+    assert _as_date(last_row["extension_armed_since"]) == dates[1]
+    assert last_row["extension_armed_age"] == row_count - 2
     assert last_row["extension_armed_decay"] is None
+    assert last_row["extension_arm_rule"] == "persistent"
 
 
 def test_export_regime_workbook_preserves_other_sheets_and_clears_stale_rows(

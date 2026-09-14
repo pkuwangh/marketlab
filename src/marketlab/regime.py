@@ -80,7 +80,11 @@ DEFAULT_CORRECTION_EPISODE_LOOKBACK_DAYS = 20
 CORRECTION_EPISODE_FIRST_DAMAGE_DRAWDOWN = 0.03
 CORRECTION_EPISODE_MIN_DRAWDOWN = 0.05
 CORRECTION_EPISODE_SEVERE_DRAWDOWN = 0.08
-EXTENSION_ARMED_SETUP_THRESHOLD = 0.60
+EXTENSION_ARM_STRONG_SETUP_THRESHOLD = 0.75
+EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD = 0.60
+EXTENSION_ARM_PERSISTENCE_WINDOW = 5
+EXTENSION_ARM_PERSISTENCE_HITS = 2
+EXTENSION_ARMED_SETUP_THRESHOLD = EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
 ACTION_EXTENSION_ARMED_MAX_AGE_DAYS = 40
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
@@ -339,6 +343,9 @@ class RegimeSnapshot:
     extension_armed_age: int | None = None
     extension_armed_decay: float | None = None
     extension_armed_source_strength: float | None = None
+    extension_arm_rule: str | None = None
+    extension_arm_hit_count: int | None = None
+    extension_arm_window: int | None = None
     extension_memory_score: float = 0.0
     extension_memory_snapshot_count: int = 0
     pressure_confidence: str = "low"
@@ -429,6 +436,9 @@ class RegimeSnapshot:
             "extension_armed_age": self.extension_armed_age,
             "extension_armed_decay": self.extension_armed_decay,
             "extension_armed_source_strength": self.extension_armed_source_strength,
+            "extension_arm_rule": self.extension_arm_rule,
+            "extension_arm_hit_count": self.extension_arm_hit_count,
+            "extension_arm_window": self.extension_arm_window,
             "extension_memory_score": self.extension_memory_score,
             "extension_memory_snapshot_count": self.extension_memory_snapshot_count,
             "pressure_confidence": self.pressure_confidence,
@@ -450,6 +460,9 @@ class RegimeExtensionMemory:
     armed_age: int | None
     armed_decay: float | None
     armed_source_strength: float | None
+    arm_rule: str | None
+    arm_hit_count: int | None
+    arm_window: int | None
     effective_score: float
     snapshot_count: int
 
@@ -479,6 +492,9 @@ class RegimeActionState:
     extension_armed_age: int | None = None
     extension_armed_decay: float | None = None
     extension_armed_source_strength: float | None = None
+    extension_arm_rule: str | None = None
+    extension_arm_hit_count: int | None = None
+    extension_arm_window: int | None = None
     extension_memory_score: float = 0.0
     extension_memory_snapshot_count: int = 0
     action_features: tuple[RegimeActionFeature, ...] = ()
@@ -508,6 +524,9 @@ class RegimeActionState:
             "extension_armed_age": self.extension_armed_age,
             "extension_armed_decay": self.extension_armed_decay,
             "extension_armed_source_strength": self.extension_armed_source_strength,
+            "extension_arm_rule": self.extension_arm_rule,
+            "extension_arm_hit_count": self.extension_arm_hit_count,
+            "extension_arm_window": self.extension_arm_window,
             "extension_memory_score": self.extension_memory_score,
             "extension_memory_snapshot_count": self.extension_memory_snapshot_count,
             "confidence": self.confidence,
@@ -968,6 +987,14 @@ class _ProtectGateResult:
     non_vol_confirming_families: tuple[str, ...]
     warning_only: bool
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ExtensionArmTrigger:
+    rule: str | None
+    hit_count: int
+    window: int
+    source_strength: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2230,9 +2257,11 @@ def _gate_value(*, score: float, threshold: float) -> str:
 
 
 def _extension_setup_read(score: float) -> str:
-    if score >= ACTION_EXTENSION_SETUP_THRESHOLD:
-        return "today's extension setup can arm protect"
-    if score >= ACTION_EXTENSION_SETUP_THRESHOLD - 0.10:
+    if score >= EXTENSION_ARM_STRONG_SETUP_THRESHOLD:
+        return "strong one-day extension setup can arm protect"
+    if score >= EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD:
+        return "extension setup hit; needs persistence to arm"
+    if score >= EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD - 0.10:
         return "near extension-unwind setup gate"
     if score >= 0.30:
         return "partial extension; not armed"
@@ -2240,18 +2269,14 @@ def _extension_setup_read(score: float) -> str:
 
 
 def _extension_armed_value(action: RegimeActionState) -> str:
+    hits = _extension_arm_hits_value(action)
     if action.extension_armed_since is None:
-        return f"no; score {_format_pressure_score(action.extension_memory_score)}"
+        return f"no; {hits}; score {_format_pressure_score(action.extension_memory_score)}"
     age = "-" if action.extension_armed_age is None else str(action.extension_armed_age)
-    decay = (
-        "-"
-        if action.extension_armed_decay is None
-        else _format_pressure_score(action.extension_armed_decay)
-    )
     return (
         f"{'yes' if action.extension_armed else 'expired'}; "
         f"since {action.extension_armed_since.isoformat()}; "
-        f"age {age}; decay {decay}; "
+        f"age {age}; {hits}; "
         f"score {_format_pressure_score(action.extension_memory_score)}"
     )
 
@@ -2260,10 +2285,40 @@ def _extension_armed_read(action: RegimeActionState) -> str:
     if action.extension_memory_status == "initializing":
         return "no prior snapshot chain; run backfill before relying on single-date action"
     if action.extension_armed:
-        return "prior extension setup can support extension-unwind protect"
+        decay = (
+            "-"
+            if action.extension_armed_decay is None
+            else _format_pressure_score(action.extension_armed_decay)
+        )
+        return (
+            f"{_extension_arm_rule_read(action)}; decay {decay}; "
+            "supports extension-unwind protect"
+        )
     if action.extension_armed_since is not None:
-        return "prior extension setup expired"
-    return "no recent extension setup armed"
+        return f"{_extension_arm_rule_read(action)}; prior extension setup expired"
+    return (
+        f"needs setup >= {EXTENSION_ARM_STRONG_SETUP_THRESHOLD:.2f} or "
+        f"{EXTENSION_ARM_PERSISTENCE_HITS}/{EXTENSION_ARM_PERSISTENCE_WINDOW} hits "
+        f">= {EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f}"
+    )
+
+
+def _extension_arm_hits_value(action: RegimeActionState) -> str:
+    if action.extension_arm_hit_count is None or action.extension_arm_window is None:
+        return "hits -"
+    return f"hits {action.extension_arm_hit_count}/{action.extension_arm_window}"
+
+
+def _extension_arm_rule_read(action: RegimeActionState) -> str:
+    if action.extension_arm_rule == "strong":
+        return f"armed by setup >= {EXTENSION_ARM_STRONG_SETUP_THRESHOLD:.2f}"
+    if action.extension_arm_rule == "persistent":
+        hits = _extension_arm_hits_value(action)
+        return (
+            f"armed by persistent setup ({hits}, "
+            f"threshold {EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f})"
+        )
+    return "not armed by current extension rule"
 
 
 def _fragility_context_read(score: float) -> str:
@@ -3346,6 +3401,9 @@ def derive_regime_action_state(
         extension_armed_age=extension_memory.armed_age,
         extension_armed_decay=extension_memory.armed_decay,
         extension_armed_source_strength=extension_memory.armed_source_strength,
+        extension_arm_rule=extension_memory.arm_rule,
+        extension_arm_hit_count=extension_memory.arm_hit_count,
+        extension_arm_window=extension_memory.arm_window,
         extension_memory_score=extension_memory.effective_score,
         extension_memory_snapshot_count=extension_memory.snapshot_count,
         action_features=action_features,
@@ -3379,6 +3437,9 @@ def _snapshot_with_action(
         extension_armed_age=action.extension_armed_age,
         extension_armed_decay=action.extension_armed_decay,
         extension_armed_source_strength=action.extension_armed_source_strength,
+        extension_arm_rule=action.extension_arm_rule,
+        extension_arm_hit_count=action.extension_arm_hit_count,
+        extension_arm_window=action.extension_arm_window,
         extension_memory_score=action.extension_memory_score,
         extension_memory_snapshot_count=action.extension_memory_snapshot_count,
         action_features=action.action_features,
@@ -3433,7 +3494,8 @@ def _current_only_extension_memory(
     snapshot: RegimeSnapshot,
     extension_setup_score: float,
 ) -> RegimeExtensionMemory:
-    armed = extension_setup_score >= ACTION_EXTENSION_SETUP_THRESHOLD
+    trigger = _extension_arm_trigger_for_scores((extension_setup_score,))
+    armed = trigger.rule is not None
     return RegimeExtensionMemory(
         source_date=snapshot.source_date,
         status="current_only",
@@ -3441,8 +3503,11 @@ def _current_only_extension_memory(
         armed_since=snapshot.source_date if armed else None,
         armed_age=0 if armed else None,
         armed_decay=1.0 if armed else None,
-        armed_source_strength=extension_setup_score if armed else None,
-        effective_score=extension_setup_score,
+        armed_source_strength=trigger.source_strength if armed else None,
+        arm_rule=trigger.rule,
+        arm_hit_count=trigger.hit_count,
+        arm_window=trigger.window,
+        effective_score=_optional_clamped_score(extension_setup_score) or 0.0,
         snapshot_count=1,
     )
 
@@ -3452,31 +3517,38 @@ def extension_memory_rows_from_snapshots(
 ) -> dict[date, RegimeExtensionMemory]:
     """Return extension-unwind setup memory for an ordered snapshot chain."""
 
-    currently_elevated = False
+    setup_run_active = False
+    setup_run_armed = False
     armed_since: date | None = None
     armed_index: int | None = None
     source_strength: float | None = None
+    arm_rule: str | None = None
+    arm_hit_count: int | None = None
+    arm_window: int | None = None
     rows: dict[date, RegimeExtensionMemory] = {}
+    setup_scores: list[float | None] = []
     for index, snapshot in enumerate(sorted(snapshots, key=lambda item: item.source_date)):
         setup_score = _optional_clamped_score(snapshot.extension_setup_score)
-        if _armed_extension_setup_active(setup_score):
-            if not currently_elevated:
-                armed_since = snapshot.source_date
-                armed_index = index
-                source_strength = setup_score
-            currently_elevated = True
-        else:
-            currently_elevated = False
-            if (
-                armed_index is not None
-                and index - armed_index > ACTION_EXTENSION_ARMED_MAX_AGE_DAYS
-            ):
-                armed_since = None
-                armed_index = None
-                source_strength = None
+        setup_scores.append(setup_score)
+        setup_hit = _armed_extension_setup_active(setup_score)
+        if setup_hit and not setup_run_active:
+            setup_run_armed = False
+        setup_run_active = setup_hit
+        if not setup_hit:
+            setup_run_armed = False
+        trigger = _extension_arm_trigger_for_scores(tuple(setup_scores))
+        if trigger.rule is not None and not setup_run_armed:
+            armed_since = snapshot.source_date
+            armed_index = index
+            source_strength = trigger.source_strength
+            arm_rule = trigger.rule
+            arm_hit_count = trigger.hit_count
+            arm_window = trigger.window
+            setup_run_armed = True
 
         age = index - armed_index if armed_index is not None else None
         is_armed = age is not None and age <= ACTION_EXTENSION_ARMED_MAX_AGE_DAYS
+        status = "armed" if is_armed else "expired" if armed_since is not None else "unarmed"
         decay = (
             max(0.0, 1.0 - age / ACTION_EXTENSION_ARMED_MAX_AGE_DAYS)
             if is_armed and age is not None
@@ -3484,12 +3556,15 @@ def extension_memory_rows_from_snapshots(
         )
         rows[snapshot.source_date] = RegimeExtensionMemory(
             source_date=snapshot.source_date,
-            status="armed" if is_armed else "unarmed",
+            status=status,
             armed=is_armed,
             armed_since=armed_since,
             armed_age=age,
             armed_decay=decay,
             armed_source_strength=source_strength,
+            arm_rule=arm_rule if armed_since is not None else trigger.rule,
+            arm_hit_count=arm_hit_count if armed_since is not None else trigger.hit_count,
+            arm_window=arm_window if armed_since is not None else trigger.window,
             effective_score=_extension_memory_effective_score(
                 current_setup_score=setup_score,
                 armed=is_armed,
@@ -3533,6 +3608,9 @@ def _extension_memory_from_snapshot_chain(
             armed_age=memory.armed_age,
             armed_decay=memory.armed_decay,
             armed_source_strength=memory.armed_source_strength,
+            arm_rule=memory.arm_rule,
+            arm_hit_count=memory.arm_hit_count,
+            arm_window=memory.arm_window,
             effective_score=memory.effective_score,
             snapshot_count=memory.snapshot_count,
         )
@@ -3543,6 +3621,50 @@ def _optional_clamped_score(score: float | None) -> float | None:
     if score is None:
         return None
     return _clamp(score, 0.0, 1.0)
+
+
+def _extension_arm_trigger_for_scores(
+    scores: tuple[float | None, ...],
+) -> _ExtensionArmTrigger:
+    current_score = scores[-1] if scores else None
+    window_scores = scores[-EXTENSION_ARM_PERSISTENCE_WINDOW:]
+    hit_scores = tuple(
+        score
+        for score in window_scores
+        if score is not None and score >= EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
+    )
+    hit_count = len(hit_scores)
+    window = len(window_scores)
+    if current_score is None:
+        return _ExtensionArmTrigger(
+            rule=None,
+            hit_count=hit_count,
+            window=window,
+            source_strength=max(hit_scores) if hit_scores else None,
+        )
+    if current_score >= EXTENSION_ARM_STRONG_SETUP_THRESHOLD:
+        return _ExtensionArmTrigger(
+            rule="strong",
+            hit_count=hit_count,
+            window=window,
+            source_strength=current_score,
+        )
+    if (
+        current_score >= EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
+        and hit_count >= EXTENSION_ARM_PERSISTENCE_HITS
+    ):
+        return _ExtensionArmTrigger(
+            rule="persistent",
+            hit_count=hit_count,
+            window=window,
+            source_strength=max(hit_scores),
+        )
+    return _ExtensionArmTrigger(
+        rule=None,
+        hit_count=hit_count,
+        window=window,
+        source_strength=max(hit_scores) if hit_scores else None,
+    )
 
 
 def _extension_memory_effective_score(
@@ -3580,14 +3702,29 @@ def _missing_extension_memory_history_message(
 
 
 def _extension_memory_reason(memory: RegimeExtensionMemory) -> str:
+    rule_read = _extension_memory_rule_read(memory)
     if memory.armed_since is None:
-        return "extension setup is armed"
+        return f"extension setup is armed by {rule_read}"
     if memory.armed_age is None:
-        return f"extension setup was armed on {memory.armed_since.isoformat()}"
+        return (
+            f"extension setup was armed by {rule_read} "
+            f"on {memory.armed_since.isoformat()}"
+        )
     return (
-        f"extension setup was armed on {memory.armed_since.isoformat()} "
+        f"extension setup was armed by {rule_read} on {memory.armed_since.isoformat()} "
         f"({memory.armed_age} trading snapshots ago)"
     )
+
+
+def _extension_memory_rule_read(memory: RegimeExtensionMemory) -> str:
+    if memory.arm_rule == "strong":
+        return f"setup >= {EXTENSION_ARM_STRONG_SETUP_THRESHOLD:.2f}"
+    if memory.arm_rule == "persistent":
+        return (
+            f"{memory.arm_hit_count}/{memory.arm_window} setup hits "
+            f">= {EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f}"
+        )
+    return "the extension rule"
 
 
 def _protect_gate_result(
@@ -5475,6 +5612,9 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         extension_armed_age=snapshot.extension_armed_age,
         extension_armed_decay=snapshot.extension_armed_decay,
         extension_armed_source_strength=snapshot.extension_armed_source_strength,
+        extension_arm_rule=snapshot.extension_arm_rule,
+        extension_arm_hit_count=snapshot.extension_arm_hit_count,
+        extension_arm_window=snapshot.extension_arm_window,
         extension_memory_score=snapshot.extension_memory_score,
         extension_memory_snapshot_count=snapshot.extension_memory_snapshot_count,
         action_features=snapshot.action_features,
@@ -7864,6 +8004,17 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         extension_armed_decay=_optional_float(row.get("extension_armed_decay")),
         extension_armed_source_strength=_optional_float(
             row.get("extension_armed_source_strength")
+        ),
+        extension_arm_rule=_optional_str(row.get("extension_arm_rule")),
+        extension_arm_hit_count=(
+            int(row["extension_arm_hit_count"])
+            if row.get("extension_arm_hit_count") is not None
+            else None
+        ),
+        extension_arm_window=(
+            int(row["extension_arm_window"])
+            if row.get("extension_arm_window") is not None
+            else None
         ),
         extension_memory_score=_optional_float(row.get("extension_memory_score")) or 0.0,
         extension_memory_snapshot_count=int(row.get("extension_memory_snapshot_count", 0)),

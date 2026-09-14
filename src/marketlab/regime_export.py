@@ -20,7 +20,6 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from marketlab.prices import DEFAULT_PRICE_OBSERVATIONS_ROOT, load_price_history
 from marketlab.regime import (
-    ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
     DEFAULT_REGIME_SNAPSHOT_ROOT,
     EXTENSION_ARMED_SETUP_THRESHOLD,
     PRESSURE_FEATURE_SPECS,
@@ -30,6 +29,7 @@ from marketlab.regime import (
     RegimePostureState,
     RegimeSnapshot,
     derive_regime_postures,
+    extension_memory_rows_from_snapshots,
     load_regime_snapshot,
 )
 from marketlab.snapshots.models import SignalTime, signal_time_value, snapshot_source_dates
@@ -40,8 +40,6 @@ DEFAULT_REGIME_EXPORT_WORKBOOK_PATH = DEFAULT_REGIME_EXPORT_ROOT / f"regime-{REG
 DEFAULT_REGIME_EXPORT_CSV_PATH = DEFAULT_REGIME_EXPORT_ROOT / f"regime-{REGIME_VERSION}.csv"
 DEFAULT_REGIME_EXPORT_SHEET_NAME = "regime_data"
 DEFAULT_REGIME_EXPORT_TABLE_NAME = "RegimeData"
-ARMED_EXTENSION_MAX_AGE_DAYS = ACTION_EXTENSION_ARMED_MAX_AGE_DAYS
-
 _ACTION_FEATURE_ORDER = (
     "short_momentum",
     "vix_turn",
@@ -96,6 +94,9 @@ _BASE_COLUMNS = (
     "extension_armed_age",
     "extension_armed_decay",
     "extension_armed_source_strength",
+    "extension_arm_rule",
+    "extension_arm_hit_count",
+    "extension_arm_window",
     "fragility_context",
     "washout_setup",
     "protect_strength",
@@ -438,9 +439,7 @@ def _armed_extension_memory_rows(
 ) -> dict[date, dict[str, Any]]:
     elevated_since: date | None = None
     elevated_index: int | None = None
-    armed_since: date | None = None
-    armed_index: int | None = None
-    source_strength: float | None = None
+    memory_by_date = extension_memory_rows_from_snapshots(snapshots)
     rows: dict[date, dict[str, Any]] = {}
     for index, snapshot in enumerate(snapshots):
         setup_score = snapshot.extension_setup_score
@@ -448,33 +447,23 @@ def _armed_extension_memory_rows(
             if elevated_since is None:
                 elevated_since = snapshot.source_date
                 elevated_index = index
-                armed_since = snapshot.source_date
-                armed_index = index
-                source_strength = setup_score
         else:
             elevated_since = None
             elevated_index = None
-            if armed_index is not None and index - armed_index > ARMED_EXTENSION_MAX_AGE_DAYS:
-                armed_since = None
-                armed_index = None
-                source_strength = None
 
-        age = index - armed_index if armed_index is not None else None
         elevated_age = index - elevated_index if elevated_index is not None else None
-        is_armed = age is not None and age <= ARMED_EXTENSION_MAX_AGE_DAYS
-        decay = (
-            max(0.0, 1.0 - age / ARMED_EXTENSION_MAX_AGE_DAYS)
-            if is_armed and age is not None
-            else None
-        )
+        memory = memory_by_date[snapshot.source_date]
         rows[snapshot.source_date] = {
             "extension_elevated_since": elevated_since,
             "extension_elevated_age": elevated_age,
-            "extension_armed": is_armed,
-            "extension_armed_since": armed_since,
-            "extension_armed_age": age,
-            "extension_armed_decay": decay,
-            "extension_armed_source_strength": source_strength,
+            "extension_armed": memory.armed,
+            "extension_armed_since": memory.armed_since,
+            "extension_armed_age": memory.armed_age,
+            "extension_armed_decay": memory.armed_decay,
+            "extension_armed_source_strength": memory.armed_source_strength,
+            "extension_arm_rule": memory.arm_rule,
+            "extension_arm_hit_count": memory.arm_hit_count,
+            "extension_arm_window": memory.arm_window,
         }
     return rows
 

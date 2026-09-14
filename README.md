@@ -110,6 +110,11 @@ message when this prior chain is missing. Start the backfill far enough before t
 period you care about; extension-unwind memory can look back up to 40 saved trading
 snapshots.
 
+Extension memory does not arm from every one-day setup blip. The current defaults arm on
+either one strong setup snapshot (`extension_setup >= 0.75`) or persistent setup
+(`extension_setup >= 0.60` on at least 2 of the last 5 saved snapshots). These tuning
+parameters live together near the top of `src/marketlab/regime.py`.
+
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
   Volatility indexes are fetched from CBOE historical CSVs; if a source returns stale

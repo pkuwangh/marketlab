@@ -231,6 +231,9 @@ Implemented v1.0 direction:
 - Add an armed setup state: high extension setup arms protect for a bounded number of trading days.
 - Let the armed setup decay over time rather than disappear immediately.
 - Trigger protect only when confirmation appears while setup is armed.
+- Avoid noisy one-day arming: default v1.0 parameters arm from either
+  `extension_setup >= 0.75` on one snapshot or `extension_setup >= 0.60` on at least
+  2 of the last 5 saved snapshots.
 
 Open research:
 
