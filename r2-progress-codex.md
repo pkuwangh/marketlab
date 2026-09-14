@@ -14,7 +14,7 @@ This file tracks implementation progress separately from the design plan. Do not
 - [x] Add correction-episode diagnostics.
 - [x] Replace protect with gated paths.
 - [x] Make volatility-only protect warning-only.
-- [ ] Add event-volatility context.
+- [x] Add event-volatility context.
 - [ ] Export armed setup memory as research output.
 - [ ] Add posture replay in outcomes/export flows.
 - [ ] Validate redeploy separately.

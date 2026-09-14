@@ -209,6 +209,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.action is not None
     assert result.action.state == "no_change"
     assert result.snapshot.action_state == "no_change"
+    assert result.snapshot.event_volatility_context == "none"
     assert result.pressure is not None
     assert result.snapshot.stretch_pressure_score is not None
     assert result.snapshot.washout_pressure_score is not None
@@ -341,6 +342,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert loaded == result.snapshot
     assert loaded is not None
     assert loaded.action_state == "no_change"
+    assert loaded.event_volatility_context == result.snapshot.event_volatility_context
     assert loaded.stretch_pressure_score == result.snapshot.stretch_pressure_score
     assert loaded.extension_setup_score == result.snapshot.extension_setup_score
     assert loaded.fragility_context_score == result.snapshot.fragility_context_score
@@ -943,6 +945,41 @@ def test_derive_regime_action_state_allows_regime_break_without_extension() -> N
     assert action.protect_strength >= 0.55
     assert "regime_break protect" in action.reason
     assert "non-vol families" in action.reason
+
+
+def test_derive_regime_action_state_labels_near_term_event_vol_premium() -> None:
+    snapshot = _snapshot(
+        source_date=date(2026, 1, 1),
+        regime="risk_on",
+        score=4,
+        stretch_pressure_score=0.80,
+        washout_pressure_score=0.02,
+        extension_setup_score=0.75,
+        fragility_context_score=0.10,
+    )
+
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=snapshot.source_date,
+                family="volatility",
+                name="term_structure",
+                status="mixed",
+                score=0,
+                value=0.95,
+                details={
+                    "vix9d_vix_ratio": 1.03,
+                    "vix_vix3m_ratio": 0.95,
+                    "vix9d_vix_ratio_change_5d": 0.07,
+                    "vix_vix3m_ratio_change_5d": 0.02,
+                },
+            ),
+        ),
+    )
+
+    assert action.state == "no_change"
+    assert action.event_volatility_context == "near_term_event_premium"
 
 
 def test_action_modules_bound_each_family_contribution() -> None:
@@ -2090,6 +2127,7 @@ def _snapshot(
     action_state: str = "no_change",
     action_confidence: str = "medium",
     action_reason: str = "No rare-action threshold crossed",
+    event_volatility_context: str = "none",
     stretch_score: int = 0,
     washout_score: int = 0,
     protect_strength: float = 0.0,
@@ -2141,6 +2179,7 @@ def _snapshot(
         action_state=action_state,
         action_confidence=action_confidence,
         action_reason=action_reason,
+        event_volatility_context=event_volatility_context,
         stretch_score=stretch_score,
         washout_score=washout_score,
         protect_strength=protect_strength,

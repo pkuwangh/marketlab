@@ -319,6 +319,7 @@ class RegimeSnapshot:
     action_score: float = 0.0
     action_confidence: str = "low"
     action_reason: str = "Action state not computed"
+    event_volatility_context: str = "none"
     action_features: tuple[RegimeActionFeature, ...] = ()
     action_modules: tuple[RegimeActionModule, ...] = ()
     pressure_version: str = REGIME_PRESSURE_VERSION
@@ -395,6 +396,7 @@ class RegimeSnapshot:
             "action_score": self.action_score,
             "action_confidence": self.action_confidence,
             "action_reason": self.action_reason,
+            "event_volatility_context": self.event_volatility_context,
             "action_features": [feature.to_dict() for feature in self.action_features],
             "action_modules": [module.to_dict() for module in self.action_modules],
             "pressure_version": self.pressure_version,
@@ -428,6 +430,7 @@ class RegimeActionState:
     protect_strength: float = 0.0
     redeploy_strength: float = 0.0
     action_score: float = 0.0
+    event_volatility_context: str = "none"
     action_features: tuple[RegimeActionFeature, ...] = ()
     action_modules: tuple[RegimeActionModule, ...] = ()
 
@@ -443,6 +446,7 @@ class RegimeActionState:
             "protect_strength": self.protect_strength,
             "redeploy_strength": self.redeploy_strength,
             "action_score": self.action_score,
+            "event_volatility_context": self.event_volatility_context,
             "confidence": self.confidence,
             "reason": self.reason,
             "evidence": list(self.evidence),
@@ -1836,6 +1840,9 @@ def _action_read(action: RegimeActionState, *, missing_inputs: tuple[str, ...]) 
         _data_quality_read(missing_inputs),
         f"{action.confidence} confidence",
     ]
+    event_context = _event_volatility_context_read(action.event_volatility_context)
+    if event_context is not None:
+        parts.append(event_context)
     reason = _nonredundant_action_reason(action)
     if reason:
         parts.append(reason)
@@ -1864,6 +1871,16 @@ def _nonredundant_action_reason(action: RegimeActionState) -> str | None:
         suffix = action.reason[len(default_reason) :].lstrip(": ")
         return suffix or None
     return action.reason
+
+
+def _event_volatility_context_read(context: str) -> str | None:
+    if context == "near_term_event_premium":
+        return "near-term event vol premium"
+    if context == "near_term_event_premium_with_confirmation":
+        return "near-term event vol premium with non-vol confirmation"
+    if context == "volatility_only_warning":
+        return "volatility-only warning"
+    return None
 
 
 def format_regime_action_modules(
@@ -2837,6 +2854,10 @@ def derive_regime_action_state(
         state = "no_change"
         evidence = stretch_evidence + washout_evidence
         reason = "No actionable setup; maintain current posture"
+    event_volatility_context = _event_volatility_context(
+        signals=signals,
+        protect_gate=protect_gate,
+    )
 
     return RegimeActionState(
         source_date=snapshot.source_date,
@@ -2858,6 +2879,7 @@ def derive_regime_action_state(
         protect_strength=protect_strength,
         redeploy_strength=redeploy_strength,
         action_score=action_score,
+        event_volatility_context=event_volatility_context,
         action_features=action_features,
         action_modules=action_modules,
     )
@@ -2881,6 +2903,7 @@ def _snapshot_with_action(
         action_score=action.action_score,
         action_confidence=action.confidence,
         action_reason=action.reason,
+        event_volatility_context=action.event_volatility_context,
         action_features=action.action_features,
         action_modules=action.action_modules,
     )
@@ -3037,6 +3060,28 @@ def _protect_gate_evidence(gate: _ProtectGateResult) -> tuple[str, ...]:
             f"{_family_list_read(gate.non_vol_confirming_families)}",
         )
     return evidence
+
+
+def _event_volatility_context(
+    *,
+    signals: tuple[MarketSignal, ...],
+    protect_gate: _ProtectGateResult,
+) -> str:
+    term_signal = _signal_by_name(signals, family="volatility", name="term_structure")
+    vix9d_vix_ratio = _signal_detail_float(term_signal, "vix9d_vix_ratio")
+    vix_vix3m_ratio = _signal_detail_float(term_signal, "vix_vix3m_ratio")
+    vix9d_vix_change_5d = _signal_detail_float(term_signal, "vix9d_vix_ratio_change_5d")
+    near_term_premium = (
+        (_ge(vix9d_vix_ratio, 1.00) or _ge(vix9d_vix_change_5d, 0.05))
+        and not _ge(vix_vix3m_ratio, 1.00)
+    )
+    if near_term_premium and protect_gate.non_vol_confirming_families:
+        return "near_term_event_premium_with_confirmation"
+    if near_term_premium:
+        return "near_term_event_premium"
+    if protect_gate.warning_only:
+        return "volatility_only_warning"
+    return "none"
 
 
 def _family_list_read(families: tuple[str, ...]) -> str:
@@ -4635,6 +4680,7 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         protect_strength=snapshot.protect_strength,
         redeploy_strength=snapshot.redeploy_strength,
         action_score=snapshot.action_score,
+        event_volatility_context=snapshot.event_volatility_context,
         action_features=snapshot.action_features,
         action_modules=snapshot.action_modules,
     )
@@ -6343,6 +6389,7 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         action_score=_optional_float(row.get("action_score")) or 0.0,
         action_confidence=str(row.get("action_confidence", "low")),
         action_reason=str(row.get("action_reason", "Action state not computed")),
+        event_volatility_context=str(row.get("event_volatility_context", "none")),
         action_features=action_features,
         action_modules=action_modules,
         pressure_version=str(row.get("pressure_version", REGIME_PRESSURE_VERSION)),

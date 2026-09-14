@@ -71,12 +71,14 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["extension_setup"] == 0.50
     assert first_row["fragility_context"] == 0.20
     assert first_row["washout_setup"] == 0.11
+    assert first_row["event_volatility_context"] == "near_term_event_premium"
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
     with csv_path.open(encoding="utf-8", newline="") as handle:
         csv_rows = list(csv.DictReader(handle))
     assert csv_rows[0]["date"] == first_date.isoformat()
     assert csv_rows[0]["SPY_close"] == "100.0"
+    assert csv_rows[0]["event_volatility_context"] == "near_term_event_premium"
     assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
 
 
@@ -213,6 +215,7 @@ def _snapshot(
         action_state="scale_down_protect",
         action_confidence="medium",
         action_reason="fixture action",
+        event_volatility_context="near_term_event_premium",
         stretch_pressure_score=0.62,
         washout_pressure_score=0.11,
         extension_setup_score=0.50,
