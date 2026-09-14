@@ -156,6 +156,9 @@ warning yet:
 - 8 of 42 clusters started after SPY was already more than 5% below its trailing 40-day high.
 - Excluding COVID, only 4 of 14 SPY corrections of at least 5% had protect between 20 trading days
   before the peak and the first -5% crossing. A 40-day window covered only 6 of 14.
+- Fast deep shock episodes should be reported separately from ordinary corrections. Missing a
+  COVID-style shock is an acceptable protect false negative; the protect model is mainly trying to
+  catch deterioration/divergence after extension, not every exogenous crash.
 
 Conclusion: protect should be redesigned before threshold tuning. The current action combines
 different market states, fires too often on volatility-only moves, and misses corrections where

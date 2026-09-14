@@ -103,6 +103,7 @@ from marketlab.regime import (
     RegimePostureOutcomeResult,
     RegimePressureOutcomeResult,
     RegimePriceRefreshResult,
+    RegimeProtectClusterResult,
     RegimeRecentReportResult,
     RegimeRedeployOutcomeResult,
     RegimeSnapshotResult,
@@ -113,6 +114,7 @@ from marketlab.regime import (
     compute_regime_outcomes,
     compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
+    compute_regime_protect_clusters,
     compute_regime_recent_report,
     compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
@@ -162,6 +164,7 @@ class RegimeOutcomeGroup(StrEnum):
     EPISODE = "episode"
     POSTURE = "posture"
     REDEPLOY = "redeploy"
+    CLUSTER = "cluster"
     POLICY = "policy"
 
 
@@ -1491,7 +1494,7 @@ def regime_outcomes(
         RegimeOutcomeGroup.ACTION,
         "--by",
         help=(
-            "Outcome grouping to replay: regime, signal, action, posture, redeploy, "
+            "Outcome grouping to replay: regime, signal, action, posture, redeploy, cluster, "
             "pressure, episode, or policy."
         ),
     ),
@@ -1589,6 +1592,29 @@ def regime_outcomes(
             raise typer.BadParameter(str(exc)) from exc
         _emit_regime_outcome_report(
             _regime_redeploy_outcome_report_text(redeploy_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
+        return
+    if outcome_group == RegimeOutcomeGroup.CLUSTER:
+        try:
+            cluster_result = compute_regime_protect_clusters(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+                snapshot_version=snapshot_version,
+            )
+        except RegimeError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _emit_regime_outcome_report(
+            _regime_protect_cluster_report_text(cluster_result),
             save_report=save_report,
             outcome_group=outcome_group.value,
             artifact_version=outcome_version,
@@ -3181,6 +3207,20 @@ def _regime_redeploy_outcome_report_text(result: RegimeRedeployOutcomeResult) ->
     )
 
 
+def _regime_protect_cluster_report_text(result: RegimeProtectClusterResult) -> str:
+    return _format_outcome_tables(
+        (
+            ("regime_protect_cluster_count", _protect_cluster_count(result)),
+            ("regime_protect_cluster_outcome_count", len(result.outcomes)),
+            (
+                "false_alert_cluster_outcome_count",
+                _false_alert_cluster_outcome_count(result),
+            ),
+        ),
+        summary_table=result.table,
+    )
+
+
 def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) -> None:
     typer.echo(_regime_pressure_outcome_report_text(result))
 
@@ -3351,6 +3391,14 @@ def _available_regime_redeploy_outcome_count(result: RegimeRedeployOutcomeResult
         for outcome in result.outcomes
         if outcome.spy_return is not None and outcome.qqq_return is not None
     )
+
+
+def _protect_cluster_count(result: RegimeProtectClusterResult) -> int:
+    return len({outcome.cluster_start_date for outcome in result.outcomes})
+
+
+def _false_alert_cluster_outcome_count(result: RegimeProtectClusterResult) -> int:
+    return sum(1 for outcome in result.outcomes if outcome.had_5pct_drawdown is False)
 
 
 def _available_regime_pressure_outcome_count(result: RegimePressureOutcomeResult) -> int:

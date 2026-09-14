@@ -79,6 +79,8 @@ from marketlab.regime import (
     RegimePressureOutcomeSummaryRow,
     RegimePressureSnapshot,
     RegimePriceRefreshResult,
+    RegimeProtectClusterOutcome,
+    RegimeProtectClusterResult,
     RegimeRecentReportResult,
     RegimeRedeployForwardOutcome,
     RegimeRedeployOutcomeResult,
@@ -3184,7 +3186,7 @@ def test_regime_outcomes_episode_outputs_diagnostics(
                     protect_timing="before_3pct",
                     first_redeploy_date=date(2026, 2, 8),
                     redeploy_timing="before_trough",
-                    event_context="unclassified",
+                    event_context="ordinary",
                 ),
             ),
             table="peak        first_5     timing\n2026-02-01  2026-02-05  before_3pct",
@@ -3222,6 +3224,90 @@ def test_regime_outcomes_episode_outputs_diagnostics(
     assert "regime_correction_episode_protect_count=1" in result.output
     assert "summary_table:" in result.output
     assert "before_3pct" in result.output
+
+
+def test_regime_outcomes_cluster_outputs_false_alert_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    price_root = tmp_path / "prices"
+
+    def fake_compute_regime_protect_clusters(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+        snapshot_version: str | None,
+    ) -> RegimeProtectClusterResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20,)
+        assert snapshot_version == "v1.0"
+        return RegimeProtectClusterResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                RegimeProtectClusterOutcome(
+                    cluster_start_date=date(2026, 2, 1),
+                    cluster_end_date=date(2026, 2, 3),
+                    first_price_date=date(2026, 2, 1),
+                    protect_path="extension_unwind",
+                    action_count=2,
+                    confirming_families=("breadth", "credit"),
+                    volatility_only=False,
+                    late_signal=False,
+                    drawdown_from_peak=-0.02,
+                    horizon_days=20,
+                    spy_return=0.03,
+                    qqq_return=0.04,
+                    spy_max_drawdown=-0.01,
+                    qqq_max_drawdown=-0.02,
+                    had_5pct_drawdown=False,
+                ),
+            ),
+            table="cluster_start  path\n2026-02-01     extension_unwind",
+        )
+
+    snapshot_root_arg = snapshot_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_protect_clusters",
+        fake_compute_regime_protect_clusters,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--by",
+            "cluster",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--price-root",
+            str(price_root),
+            "--snapshot-version",
+            "v1.0",
+            "--horizons",
+            "20",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "regime_protect_cluster_count=1" in result.output
+    assert "regime_protect_cluster_outcome_count=1" in result.output
+    assert "false_alert_cluster_outcome_count=1" in result.output
+    assert "summary_table:" in result.output
+    assert "extension_unwind" in result.output
 
 
 def test_regime_pressure_outcomes_outputs_summary_table(

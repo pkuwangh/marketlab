@@ -13,6 +13,7 @@ from marketlab.market_signals import (
 )
 from marketlab.prices import DailyPriceObservation, load_price_history, write_price_observations
 from marketlab.regime import (
+    RegimeActionModule,
     RegimeComponentScore,
     RegimeError,
     RegimePressureFeature,
@@ -24,6 +25,7 @@ from marketlab.regime import (
     compute_regime_outcomes,
     compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
+    compute_regime_protect_clusters,
     compute_regime_recent_report,
     compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
@@ -809,6 +811,7 @@ def test_derive_regime_action_state_keeps_volatility_only_warning_out_of_protect
     )
 
     assert action.state == "no_change"
+    assert action.action_path == "volatility_only_warning"
     assert action.stretch_score >= 3
     assert action.washout_score == 0
     assert action.protect_strength >= 0.55
@@ -879,6 +882,7 @@ def test_derive_regime_action_state_detects_paired_divergence_inside_turn_module
 
     features = {feature.name: feature for feature in action.action_features}
     assert action.state == "scale_down_protect"
+    assert action.action_path == "extension_unwind"
     assert "extension_unwind protect" in action.reason
     assert features["price_breadth_divergence"].family == "breadth"
     assert features["price_breadth_divergence"].evidence_kind == "divergence"
@@ -944,6 +948,7 @@ def test_derive_regime_action_state_allows_regime_break_without_extension() -> N
     )
 
     assert action.state == "scale_down_protect"
+    assert action.action_path == "regime_break"
     assert action.stretch_score <= 1
     assert action.protect_strength >= 0.55
     assert "regime_break protect" in action.reason
@@ -982,6 +987,7 @@ def test_derive_regime_action_state_labels_near_term_event_vol_premium() -> None
     )
 
     assert action.state == "no_change"
+    assert action.action_path == "volatility_only_warning"
     assert action.event_volatility_context == "near_term_event_premium"
 
 
@@ -1401,6 +1407,7 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
     assert action.stretch_score == 0
     assert action.redeploy_strength >= 0.55
     assert action.protect_strength < action.redeploy_strength
+    assert action.action_path == "redeploy"
     assert "Washout setup plus stabilization evidence" in action.reason
 
 
@@ -2204,7 +2211,132 @@ def test_compute_regime_correction_episodes_reports_protect_timing(
     assert episode.first_redeploy_date == start_date + timedelta(days=5)
     assert episode.redeploy_timing == "before_trough"
     assert "before_3pct" in result.table
-    assert "unclassified" in result.table
+    assert episode.event_context == "ordinary"
+    assert "ordinary" in result.table
+
+
+def test_compute_regime_correction_episodes_labels_fast_deep_shocks(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 101.0, 96.0, 90.0, 84.0, 82.0, 86.0, 90.0],
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=5,
+            extension_setup_score=0.72,
+        ),
+        snapshot_root=snapshot_root,
+    )
+
+    result = compute_regime_correction_episodes(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=7),
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+    )
+
+    assert len(result.episodes) == 1
+    assert result.episodes[0].event_context == "shock"
+    assert "shock" in result.table
+
+
+def test_compute_regime_protect_clusters_groups_false_alerts(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 101.0, 102.0, 103.0, 104.0],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=start_date,
+        closes=[100.0, 102.0, 104.0, 106.0, 108.0],
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date,
+            regime="risk_on",
+            score=4,
+            action_state="scale_down_protect",
+            action_path="extension_unwind",
+            action_modules=(
+                RegimeActionModule(
+                    family="breadth",
+                    name="breadth_turn",
+                    deterioration_score=0.70,
+                    stabilization_score=0.0,
+                    feature_count=1,
+                    feature_names=("price_breadth_divergence",),
+                    reason="fixture",
+                ),
+            ),
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=4,
+            action_state="scale_down_protect",
+            action_path="extension_unwind",
+            action_modules=(
+                RegimeActionModule(
+                    family="breadth",
+                    name="breadth_turn",
+                    deterioration_score=0.65,
+                    stabilization_score=0.0,
+                    feature_count=1,
+                    feature_names=("price_breadth_divergence",),
+                    reason="fixture",
+                ),
+            ),
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=2),
+            regime="risk_on",
+            score=4,
+            action_state="no_change",
+        ),
+        snapshot_root=snapshot_root,
+    )
+
+    result = compute_regime_protect_clusters(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=2),
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(2,),
+    )
+
+    assert len(result.outcomes) == 1
+    outcome = result.outcomes[0]
+    assert outcome.cluster_start_date == start_date
+    assert outcome.cluster_end_date == start_date + timedelta(days=1)
+    assert outcome.action_count == 2
+    assert outcome.protect_path == "extension_unwind"
+    assert outcome.confirming_families == ("breadth",)
+    assert outcome.had_5pct_drawdown is False
+    assert "vol_only" in result.table
+    assert "no" in result.table
 
 
 def test_compute_regime_recent_report_summarizes_recent_snapshot_trends(
@@ -2309,6 +2441,7 @@ def _snapshot(
     sp500_above_50d: float | None = 65.0,
     sp500_above_200d: float | None = 70.0,
     action_state: str = "no_change",
+    action_path: str | None = None,
     action_confidence: str = "medium",
     action_reason: str = "No rare-action threshold crossed",
     event_volatility_context: str = "none",
@@ -2324,6 +2457,7 @@ def _snapshot(
     fragility_context_score: float | None = None,
     washout_setup_score: float | None = None,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
+    action_modules: tuple[RegimeActionModule, ...] = (),
     model_version: str = "fixture_model",
     signal_time: str = "eod",
     snapshot_version: str | None = None,
@@ -2362,6 +2496,7 @@ def _snapshot(
         sp500_above_50d=sp500_above_50d,
         sp500_above_200d=sp500_above_200d,
         action_state=action_state,
+        action_path=action_path,
         action_confidence=action_confidence,
         action_reason=action_reason,
         event_volatility_context=event_volatility_context,
@@ -2377,6 +2512,7 @@ def _snapshot(
         fragility_context_score=fragility_context_score,
         washout_setup_score=washout_setup_score,
         pressure_features=pressure_features,
+        action_modules=action_modules,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
     )

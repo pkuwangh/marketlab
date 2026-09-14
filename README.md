@@ -158,18 +158,24 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 Add `--save` to write the same report to a versioned canonical text file such as
 `workbooks/outcomes-action-v1.0.txt`.
 
-Replay headline regime labels, held posture, normalized pressure buckets, SPY correction
-episodes, market-signal rows, or policy states:
+Replay headline regime labels, held posture, redeploy setups, protect clusters, normalized
+pressure buckets, SPY correction episodes, market-signal rows, or policy states:
 
 ```bash
 ./bin/marketlab regime outcomes --by regime   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by posture  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by redeploy --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by cluster  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by pressure --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by episode  --start 2016-01-01 --end 2026-06-01
 ./bin/marketlab regime outcomes --by signal   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by policy   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
+
+`--by cluster` groups consecutive `scale_down_protect` days so false alerts are counted by
+signal event instead of repeated daily rows. `--by episode` labels corrections as `ordinary`,
+`scheduled_event_proxy`, or `shock`; fast deep shocks are tracked separately because the protect
+model is not expected to predict every exogenous crash.
 
 Export saved regime snapshots for Excel and CSV analysis:
 
@@ -184,7 +190,9 @@ to regenerate older-version files such as `workbooks/regime-v0.0.xlsx`. The XLSX
 once in Excel and refresh the same workbook after each new backfill or daily run. Both
 formats include SPY/QQQ closes, indexed prices, headline regime/action fields, derived
 held posture, armed extension memory, normalized pressure feature values, and
-protect/redeploy action evidence.
+protect/redeploy action evidence. `posture_age`, `extension_elevated_age`, and
+`extension_armed_age` are snapshot/trading-row counts, not calendar-day counts. The event-volatility
+label is inferred from VIX term-structure behavior, not from a maintained macro-event calendar.
 
 ### Portfolio Policy
 

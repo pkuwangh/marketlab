@@ -80,7 +80,7 @@ DEFAULT_CORRECTION_EPISODE_LOOKBACK_DAYS = 20
 CORRECTION_EPISODE_FIRST_DAMAGE_DRAWDOWN = 0.03
 CORRECTION_EPISODE_MIN_DRAWDOWN = 0.05
 CORRECTION_EPISODE_SEVERE_DRAWDOWN = 0.08
-CORRECTION_EPISODE_ARMED_SETUP_THRESHOLD = 0.60
+EXTENSION_ARMED_SETUP_THRESHOLD = 0.60
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
 REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
@@ -322,6 +322,7 @@ class RegimeSnapshot:
     action_score: float = 0.0
     action_confidence: str = "low"
     action_reason: str = "Action state not computed"
+    action_path: str | None = None
     event_volatility_context: str = "none"
     action_features: tuple[RegimeActionFeature, ...] = ()
     action_modules: tuple[RegimeActionModule, ...] = ()
@@ -399,6 +400,7 @@ class RegimeSnapshot:
             "action_score": self.action_score,
             "action_confidence": self.action_confidence,
             "action_reason": self.action_reason,
+            "action_path": self.action_path,
             "event_volatility_context": self.event_volatility_context,
             "action_features": [feature.to_dict() for feature in self.action_features],
             "action_modules": [module.to_dict() for module in self.action_modules],
@@ -433,6 +435,7 @@ class RegimeActionState:
     protect_strength: float = 0.0
     redeploy_strength: float = 0.0
     action_score: float = 0.0
+    action_path: str | None = None
     event_volatility_context: str = "none"
     action_features: tuple[RegimeActionFeature, ...] = ()
     action_modules: tuple[RegimeActionModule, ...] = ()
@@ -449,6 +452,7 @@ class RegimeActionState:
             "protect_strength": self.protect_strength,
             "redeploy_strength": self.redeploy_strength,
             "action_score": self.action_score,
+            "action_path": self.action_path,
             "event_volatility_context": self.event_volatility_context,
             "confidence": self.confidence,
             "reason": self.reason,
@@ -826,6 +830,37 @@ class RegimeCorrectionEpisodeResult:
     start_date: date
     end_date: date
     episodes: tuple[RegimeCorrectionEpisode, ...]
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeProtectClusterOutcome:
+    """One protect-action cluster replayed against forward market outcomes."""
+
+    cluster_start_date: date
+    cluster_end_date: date
+    first_price_date: date | None
+    protect_path: str | None
+    action_count: int
+    confirming_families: tuple[str, ...]
+    volatility_only: bool
+    late_signal: bool
+    drawdown_from_peak: float | None
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+    had_5pct_drawdown: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeProtectClusterResult:
+    """Result of replaying protect clusters for false-alert diagnostics."""
+
+    start_date: date
+    end_date: date
+    outcomes: tuple[RegimeProtectClusterOutcome, ...]
     table: str
 
 
@@ -2935,6 +2970,7 @@ def derive_regime_action_state(
         and severe_funding_stress
     ):
         state = "no_change"
+        action_path = None
         evidence = _action_feature_evidence(
             action_features,
             field_name="stabilization_score",
@@ -2945,6 +2981,7 @@ def derive_regime_action_state(
         and redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
     ):
         state = "scale_up_redeploy"
+        action_path = "redeploy"
         evidence = _action_feature_evidence(
             action_features,
             field_name="stabilization_score",
@@ -2955,6 +2992,7 @@ def derive_regime_action_state(
         and protect_strength - redeploy_strength >= ACTION_STRENGTH_MARGIN
     ):
         state = "scale_down_protect"
+        action_path = protect_gate.path
         evidence = _action_feature_evidence(
             action_features,
             field_name="deterioration_score",
@@ -2962,6 +3000,7 @@ def derive_regime_action_state(
         reason = f"{protect_gate.path} protect: {protect_gate.reason}"
     elif protect_gate.warning_only and protect_strength >= ACTION_STRENGTH_THRESHOLD:
         state = "no_change"
+        action_path = "volatility_only_warning"
         evidence = _action_feature_evidence(
             action_features,
             field_name="deterioration_score",
@@ -2969,10 +3008,12 @@ def derive_regime_action_state(
         reason = protect_gate.reason
     elif max(stretch_setup_score, washout_setup_score) >= 0.65:
         state = "no_change"
+        action_path = None
         evidence = stretch_evidence + washout_evidence
         reason = "Setup pressure present, but broad confirmation is not strong enough"
     else:
         state = "no_change"
+        action_path = None
         evidence = stretch_evidence + washout_evidence
         reason = "No actionable setup; maintain current posture"
     event_volatility_context = _event_volatility_context(
@@ -3000,6 +3041,7 @@ def derive_regime_action_state(
         protect_strength=protect_strength,
         redeploy_strength=redeploy_strength,
         action_score=action_score,
+        action_path=action_path,
         event_volatility_context=event_volatility_context,
         action_features=action_features,
         action_modules=action_modules,
@@ -3024,6 +3066,7 @@ def _snapshot_with_action(
         action_score=action.action_score,
         action_confidence=action.confidence,
         action_reason=action.reason,
+        action_path=action.action_path,
         event_volatility_context=action.event_volatility_context,
         action_features=action.action_features,
         action_modules=action.action_modules,
@@ -4649,7 +4692,9 @@ def derive_regime_postures(
             posture_start_index = index
             protected_since = snapshot.source_date
             protect_reason = snapshot.action_reason
-            protect_path = _protect_path_from_reason(snapshot.action_reason)
+            protect_path = snapshot.action_path or _protect_path_from_reason(
+                snapshot.action_reason
+            )
             redeploy_since = None
         elif snapshot.action_state == "scale_up_redeploy":
             reset_reason = "redeploy_event" if posture_state == "protected" else None
@@ -4943,6 +4988,7 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         protect_strength=snapshot.protect_strength,
         redeploy_strength=snapshot.redeploy_strength,
         action_score=snapshot.action_score,
+        action_path=snapshot.action_path,
         event_volatility_context=snapshot.event_volatility_context,
         action_features=snapshot.action_features,
         action_modules=snapshot.action_modules,
@@ -5203,6 +5249,55 @@ def compute_regime_correction_episodes(
         start_date=start_date,
         end_date=end_date,
         episodes=episodes,
+        table=table,
+    )
+
+
+def compute_regime_protect_clusters(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
+) -> RegimeProtectClusterResult:
+    """Replay protect-action clusters for false-alert diagnostics."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    snapshots = _load_regime_snapshots_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
+    )
+    if not snapshots:
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    clusters = _protect_clusters_from_snapshots(snapshots)
+    outcomes = tuple(
+        outcome
+        for cluster in clusters
+        for outcome in _protect_cluster_outcomes(
+            cluster=cluster,
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    table = format_regime_protect_cluster_outcomes(outcomes)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        cluster_count=len(clusters),
+        outcome_count=len(outcomes),
+    ).success("Computed market regime protect cluster outcomes")
+    return RegimeProtectClusterResult(
+        start_date=start_date,
+        end_date=end_date,
+        outcomes=outcomes,
         table=table,
     )
 
@@ -5834,6 +5929,50 @@ def format_regime_correction_episodes(
     return _format_table(table)
 
 
+def format_regime_protect_cluster_outcomes(
+    outcomes: tuple[RegimeProtectClusterOutcome, ...],
+) -> str:
+    """Format protect-cluster false-alert diagnostics as a compact table."""
+
+    if not outcomes:
+        return "No protect clusters found."
+
+    table = [
+        [
+            "cluster_start",
+            "cluster_end",
+            "path",
+            "days",
+            "horizon",
+            "late",
+            "vol_only",
+            "pre_dd",
+            "spy_ret",
+            "spy_dd",
+            "5pct_dd",
+            "families",
+        ]
+    ]
+    for outcome in outcomes:
+        table.append(
+            [
+                outcome.cluster_start_date.isoformat(),
+                outcome.cluster_end_date.isoformat(),
+                outcome.protect_path or "-",
+                str(outcome.action_count),
+                f"{outcome.horizon_days}d",
+                "yes" if outcome.late_signal else "no",
+                _format_bool(outcome.volatility_only),
+                _format_drawdown(outcome.drawdown_from_peak),
+                _format_percent(outcome.spy_return),
+                _format_drawdown(outcome.spy_max_drawdown),
+                _format_bool(outcome.had_5pct_drawdown),
+                _family_list_read(outcome.confirming_families),
+            ]
+        )
+    return _format_grouped_table(table, group_column=0)
+
+
 def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
     if not rows:
         return ""
@@ -6178,8 +6317,34 @@ def _correction_episode_from_window(
             trough_date=trough.observed_date,
             recovery_date=recovery.observed_date if recovery is not None else None,
         ),
-        event_context="unclassified",
+        event_context=_correction_episode_event_context(
+            window=window,
+            history=history,
+            snapshots=signal_snapshots,
+        ),
     )
+
+
+def _correction_episode_event_context(
+    *,
+    window: _CorrectionEpisodeWindow,
+    history: tuple[DailyPriceObservation, ...],
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> str:
+    peak = history[window.peak_index]
+    first_5pct = history[window.first_5pct_index]
+    trough = history[window.trough_index]
+    max_drawdown = trough.return_close / peak.return_close - 1.0
+    days_to_trough = window.trough_index - window.peak_index
+    if max_drawdown <= -0.15 and days_to_trough <= 30:
+        return "shock"
+    if any(
+        snapshot.event_volatility_context.startswith("near_term_event_premium")
+        for snapshot in snapshots
+        if peak.observed_date <= snapshot.source_date <= first_5pct.observed_date
+    ):
+        return "scheduled_event_proxy"
+    return "ordinary"
 
 
 def _first_armed_setup_date(
@@ -6190,7 +6355,7 @@ def _first_armed_setup_date(
     for snapshot in snapshots:
         if snapshot.source_date > through_date:
             break
-        if (snapshot.extension_setup_score or 0.0) >= CORRECTION_EPISODE_ARMED_SETUP_THRESHOLD:
+        if (snapshot.extension_setup_score or 0.0) >= EXTENSION_ARMED_SETUP_THRESHOLD:
             return snapshot.source_date
     return None
 
@@ -6426,6 +6591,100 @@ def _redeploy_validation_bucket(snapshot: RegimeSnapshot) -> str:
     if has_stabilization:
         return "redeploy:stabilization_only"
     return "redeploy:no_setup"
+
+
+def _protect_clusters_from_snapshots(
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> tuple[tuple[RegimeSnapshot, ...], ...]:
+    clusters: list[tuple[RegimeSnapshot, ...]] = []
+    current: list[RegimeSnapshot] = []
+    for snapshot in sorted(snapshots, key=lambda row: row.source_date):
+        if snapshot.action_state == "scale_down_protect":
+            current.append(snapshot)
+            continue
+        if current:
+            clusters.append(tuple(current))
+            current = []
+    if current:
+        clusters.append(tuple(current))
+    return tuple(clusters)
+
+
+def _protect_cluster_outcomes(
+    *,
+    cluster: tuple[RegimeSnapshot, ...],
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[RegimeProtectClusterOutcome, ...]:
+    first_snapshot = cluster[0]
+    last_snapshot = cluster[-1]
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _exact_date_index(spy_history, first_snapshot.price_date)
+    qqq_index = _exact_date_index(qqq_history, first_snapshot.price_date)
+    drawdown_from_peak = _trailing_drawdown_from_peak(
+        spy_history,
+        index=spy_index,
+        lookback=252,
+    )
+    confirming_families = _confirming_families(
+        modules=first_snapshot.action_modules,
+        field_name="deterioration_score",
+    )
+    late_signal = (
+        drawdown_from_peak is not None
+        and drawdown_from_peak <= -CORRECTION_EPISODE_MIN_DRAWDOWN
+    )
+    outcomes: list[RegimeProtectClusterOutcome] = []
+    for horizon in horizons:
+        spy_drawdown = _forward_max_drawdown(
+            spy_history,
+            index=spy_index,
+            horizon=horizon,
+        )
+        outcomes.append(
+            RegimeProtectClusterOutcome(
+                cluster_start_date=first_snapshot.source_date,
+                cluster_end_date=last_snapshot.source_date,
+                first_price_date=first_snapshot.price_date,
+                protect_path=first_snapshot.action_path,
+                action_count=len(cluster),
+                confirming_families=confirming_families,
+                volatility_only=confirming_families == ("volatility",),
+                late_signal=late_signal,
+                drawdown_from_peak=drawdown_from_peak,
+                horizon_days=horizon,
+                spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+                qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+                spy_max_drawdown=spy_drawdown,
+                qqq_max_drawdown=_forward_max_drawdown(
+                    qqq_history,
+                    index=qqq_index,
+                    horizon=horizon,
+                ),
+                had_5pct_drawdown=(
+                    spy_drawdown <= -CORRECTION_EPISODE_MIN_DRAWDOWN
+                    if spy_drawdown is not None
+                    else None
+                ),
+            )
+        )
+    return tuple(outcomes)
+
+
+def _trailing_drawdown_from_peak(
+    history: tuple[DailyPriceObservation, ...],
+    *,
+    index: int | None,
+    lookback: int,
+) -> float | None:
+    if index is None:
+        return None
+    start_index = max(0, index - lookback)
+    peak = max(row.return_close for row in history[start_index : index + 1])
+    if peak == 0:
+        return None
+    return min(0.0, history[index].return_close / peak - 1.0)
 
 
 def _regime_pressure_outcomes(
@@ -7067,6 +7326,7 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         action_score=_optional_float(row.get("action_score")) or 0.0,
         action_confidence=str(row.get("action_confidence", "low")),
         action_reason=str(row.get("action_reason", "Action state not computed")),
+        action_path=_optional_str(row.get("action_path")),
         event_volatility_context=str(row.get("event_volatility_context", "none")),
         action_features=action_features,
         action_modules=action_modules,
@@ -7281,6 +7541,12 @@ def _format_day_lead(value: int | None) -> str:
     if value < 0:
         return f"{value}d"
     return "0d"
+
+
+def _format_bool(value: bool | None) -> str:
+    if value is None:
+        return "-"
+    return "yes" if value else "no"
 
 
 def _format_share(value: float) -> str:

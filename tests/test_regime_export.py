@@ -68,6 +68,7 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["pressure_module__vol_complacency__stretch"] == 0.80
     assert first_row["action__vvix_turn__protect"] == 0.70
     assert first_row["action_module__volatility_turn__redeploy"] == 0.10
+    assert first_row["action_path"] == "extension_unwind"
     assert first_row["extension_setup"] == 0.65
     assert first_row["fragility_context"] == 0.20
     assert first_row["washout_setup"] == 0.11
@@ -77,12 +78,16 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["protect_path"] == "extension_unwind"
     assert first_row["posture_age"] == 0
     assert first_row["max_drawdown_since_posture"] == 0.0
+    assert _as_date(first_row["extension_elevated_since"]) == first_date
+    assert first_row["extension_elevated_age"] == 0
     assert first_row["extension_armed"] is True
     assert _as_date(first_row["extension_armed_since"]) == first_date
     assert first_row["extension_armed_age"] == 0
     assert first_row["extension_armed_decay"] == 1.0
     assert first_row["extension_armed_source_strength"] == 0.65
     second_row = dict(zip(headers, (cell.value for cell in worksheet[3]), strict=True))
+    assert second_row["extension_elevated_since"] is None
+    assert second_row["extension_elevated_age"] is None
     assert second_row["extension_armed"] is True
     assert _as_date(second_row["extension_armed_since"]) == first_date
     assert second_row["extension_armed_age"] == 1
@@ -95,9 +100,61 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert csv_rows[0]["event_volatility_context"] == "near_term_event_premium"
     assert csv_rows[0]["posture_state"] == "protected"
     assert csv_rows[0]["protect_path"] == "extension_unwind"
+    assert csv_rows[0]["action_path"] == "extension_unwind"
+    assert csv_rows[0]["extension_elevated_age"] == "0"
+    assert csv_rows[1]["extension_elevated_age"] == ""
     assert csv_rows[0]["extension_armed"] == "True"
     assert csv_rows[1]["extension_armed_age"] == "1"
     assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
+
+
+def test_export_regime_workbook_does_not_rearm_continuous_extension_run(
+    tmp_path: Path,
+) -> None:
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    workbook_path = tmp_path / "regime.xlsx"
+    csv_path = tmp_path / "regime.csv"
+    first_date = date(2026, 1, 2)
+    row_count = 42
+    dates = tuple(first_date + timedelta(days=index * 4) for index in range(row_count))
+    _write_prices(
+        price_root,
+        symbol="SPY",
+        start=first_date,
+        closes=tuple(100.0 + index for index in range(row_count)),
+    )
+    _write_prices(
+        price_root,
+        symbol="QQQ",
+        start=first_date,
+        closes=tuple(200.0 + index for index in range(row_count)),
+    )
+    for source_date in dates:
+        write_regime_snapshot(
+            _snapshot(source_date=source_date, extension_setup_score=0.65),
+            snapshot_root=snapshot_root,
+        )
+
+    export_regime_workbook(
+        start_date=dates[0],
+        end_date=dates[-1],
+        workbook_path=workbook_path,
+        csv_path=csv_path,
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+    )
+
+    workbook = load_workbook(workbook_path)
+    worksheet = workbook["regime_data"]
+    headers = [cell.value for cell in worksheet[1]]
+    last_row = dict(zip(headers, (cell.value for cell in worksheet[row_count + 1]), strict=True))
+    assert _as_date(last_row["extension_elevated_since"]) == first_date
+    assert last_row["extension_elevated_age"] == row_count - 1
+    assert last_row["extension_armed"] is False
+    assert _as_date(last_row["extension_armed_since"]) == first_date
+    assert last_row["extension_armed_age"] == row_count - 1
+    assert last_row["extension_armed_decay"] is None
 
 
 def test_export_regime_workbook_preserves_other_sheets_and_clears_stale_rows(
@@ -196,6 +253,7 @@ def _snapshot(
     source_date: date,
     spy_return_20d: float = 0.01,
     extension_setup_score: float = 0.50,
+    action_path: str | None = "extension_unwind",
 ) -> RegimeSnapshot:
     return RegimeSnapshot(
         source_date=source_date,
@@ -232,6 +290,7 @@ def _snapshot(
         sp500_above_50d=65.0,
         sp500_above_200d=70.0,
         action_state="scale_down_protect",
+        action_path=action_path,
         action_confidence="medium",
         action_reason="extension_unwind protect: fixture action",
         event_volatility_context="near_term_event_premium",
