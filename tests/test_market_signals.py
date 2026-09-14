@@ -10,6 +10,7 @@ from marketlab.market_signals import (
     load_market_signal_snapshot,
     write_market_signal_snapshot,
 )
+from marketlab.versions import REGIME_SNAPSHOT_VERSION
 
 
 def test_write_and_load_market_signal_snapshot(tmp_path: Path) -> None:
@@ -395,6 +396,6 @@ def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path
         snapshot_root
         / source_date_value
         / "eod"
-        / "v0.0"
+        / REGIME_SNAPSHOT_VERSION
         / "market-signals.jsonl"
     )

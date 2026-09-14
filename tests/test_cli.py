@@ -1232,6 +1232,7 @@ def test_regime_export_outputs_export_metadata(
         start_date: date,
         end_date: date,
         workbook_path: Path,
+        csv_path: Path,
         snapshot_root: Path,
         price_root: Path,
         signal_time,
@@ -1239,7 +1240,8 @@ def test_regime_export_outputs_export_metadata(
     ) -> RegimeExportResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 9, 4)
-        assert workbook_path == Path("workbooks/regime.xlsx")
+        assert workbook_path == Path("workbooks/regime-v1.0.xlsx")
+        assert csv_path == Path("workbooks/regime-v1.0.csv")
         assert snapshot_root == snapshot_root_arg
         assert price_root == price_root_arg
         assert signal_time == "eod"
@@ -1248,7 +1250,7 @@ def test_regime_export_outputs_export_metadata(
             start_date=start_date,
             end_date=end_date,
             workbook_path=workbook_path,
-            csv_path=Path("workbooks/regime.csv"),
+            csv_path=csv_path,
             row_count=120,
             column_count=96,
         )
@@ -1274,8 +1276,8 @@ def test_regime_export_outputs_export_metadata(
     )
 
     assert result.exit_code == 0
-    assert "xlsx_path=workbooks/regime.xlsx" in result.output
-    assert "csv_path=workbooks/regime.csv" in result.output
+    assert "xlsx_path=workbooks/regime-v1.0.xlsx" in result.output
+    assert "csv_path=workbooks/regime-v1.0.csv" in result.output
     assert "export_start=2026-01-01" in result.output
     assert "export_end=2026-09-04" in result.output
     assert "export_row_count=120" in result.output
@@ -2844,6 +2846,85 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
     assert "summary_table:" in result.output
     assert "scale_down_protect  1" in result.output
     assert "action:scale_down_protect  20d" in result.output
+
+
+def test_regime_outcomes_save_writes_versioned_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_root = tmp_path / "regime"
+    signal_root = tmp_path / "signals"
+    price_root = tmp_path / "prices"
+    monkeypatch.chdir(tmp_path)
+
+    def fake_compute_regime_action_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        signal_snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+        snapshot_version: str | None,
+    ) -> RegimeActionOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert signal_snapshot_root == signal_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20,)
+        assert snapshot_version is None
+        return RegimeActionOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            actions=(),
+            outcomes=(),
+            frequency_rows=(),
+            summary_rows=(),
+            frequency_table="action_state  count",
+            table="bucket  horizon",
+        )
+
+    snapshot_root_arg = snapshot_root
+    signal_root_arg = signal_root
+    price_root_arg = price_root
+    monkeypatch.setattr(
+        "marketlab.cli.compute_regime_action_outcomes",
+        fake_compute_regime_action_outcomes,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regime",
+            "outcomes",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-08-28",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--signal-root",
+            str(signal_root),
+            "--price-root",
+            str(price_root),
+            "--horizons",
+            "20",
+            "--save",
+        ],
+    )
+
+    output_path = tmp_path / "workbooks" / "outcomes-action-v1.0.txt"
+    assert result.exit_code == 0
+    assert "outcome_report_path=workbooks/outcomes-action-v1.0.txt" in result.output
+    assert output_path.is_file()
+    report = output_path.read_text(encoding="utf-8")
+    assert "outcome_group=action" in report
+    assert "artifact_version=v1.0" in report
+    assert "outcome_start=2026-01-01" in report
+    assert "outcome_horizons=20" in report
+    assert "frequency_table:" in report
+    assert "summary_table:" in report
 
 
 def test_regime_pressure_outcomes_outputs_summary_table(

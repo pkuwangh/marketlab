@@ -29,10 +29,11 @@ from marketlab.regime import (
     load_regime_snapshot,
 )
 from marketlab.snapshots.models import SignalTime, signal_time_value, snapshot_source_dates
+from marketlab.versions import REGIME_VERSION
 
 DEFAULT_REGIME_EXPORT_ROOT = Path("workbooks")
-DEFAULT_REGIME_EXPORT_WORKBOOK_PATH = DEFAULT_REGIME_EXPORT_ROOT / "regime.xlsx"
-DEFAULT_REGIME_EXPORT_CSV_PATH = DEFAULT_REGIME_EXPORT_ROOT / "regime.csv"
+DEFAULT_REGIME_EXPORT_WORKBOOK_PATH = DEFAULT_REGIME_EXPORT_ROOT / f"regime-{REGIME_VERSION}.xlsx"
+DEFAULT_REGIME_EXPORT_CSV_PATH = DEFAULT_REGIME_EXPORT_ROOT / f"regime-{REGIME_VERSION}.csv"
 DEFAULT_REGIME_EXPORT_SHEET_NAME = "regime_data"
 DEFAULT_REGIME_EXPORT_TABLE_NAME = "RegimeData"
 
@@ -135,6 +136,34 @@ class RegimeExportResult:
     csv_path: Path
     row_count: int
     column_count: int
+
+
+def regime_export_paths(
+    *,
+    version: str | None = None,
+    output_root: Path = DEFAULT_REGIME_EXPORT_ROOT,
+) -> tuple[Path, Path]:
+    """Return standard versioned XLSX and CSV export paths."""
+
+    version_text = version or REGIME_VERSION
+    return (
+        output_root / f"regime-{_artifact_part(version_text)}.xlsx",
+        output_root / f"regime-{_artifact_part(version_text)}.csv",
+    )
+
+
+def regime_outcome_report_path(
+    *,
+    outcome_group: str,
+    version: str | None = None,
+    output_root: Path = DEFAULT_REGIME_EXPORT_ROOT,
+) -> Path:
+    """Return the standard versioned text report path for one outcome group."""
+
+    version_text = version or REGIME_VERSION
+    return output_root / (
+        f"outcomes-{_artifact_part(outcome_group)}-{_artifact_part(version_text)}.txt"
+    )
 
 
 def export_regime_workbook(
@@ -609,6 +638,14 @@ def _ordered_names(
 
 def _column_part(value: str) -> str:
     return re.sub(r"_+", "_", re.sub(r"[^0-9A-Za-z]+", "_", value.strip()).strip("_")).lower()
+
+
+def _artifact_part(value: str) -> str:
+    text = str(value).strip()
+    safe = re.sub(r"_+", "_", re.sub(r"[^0-9A-Za-z._-]+", "_", text).strip("_"))
+    if not safe or safe in {".", ".."}:
+        raise RegimeExportError(f"Invalid artifact path component: {value!r}")
+    return safe
 
 
 def _number_format(header: str) -> str | None:

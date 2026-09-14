@@ -15,7 +15,13 @@ from marketlab.regime import (
     RegimeSnapshot,
     write_regime_snapshot,
 )
-from marketlab.regime_export import RegimeExportError, _column_width_value, export_regime_workbook
+from marketlab.regime_export import (
+    RegimeExportError,
+    _column_width_value,
+    export_regime_workbook,
+    regime_export_paths,
+    regime_outcome_report_path,
+)
 
 
 def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
@@ -150,6 +156,16 @@ def test_column_width_value_preserves_zero_values() -> None:
     assert _column_width_value(0) == "0"
     assert _column_width_value(0.0) == "0.0"
     assert _column_width_value(None) == ""
+
+
+def test_versioned_regime_export_paths_use_artifact_version() -> None:
+    assert regime_export_paths(version="v1.0") == (
+        Path("workbooks/regime-v1.0.xlsx"),
+        Path("workbooks/regime-v1.0.csv"),
+    )
+    assert regime_outcome_report_path(outcome_group="action", version="v1.0") == Path(
+        "workbooks/outcomes-action-v1.0.txt"
+    )
 
 
 def _snapshot(

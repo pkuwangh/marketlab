@@ -49,7 +49,7 @@ generation, then independently validate and measure it.
 
 - Research record for iteration:
   - Preserves point-in-time observations and research snapshots with source-date, signal-time, version, and provenance fields.
-  - Keeps calculated snapshots under `data/snapshots/`; same-version `v0.0` outputs are overwritten during pre-debut iteration.
+  - Keeps calculated snapshots under `data/snapshots/`; same-version outputs are overwritten during pre-debut iteration, and the current market-regime version is tracked in `VERSIONS.md`.
   - Rebuilds a local DuckDB query store from JSON/JSONL source files for analysis and outcome review.
 
 Current limitations:
@@ -155,6 +155,9 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 ./bin/marketlab regime outcomes --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
 
+Add `--save` to write the same report to a versioned canonical text file such as
+`workbooks/outcomes-action-v1.0.txt`.
+
 Replay headline regime labels, normalized pressure buckets, market-signal rows, or policy states:
 
 ```bash
@@ -170,8 +173,9 @@ Export saved regime snapshots for Excel and CSV analysis:
 ./bin/marketlab regime export --start 2020-01-01 --end 2026-09-04
 ```
 
-The export refreshes `workbooks/regime.xlsx` and writes the same rows to
-`workbooks/regime.csv`. The XLSX output refreshes the `regime_data` worksheet and
+The export refreshes the current versioned workbook, such as `workbooks/regime-v1.0.xlsx`,
+and writes the same rows to `workbooks/regime-v1.0.csv`. Use `--snapshot-version v0.0`
+to regenerate older-version files such as `workbooks/regime-v0.0.xlsx`. The XLSX output refreshes the `regime_data` worksheet and
 `RegimeData` table in place. Other workbook sheets are preserved, so you can create charts
 once in Excel and refresh the same workbook after each new backfill or daily run. Both
 formats include SPY/QQQ closes, indexed prices, headline regime/action fields, normalized

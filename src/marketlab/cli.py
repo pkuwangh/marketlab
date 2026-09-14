@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -114,10 +114,11 @@ from marketlab.regime import (
     refresh_regime_prices,
 )
 from marketlab.regime_export import (
-    DEFAULT_REGIME_EXPORT_WORKBOOK_PATH,
     RegimeExportError,
     RegimeExportResult,
     export_regime_workbook,
+    regime_export_paths,
+    regime_outcome_report_path,
 )
 from marketlab.snapshots.models import SignalTime, snapshot_source_dates
 from marketlab.store import (
@@ -1472,6 +1473,11 @@ def regime_outcomes(
         "--snapshot-version",
         help="Snapshot version to replay. Defaults to current pillar version.",
     ),
+    save_report: bool = typer.Option(
+        False,
+        "--save/--no-save",
+        help="Write this outcome report to the standard versioned workbooks/outcomes-*.txt path.",
+    ),
     outcome_group: RegimeOutcomeGroup = typer.Option(
         RegimeOutcomeGroup.ACTION,
         "--by",
@@ -1483,6 +1489,10 @@ def regime_outcomes(
     start_date = _parse_date_option(start_date_value, option_name="--start")
     end_date = _parse_date_option(end_date_value, option_name="--end")
     horizons = _parse_horizons(horizons_value)
+    outcome_version = _outcome_artifact_version(
+        outcome_group=outcome_group,
+        snapshot_version=snapshot_version,
+    )
     if outcome_group == RegimeOutcomeGroup.SIGNAL:
         try:
             signal_result = compute_market_signal_outcomes(
@@ -1495,7 +1505,16 @@ def regime_outcomes(
             )
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        _echo_market_signal_outcome_result(signal_result)
+        _emit_regime_outcome_report(
+            _market_signal_outcome_report_text(signal_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
         return
     if outcome_group == RegimeOutcomeGroup.ACTION:
         try:
@@ -1510,7 +1529,16 @@ def regime_outcomes(
             )
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        _echo_regime_action_outcome_result(action_result)
+        _emit_regime_outcome_report(
+            _regime_action_outcome_report_text(action_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
         return
     if outcome_group == RegimeOutcomeGroup.PRESSURE:
         try:
@@ -1525,7 +1553,16 @@ def regime_outcomes(
             )
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        _echo_regime_pressure_outcome_result(pressure_result)
+        _emit_regime_outcome_report(
+            _regime_pressure_outcome_report_text(pressure_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
         return
     if outcome_group == RegimeOutcomeGroup.POLICY:
         try:
@@ -1539,7 +1576,16 @@ def regime_outcomes(
             )
         except PortfolioPolicyError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        _echo_policy_outcome_result(policy_result)
+        _emit_regime_outcome_report(
+            _policy_outcome_report_text(policy_result),
+            save_report=save_report,
+            outcome_group=outcome_group.value,
+            artifact_version=outcome_version,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+            snapshot_version=snapshot_version,
+        )
         return
     try:
         result = compute_regime_outcomes(
@@ -1553,7 +1599,16 @@ def regime_outcomes(
     except RegimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    _echo_regime_outcome_result(result)
+    _emit_regime_outcome_report(
+        _regime_outcome_report_text(result),
+        save_report=save_report,
+        outcome_group=outcome_group.value,
+        artifact_version=outcome_version,
+        start_date=start_date,
+        end_date=end_date,
+        horizons=horizons,
+        snapshot_version=snapshot_version,
+    )
 
 
 @store_app.command("refresh")
@@ -1927,10 +1982,14 @@ def regime_export(
     start_date = _parse_date_option(start_date_value, option_name="--start")
     end_date = _parse_date_option(end_date_value, option_name="--end")
     try:
+        workbook_path, csv_path = regime_export_paths(
+            version=snapshot_version or REGIME_SNAPSHOT_VERSION
+        )
         result = export_regime_workbook(
             start_date=start_date,
             end_date=end_date,
-            workbook_path=DEFAULT_REGIME_EXPORT_WORKBOOK_PATH,
+            workbook_path=workbook_path,
+            csv_path=csv_path,
             snapshot_root=snapshot_root,
             price_root=price_root,
             signal_time=signal_time,
@@ -2850,17 +2909,39 @@ def _echo_regime_backfill_result(result: RegimeBackfillResult) -> None:
 
 
 def _echo_cli_fields(fields: tuple[tuple[str, object], ...]) -> None:
-    for name, value in fields:
-        typer.echo(f"{name}={value}")
+    typer.echo(_format_cli_fields(fields))
 
 
 def _echo_table_section(title: str, table: str | None, *, caption: str | None = None) -> None:
-    if not table:
+    text = _format_table_section(title, table, caption=caption)
+    if not text:
         return
-    typer.echo("")
+    typer.echo(text)
+
+
+def _format_cli_fields(fields: tuple[tuple[str, object], ...]) -> str:
+    return "\n".join(f"{name}={value}" for name, value in fields)
+
+
+def _format_table_section(title: str, table: str | None, *, caption: str | None = None) -> str:
+    if not table:
+        return ""
     heading = f"{title}: {caption}" if caption else f"{title}:"
-    typer.echo(heading)
-    typer.echo(table)
+    return f"\n{heading}\n{table}"
+
+
+def _format_outcome_tables(
+    fields: tuple[tuple[str, object], ...],
+    *,
+    summary_table: str,
+    frequency_table: str | None = None,
+) -> str:
+    parts = [_format_cli_fields(fields)]
+    frequency = _format_table_section("frequency_table", frequency_table)
+    if frequency:
+        parts.append(frequency)
+    parts.append(_format_table_section("summary_table", summary_table))
+    return "\n".join(part for part in parts if part)
 
 
 def _echo_outcome_tables(
@@ -2869,13 +2950,102 @@ def _echo_outcome_tables(
     summary_table: str,
     frequency_table: str | None = None,
 ) -> None:
-    _echo_cli_fields(fields)
-    _echo_table_section("frequency_table", frequency_table)
-    _echo_table_section("summary_table", summary_table)
+    typer.echo(
+        _format_outcome_tables(
+            fields,
+            summary_table=summary_table,
+            frequency_table=frequency_table,
+        )
+    )
+
+
+def _emit_regime_outcome_report(
+    report_text: str,
+    *,
+    save_report: bool,
+    outcome_group: str,
+    artifact_version: str,
+    start_date: date,
+    end_date: date,
+    horizons: tuple[int, ...],
+    snapshot_version: str | None,
+) -> None:
+    typer.echo(report_text)
+    if not save_report:
+        return
+    path = regime_outcome_report_path(
+        outcome_group=outcome_group,
+        version=artifact_version,
+    )
+    saved_text = _saved_outcome_report_text(
+        report_text,
+        outcome_group=outcome_group,
+        artifact_version=artifact_version,
+        start_date=start_date,
+        end_date=end_date,
+        horizons=horizons,
+        snapshot_version=snapshot_version,
+    )
+    _write_text_report(path=path, text=saved_text)
+    typer.echo(f"outcome_report_path={path}")
+
+
+def _saved_outcome_report_text(
+    report_text: str,
+    *,
+    outcome_group: str,
+    artifact_version: str,
+    start_date: date,
+    end_date: date,
+    horizons: tuple[int, ...],
+    snapshot_version: str | None,
+) -> str:
+    fields = (
+        ("outcome_group", outcome_group),
+        ("artifact_version", artifact_version),
+        ("snapshot_version", snapshot_version or artifact_version),
+        ("outcome_start", start_date.isoformat()),
+        ("outcome_end", end_date.isoformat()),
+        ("outcome_horizons", ",".join(str(horizon) for horizon in horizons)),
+        ("generated_at", datetime.now(UTC).isoformat(timespec="seconds")),
+        (
+            "command",
+            "marketlab regime outcomes "
+            f"--by {outcome_group} "
+            f"--start {start_date.isoformat()} "
+            f"--end {end_date.isoformat()} "
+            f"--horizons {','.join(str(horizon) for horizon in horizons)}",
+        ),
+    )
+    return f"{_format_cli_fields(fields)}\n\n{report_text.rstrip()}\n"
+
+
+def _write_text_report(*, path: Path, text: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise typer.BadParameter(f"Failed to write outcome report: {path}") from exc
+
+
+def _outcome_artifact_version(
+    *,
+    outcome_group: RegimeOutcomeGroup,
+    snapshot_version: str | None,
+) -> str:
+    if snapshot_version is not None:
+        return snapshot_version
+    if outcome_group == RegimeOutcomeGroup.POLICY:
+        return POLICY_SNAPSHOT_VERSION
+    return REGIME_SNAPSHOT_VERSION
 
 
 def _echo_regime_outcome_result(result: RegimeOutcomeResult) -> None:
-    _echo_outcome_tables(
+    typer.echo(_regime_outcome_report_text(result))
+
+
+def _regime_outcome_report_text(result: RegimeOutcomeResult) -> str:
+    return _format_outcome_tables(
         (
             ("regime_outcome_count", len(result.outcomes)),
             ("available_regime_outcome_count", _available_regime_outcome_count(result)),
@@ -2885,7 +3055,11 @@ def _echo_regime_outcome_result(result: RegimeOutcomeResult) -> None:
 
 
 def _echo_regime_action_outcome_result(result: RegimeActionOutcomeResult) -> None:
-    _echo_outcome_tables(
+    typer.echo(_regime_action_outcome_report_text(result))
+
+
+def _regime_action_outcome_report_text(result: RegimeActionOutcomeResult) -> str:
+    return _format_outcome_tables(
         (
             ("regime_action_count", len(result.actions)),
             ("regime_action_outcome_count", len(result.outcomes)),
@@ -2900,7 +3074,11 @@ def _echo_regime_action_outcome_result(result: RegimeActionOutcomeResult) -> Non
 
 
 def _echo_regime_pressure_outcome_result(result: RegimePressureOutcomeResult) -> None:
-    _echo_outcome_tables(
+    typer.echo(_regime_pressure_outcome_report_text(result))
+
+
+def _regime_pressure_outcome_report_text(result: RegimePressureOutcomeResult) -> str:
+    return _format_outcome_tables(
         (
             ("regime_pressure_count", len(result.pressures)),
             ("regime_pressure_outcome_count", len(result.outcomes)),
@@ -2961,7 +3139,11 @@ def _echo_policy_backfill_result(result: PortfolioPolicyBackfillResult) -> None:
 
 
 def _echo_policy_outcome_result(result: PortfolioPolicyOutcomeResult) -> None:
-    _echo_outcome_tables(
+    typer.echo(_policy_outcome_report_text(result))
+
+
+def _policy_outcome_report_text(result: PortfolioPolicyOutcomeResult) -> str:
+    return _format_outcome_tables(
         (
             ("portfolio_policy_count", len(result.policies)),
             ("portfolio_policy_outcome_count", len(result.outcomes)),
@@ -2996,7 +3178,11 @@ def _echo_regime_export_result(result: RegimeExportResult) -> None:
 
 
 def _echo_market_signal_outcome_result(result: MarketSignalOutcomeResult) -> None:
-    _echo_outcome_tables(
+    typer.echo(_market_signal_outcome_report_text(result))
+
+
+def _market_signal_outcome_report_text(result: MarketSignalOutcomeResult) -> str:
+    return _format_outcome_tables(
         (
             ("market_signal_outcome_count", len(result.outcomes)),
             (

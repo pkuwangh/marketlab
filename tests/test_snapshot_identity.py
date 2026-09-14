@@ -51,8 +51,11 @@ def test_snapshot_identity_requires_core_versions() -> None:
         )
 
 
-def test_default_snapshot_version_is_working_v0_0() -> None:
-    assert default_snapshot_version(date(2026, 8, 24), signal_time=SignalTime.EOD) == "v0.0"
+def test_default_snapshot_version_is_current_regime_version() -> None:
+    assert (
+        default_snapshot_version(date(2026, 8, 24), signal_time=SignalTime.EOD)
+        == REGIME_SNAPSHOT_VERSION
+    )
 
 
 def test_pillar_snapshot_versions_track_pillar_versions() -> None:
@@ -82,7 +85,7 @@ def test_versioned_snapshot_path_uses_date_time_version_file_layout(tmp_path: Pa
         filename="regime.json",
     )
 
-    assert path == tmp_path / "2026-08-24" / "eod" / "v0.0" / "regime.json"
+    assert path == tmp_path / "2026-08-24" / "eod" / REGIME_SNAPSHOT_VERSION / "regime.json"
 
 
 def test_versioned_snapshot_path_uses_caller_default_version(tmp_path: Path) -> None:
