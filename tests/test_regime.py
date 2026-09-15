@@ -1102,8 +1102,8 @@ def test_derive_regime_action_state_uses_armed_extension_memory_after_setup_cool
             armed_decay=0.875,
             armed_source_strength=0.72,
             arm_rule="persistent",
-            arm_hit_count=2,
-            arm_window=5,
+            arm_hit_count=3,
+            arm_window=10,
             effective_score=0.63,
             snapshot_count=6,
         ),
@@ -1142,6 +1142,30 @@ def test_extension_memory_requires_strong_or_persistent_extension_setup() -> Non
             source_date=start_date + timedelta(days=3),
             regime="risk_on",
             score=4,
+            extension_setup_score=0.20,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=4),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.20,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=5),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.20,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=6),
+            regime="risk_on",
+            score=4,
+            extension_setup_score=0.64,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=7),
+            regime="risk_on",
+            score=4,
             extension_setup_score=0.76,
         ),
     )
@@ -1152,13 +1176,15 @@ def test_extension_memory_requires_strong_or_persistent_extension_setup() -> Non
     assert memory[start_date].arm_rule is None
     assert memory[start_date].arm_hit_count == 1
     assert memory[start_date + timedelta(days=1)].armed is False
-    persistent = memory[start_date + timedelta(days=2)]
+    assert memory[start_date + timedelta(days=2)].armed is False
+    assert memory[start_date + timedelta(days=5)].armed is False
+    persistent = memory[start_date + timedelta(days=6)]
     assert persistent.armed is True
-    assert persistent.armed_since == start_date + timedelta(days=2)
+    assert persistent.armed_since == start_date + timedelta(days=6)
     assert persistent.arm_rule == "persistent"
-    assert persistent.arm_hit_count == 2
-    assert persistent.arm_window == 3
-    strong = memory[start_date + timedelta(days=3)]
+    assert persistent.arm_hit_count == 3
+    assert persistent.arm_window == 7
+    strong = memory[start_date + timedelta(days=7)]
     assert strong.armed is True
     assert strong.armed_since == persistent.armed_since
     assert strong.arm_rule == "persistent"

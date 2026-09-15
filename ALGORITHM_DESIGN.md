@@ -233,7 +233,7 @@ Implemented v1.0 direction:
 - Trigger protect only when confirmation appears while setup is armed.
 - Avoid noisy one-day arming: default v1.0 parameters arm from either
   `extension_setup >= 0.75` on one snapshot or `extension_setup >= 0.60` on at least
-  2 of the last 5 saved snapshots.
+  3 of the last 10 saved trading snapshots.
 
 Open research:
 

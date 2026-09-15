@@ -121,7 +121,7 @@ def test_export_regime_workbook_does_not_rearm_continuous_extension_run(
     workbook_path = tmp_path / "regime.xlsx"
     csv_path = tmp_path / "regime.csv"
     first_date = date(2026, 1, 2)
-    row_count = 43
+    row_count = 44
     dates = tuple(first_date + timedelta(days=index * 4) for index in range(row_count))
     _write_prices(
         price_root,
@@ -157,8 +157,8 @@ def test_export_regime_workbook_does_not_rearm_continuous_extension_run(
     assert _as_date(last_row["extension_elevated_since"]) == first_date
     assert last_row["extension_elevated_age"] == row_count - 1
     assert last_row["extension_armed"] is False
-    assert _as_date(last_row["extension_armed_since"]) == dates[1]
-    assert last_row["extension_armed_age"] == row_count - 2
+    assert _as_date(last_row["extension_armed_since"]) == dates[2]
+    assert last_row["extension_armed_age"] == row_count - 3
     assert last_row["extension_armed_decay"] is None
     assert last_row["extension_arm_rule"] == "persistent"
 
