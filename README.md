@@ -179,24 +179,26 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 Add `--save` to write the same report to a versioned canonical text file such as
 `workbooks/outcomes-action-v1.0.txt`.
 
-Replay headline regime labels, held posture, redeploy setups, protect clusters, normalized
-pressure buckets, SPY correction episodes, market-signal rows, or policy states:
+Replay headline regime labels, held posture, protect/redeploy diagnostics, normalized pressure
+buckets, SPY correction episodes, market-signal rows, or policy states:
 
 ```bash
 ./bin/marketlab regime outcomes --by regime   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by posture  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+./bin/marketlab regime outcomes --by protect  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by redeploy --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
-./bin/marketlab regime outcomes --by cluster  --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by pressure --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by episode  --start 2016-01-01 --end 2026-06-01
 ./bin/marketlab regime outcomes --by signal   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ./bin/marketlab regime outcomes --by policy   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
 
-`--by cluster` groups consecutive `scale_down_protect` days so false alerts are counted by
-signal event instead of repeated daily rows. `--by episode` labels corrections as `ordinary`,
-`scheduled_event_proxy`, or `shock`; fast deep shocks are tracked separately because the protect
-model is not expected to predict every exogenous crash.
+`--by protect` first compares extension, fragility, and deterioration gate combinations, then
+groups consecutive `scale_down_protect` days so false alerts are counted by signal event instead
+of repeated daily rows. `--by redeploy` compares washout setup and stabilization combinations.
+`--by episode` labels corrections as `ordinary`, `scheduled_event_proxy`, or `shock`; fast deep
+shocks are tracked separately because the protect model is not expected to predict every
+exogenous crash.
 
 Export saved regime snapshots for Excel and CSV analysis:
 

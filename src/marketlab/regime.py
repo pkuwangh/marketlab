@@ -897,6 +897,59 @@ class RegimeRedeployOutcomeResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimeProtectForwardOutcome:
+    """One forward market outcome from one protect gate-diagnostic bucket."""
+
+    source_date: date
+    price_date: date | None
+    bucket: str
+    action_state: str
+    action_path: str | None
+    extension_memory_score: float
+    fragility_context_score: float
+    deterioration_score: float
+    confirming_family_count: int
+    non_vol_confirming_family_count: int
+    protect_strength: float
+    horizon_days: int
+    spy_return: float | None
+    qqq_return: float | None
+    spy_max_drawdown: float | None
+    qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeProtectOutcomeSummaryRow:
+    """Aggregate forward outcome row for one protect diagnostic bucket."""
+
+    bucket: str
+    horizon_days: int
+    protect_count: int
+    available_count: int
+    avg_extension_memory: float | None
+    avg_fragility_context: float | None
+    avg_deterioration: float | None
+    avg_confirming_family_count: float | None
+    avg_non_vol_confirming_family_count: float | None
+    avg_protect_strength: float | None
+    avg_spy_return: float | None
+    avg_qqq_return: float | None
+    avg_spy_max_drawdown: float | None
+    avg_qqq_max_drawdown: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeProtectOutcomeResult:
+    """Result of validating protect setup and deterioration buckets."""
+
+    start_date: date
+    end_date: date
+    outcomes: tuple[RegimeProtectForwardOutcome, ...]
+    summary_rows: tuple[RegimeProtectOutcomeSummaryRow, ...]
+    table: str
+
+
+@dataclass(frozen=True, slots=True)
 class RegimePressureForwardOutcome:
     """One forward market outcome from one normalized pressure snapshot."""
 
@@ -6090,6 +6143,56 @@ def compute_regime_redeploy_outcomes(
     )
 
 
+def compute_regime_protect_outcomes(
+    *,
+    start_date: date,
+    end_date: date,
+    snapshot_root: Path = DEFAULT_REGIME_SNAPSHOT_ROOT,
+    price_root: Path = DEFAULT_PRICE_OBSERVATIONS_ROOT,
+    horizons: tuple[int, ...] = DEFAULT_REGIME_OUTCOME_HORIZONS,
+    snapshot_version: str | None = None,
+) -> RegimeProtectOutcomeResult:
+    """Replay protect setup/deterioration buckets against forward outcomes."""
+
+    if end_date < start_date:
+        raise RegimeError("End date must be on or after start date")
+
+    snapshots = _load_regime_snapshots_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        snapshot_root=snapshot_root,
+        snapshot_version=snapshot_version,
+    )
+    if not snapshots:
+        raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
+
+    histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    outcomes = tuple(
+        outcome
+        for snapshot in snapshots
+        for outcome in _regime_protect_outcomes(
+            snapshot=snapshot,
+            histories=histories,
+            horizons=horizons,
+        )
+    )
+    summary_rows = summarize_regime_protect_outcomes(outcomes)
+    table = format_regime_protect_outcome_summary(summary_rows)
+    logger.bind(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        snapshot_count=len(snapshots),
+        outcome_count=len(outcomes),
+    ).success("Computed market regime protect outcomes")
+    return RegimeProtectOutcomeResult(
+        start_date=start_date,
+        end_date=end_date,
+        outcomes=outcomes,
+        summary_rows=summary_rows,
+        table=table,
+    )
+
+
 def compute_regime_pressure_outcomes(
     *,
     start_date: date,
@@ -6543,6 +6646,65 @@ def summarize_regime_redeploy_outcomes(
     return tuple(rows)
 
 
+def summarize_regime_protect_outcomes(
+    outcomes: tuple[RegimeProtectForwardOutcome, ...],
+) -> tuple[RegimeProtectOutcomeSummaryRow, ...]:
+    """Summarize forward market outcomes by protect diagnostic bucket."""
+
+    buckets: dict[str, list[RegimeProtectForwardOutcome]] = {"all": list(outcomes)}
+    for outcome in outcomes:
+        buckets.setdefault(outcome.bucket, []).append(outcome)
+
+    rows: list[RegimeProtectOutcomeSummaryRow] = []
+    for bucket in sorted(buckets):
+        bucket_outcomes = tuple(buckets[bucket])
+        for horizon in sorted({outcome.horizon_days for outcome in bucket_outcomes}):
+            horizon_outcomes = tuple(
+                outcome for outcome in bucket_outcomes if outcome.horizon_days == horizon
+            )
+            available = tuple(
+                outcome
+                for outcome in horizon_outcomes
+                if outcome.spy_return is not None and outcome.qqq_return is not None
+            )
+            rows.append(
+                RegimeProtectOutcomeSummaryRow(
+                    bucket=bucket,
+                    horizon_days=horizon,
+                    protect_count=len(horizon_outcomes),
+                    available_count=len(available),
+                    avg_extension_memory=_average(
+                        outcome.extension_memory_score for outcome in horizon_outcomes
+                    ),
+                    avg_fragility_context=_average(
+                        outcome.fragility_context_score for outcome in horizon_outcomes
+                    ),
+                    avg_deterioration=_average(
+                        outcome.deterioration_score for outcome in horizon_outcomes
+                    ),
+                    avg_confirming_family_count=_average(
+                        outcome.confirming_family_count for outcome in horizon_outcomes
+                    ),
+                    avg_non_vol_confirming_family_count=_average(
+                        outcome.non_vol_confirming_family_count
+                        for outcome in horizon_outcomes
+                    ),
+                    avg_protect_strength=_average(
+                        outcome.protect_strength for outcome in horizon_outcomes
+                    ),
+                    avg_spy_return=_average(outcome.spy_return for outcome in available),
+                    avg_qqq_return=_average(outcome.qqq_return for outcome in available),
+                    avg_spy_max_drawdown=_average(
+                        outcome.spy_max_drawdown for outcome in available
+                    ),
+                    avg_qqq_max_drawdown=_average(
+                        outcome.qqq_max_drawdown for outcome in available
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
 def summarize_regime_pressure_outcomes(
     outcomes: tuple[RegimePressureForwardOutcome, ...],
 ) -> tuple[RegimePressureOutcomeSummaryRow, ...]:
@@ -6812,6 +6974,55 @@ def format_regime_redeploy_outcome_summary(
                 _format_pressure_score(row.avg_washout_memory),
                 _format_pressure_score(row.avg_stabilization),
                 _format_pressure_score(row.avg_redeploy_strength),
+                _format_percent(row.avg_spy_return),
+                _format_percent(row.avg_qqq_return),
+                _format_drawdown(row.avg_spy_max_drawdown),
+                _format_drawdown(row.avg_qqq_max_drawdown),
+            ]
+        )
+    return _format_grouped_table(table, group_column=0)
+
+
+def format_regime_protect_outcome_summary(
+    rows: tuple[RegimeProtectOutcomeSummaryRow, ...],
+) -> str:
+    """Format protect gate-diagnostic outcome summaries as a compact table."""
+
+    available_rows = tuple(row for row in rows if row.available_count > 0)
+    if not available_rows:
+        return "No available regime protect outcome rows found."
+
+    table = [
+        [
+            "bucket",
+            "horizon",
+            "signals",
+            "available",
+            "extension",
+            "fragility",
+            "deteriorate",
+            "families",
+            "nonvol",
+            "strength",
+            "avg_spy",
+            "avg_qqq",
+            "spy_dd",
+            "qqq_dd",
+        ]
+    ]
+    for row in available_rows:
+        table.append(
+            [
+                row.bucket,
+                f"{row.horizon_days}d",
+                str(row.protect_count),
+                str(row.available_count),
+                _format_pressure_score(row.avg_extension_memory),
+                _format_pressure_score(row.avg_fragility_context),
+                _format_pressure_score(row.avg_deterioration),
+                _format_decimal(row.avg_confirming_family_count),
+                _format_decimal(row.avg_non_vol_confirming_family_count),
+                _format_pressure_score(row.avg_protect_strength),
                 _format_percent(row.avg_spy_return),
                 _format_percent(row.avg_qqq_return),
                 _format_drawdown(row.avg_spy_max_drawdown),
@@ -7582,6 +7793,115 @@ def _regime_redeploy_outcomes(
         )
         for horizon in horizons
     )
+
+
+def _regime_protect_outcomes(
+    *,
+    snapshot: RegimeSnapshot,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+    horizons: tuple[int, ...],
+) -> tuple[RegimeProtectForwardOutcome, ...]:
+    spy_history = histories.get("SPY", ())
+    qqq_history = histories.get("QQQ", ())
+    spy_index = _exact_date_index(spy_history, snapshot.price_date)
+    qqq_index = _exact_date_index(qqq_history, snapshot.price_date)
+    confirming_families = _confirming_families(
+        modules=snapshot.action_modules,
+        field_name="deterioration_score",
+    )
+    non_vol_confirming_families = tuple(
+        family for family in confirming_families if family != "volatility"
+    )
+    bucket = _protect_validation_bucket(
+        snapshot,
+        confirming_families=confirming_families,
+        non_vol_confirming_families=non_vol_confirming_families,
+    )
+    return tuple(
+        RegimeProtectForwardOutcome(
+            source_date=snapshot.source_date,
+            price_date=snapshot.price_date,
+            bucket=bucket,
+            action_state=snapshot.action_state,
+            action_path=snapshot.action_path,
+            extension_memory_score=snapshot.extension_memory_score,
+            fragility_context_score=snapshot.fragility_context_score or 0.0,
+            deterioration_score=snapshot.deterioration_score,
+            confirming_family_count=len(confirming_families),
+            non_vol_confirming_family_count=len(non_vol_confirming_families),
+            protect_strength=snapshot.protect_strength,
+            horizon_days=horizon,
+            spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
+            qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
+            spy_max_drawdown=_forward_max_drawdown(
+                spy_history,
+                index=spy_index,
+                horizon=horizon,
+            ),
+            qqq_max_drawdown=_forward_max_drawdown(
+                qqq_history,
+                index=qqq_index,
+                horizon=horizon,
+            ),
+        )
+        for horizon in horizons
+    )
+
+
+def _protect_validation_bucket(
+    snapshot: RegimeSnapshot,
+    *,
+    confirming_families: tuple[str, ...],
+    non_vol_confirming_families: tuple[str, ...],
+) -> str:
+    if snapshot.action_state == "scale_down_protect":
+        path = snapshot.action_path or _protect_path_from_reason(snapshot.action_reason)
+        return f"protect:action:{path or 'unspecified'}"
+
+    extension_strength = math.sqrt(
+        snapshot.extension_memory_score * snapshot.deterioration_score
+    )
+    fragility_context_score = snapshot.fragility_context_score or 0.0
+    regime_break_strength = math.sqrt(
+        fragility_context_score * snapshot.deterioration_score
+    )
+    broad_confirmation = (
+        len(confirming_families) >= ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES
+        and bool(non_vol_confirming_families)
+    )
+    extension_ready = (
+        snapshot.extension_armed
+        and extension_strength >= ACTION_STRENGTH_THRESHOLD
+        and broad_confirmation
+    )
+    regime_break_ready = (
+        fragility_context_score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD
+        and regime_break_strength >= ACTION_STRENGTH_THRESHOLD
+        and len(non_vol_confirming_families) >= ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES
+    )
+    if extension_ready:
+        return "protect:confirmed_no_action:extension_unwind"
+    if regime_break_ready:
+        return "protect:confirmed_no_action:regime_break"
+
+    volatility_only = confirming_families == ("volatility",)
+    if (
+        volatility_only
+        and max(extension_strength, regime_break_strength) >= ACTION_STRENGTH_THRESHOLD
+    ):
+        return "protect:volatility_only_warning"
+
+    has_extension_setup = snapshot.extension_armed
+    has_fragility_setup = fragility_context_score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD
+    if has_extension_setup and has_fragility_setup:
+        return "protect:setup_only:extension_and_fragility"
+    if has_extension_setup:
+        return "protect:setup_only:extension"
+    if has_fragility_setup:
+        return "protect:setup_only:fragility"
+    if confirming_families:
+        return "protect:deterioration_only"
+    return "protect:no_setup"
 
 
 def _redeploy_validation_bucket(snapshot: RegimeSnapshot) -> str:

@@ -200,6 +200,8 @@ Proposals:
   internal family such as breadth, credit, liquidity, or trend.
 - Treat volatility-only confirmation as warning/context, not a normal `scale_down_protect`.
 - Report which path fired and which families confirmed it.
+- Diagnose protect by exclusive setup/confirmation buckets and by independent clusters of
+  consecutive protect-action days; use correction episodes separately to measure missed events.
 
 ### Problem: Geometric Compensation Hides Weak Setup
 

@@ -187,9 +187,11 @@ recomputes that chain in date order.
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action;
-explicit `--by` options cover regime, pressure, signal, and policy. `regime export` writes saved
-regime snapshots into stable `workbooks/regime.xlsx` and `workbooks/regime.csv` files so Excel
-charts can be maintained manually and refreshed in place.
+protect and redeploy modes diagnose their setup/confirmation gates, protect also groups repeated
+action days into alert clusters, posture evaluates the held state, and episode evaluates correction
+coverage. Additional `--by` options cover regime, pressure, signal, and policy. `regime export`
+writes saved regime snapshots into stable `workbooks/regime.xlsx` and `workbooks/regime.csv` files
+so Excel charts can be maintained manually and refreshed in place.
 
 ## Portfolio Policy Outputs
 

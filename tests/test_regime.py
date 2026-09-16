@@ -30,6 +30,7 @@ from marketlab.regime import (
     compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_protect_clusters,
+    compute_regime_protect_outcomes,
     compute_regime_recent_report,
     compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
@@ -2768,6 +2769,104 @@ def test_compute_regime_protect_clusters_groups_false_alerts(
     assert "no" in result.table
 
 
+def test_compute_regime_protect_outcomes_summarizes_gate_buckets(
+    tmp_path: Path,
+) -> None:
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=start_date,
+        closes=[100.0, 99.0, 98.0, 101.0, 102.0],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=start_date,
+        closes=[100.0, 98.0, 97.0, 102.0, 104.0],
+    )
+    confirming_modules = (
+        RegimeActionModule(
+            family="volatility",
+            name="volatility_turn",
+            deterioration_score=0.70,
+            stabilization_score=0.0,
+            feature_count=1,
+            feature_names=("volatility_turn",),
+            reason="fixture",
+        ),
+        RegimeActionModule(
+            family="breadth",
+            name="breadth_turn",
+            deterioration_score=0.65,
+            stabilization_score=0.0,
+            feature_count=1,
+            feature_names=("breadth_turn",),
+            reason="fixture",
+        ),
+    )
+    snapshots = (
+        _snapshot(
+            source_date=start_date,
+            regime="risk_on",
+            score=4,
+            action_state="scale_down_protect",
+            action_path="extension_unwind",
+            deterioration_score=0.60,
+            protect_strength=0.70,
+            extension_armed=True,
+            extension_memory_score=0.80,
+            action_modules=confirming_modules,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_on",
+            score=3,
+            deterioration_score=0.60,
+            protect_strength=0.69,
+            extension_armed=True,
+            extension_memory_score=0.80,
+            action_modules=confirming_modules,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=2),
+            regime="neutral",
+            score=0,
+            deterioration_score=0.60,
+            protect_strength=0.69,
+            extension_armed=True,
+            extension_memory_score=0.80,
+            action_modules=(confirming_modules[0],),
+        ),
+    )
+    for snapshot in snapshots:
+        write_regime_snapshot(snapshot, snapshot_root=snapshot_root)
+
+    result = compute_regime_protect_outcomes(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=2),
+        snapshot_root=snapshot_root,
+        price_root=price_root,
+        horizons=(2,),
+    )
+
+    buckets = {row.bucket for row in result.summary_rows}
+    assert "protect:action:extension_unwind" in buckets
+    assert "protect:confirmed_no_action:extension_unwind" in buckets
+    assert "protect:volatility_only_warning" in buckets
+    confirmed = next(
+        row
+        for row in result.summary_rows
+        if row.bucket == "protect:confirmed_no_action:extension_unwind"
+    )
+    assert confirmed.protect_count == 1
+    assert confirmed.avg_confirming_family_count == 2.0
+    assert confirmed.avg_non_vol_confirming_family_count == 1.0
+    assert "deteriorate" in result.table
+
+
 def test_compute_regime_recent_report_summarizes_recent_snapshot_trends(
     tmp_path: Path,
 ) -> None:
@@ -2877,6 +2976,7 @@ def _snapshot(
     stretch_score: int = 0,
     washout_score: int = 0,
     stabilization_score: float = 0.0,
+    deterioration_score: float = 0.0,
     protect_strength: float = 0.0,
     redeploy_strength: float = 0.0,
     action_score: float = 0.0,
@@ -2885,6 +2985,8 @@ def _snapshot(
     extension_setup_score: float | None = None,
     fragility_context_score: float | None = None,
     washout_setup_score: float | None = None,
+    extension_armed: bool = False,
+    extension_memory_score: float = 0.0,
     washout_armed: bool = False,
     washout_memory_score: float = 0.0,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
@@ -2934,6 +3036,7 @@ def _snapshot(
         stretch_score=stretch_score,
         washout_score=washout_score,
         stabilization_score=stabilization_score,
+        deterioration_score=deterioration_score,
         protect_strength=protect_strength,
         redeploy_strength=redeploy_strength,
         action_score=action_score,
@@ -2942,6 +3045,8 @@ def _snapshot(
         extension_setup_score=extension_setup_score,
         fragility_context_score=fragility_context_score,
         washout_setup_score=washout_setup_score,
+        extension_armed=extension_armed,
+        extension_memory_score=extension_memory_score,
         washout_armed=washout_armed,
         washout_memory_score=washout_memory_score,
         pressure_features=pressure_features,

@@ -104,6 +104,7 @@ from marketlab.regime import (
     RegimePressureOutcomeResult,
     RegimePriceRefreshResult,
     RegimeProtectClusterResult,
+    RegimeProtectOutcomeResult,
     RegimeRecentReportResult,
     RegimeRedeployOutcomeResult,
     RegimeSnapshotResult,
@@ -115,6 +116,7 @@ from marketlab.regime import (
     compute_regime_posture_outcomes,
     compute_regime_pressure_outcomes,
     compute_regime_protect_clusters,
+    compute_regime_protect_outcomes,
     compute_regime_recent_report,
     compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
@@ -164,7 +166,7 @@ class RegimeOutcomeGroup(StrEnum):
     EPISODE = "episode"
     POSTURE = "posture"
     REDEPLOY = "redeploy"
-    CLUSTER = "cluster"
+    PROTECT = "protect"
     POLICY = "policy"
 
 
@@ -1477,8 +1479,9 @@ def regime_outcomes(
     outcome_group: RegimeOutcomeGroup = typer.Option(
         RegimeOutcomeGroup.ACTION,
         "--by",
+        metavar="MODE",
         help=(
-            "Outcome grouping to replay: regime, signal, action, posture, redeploy, cluster, "
+            "Outcome grouping to replay: regime, signal, action, posture, protect, redeploy, "
             "pressure, episode, or policy."
         ),
     ),
@@ -1585,8 +1588,16 @@ def regime_outcomes(
             snapshot_version=snapshot_version,
         )
         return
-    if outcome_group == RegimeOutcomeGroup.CLUSTER:
+    if outcome_group == RegimeOutcomeGroup.PROTECT:
         try:
+            protect_result = compute_regime_protect_outcomes(
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_root=snapshot_root,
+                price_root=price_root,
+                horizons=horizons,
+                snapshot_version=snapshot_version,
+            )
             cluster_result = compute_regime_protect_clusters(
                 start_date=start_date,
                 end_date=end_date,
@@ -1598,7 +1609,7 @@ def regime_outcomes(
         except RegimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
         _emit_regime_outcome_report(
-            _regime_protect_cluster_report_text(cluster_result),
+            _regime_protect_outcome_report_text(protect_result, cluster_result),
             save_report=save_report,
             outcome_group=outcome_group.value,
             artifact_version=outcome_version,
@@ -3191,17 +3202,31 @@ def _regime_redeploy_outcome_report_text(result: RegimeRedeployOutcomeResult) ->
     )
 
 
-def _regime_protect_cluster_report_text(result: RegimeProtectClusterResult) -> str:
-    return _format_outcome_tables(
+def _regime_protect_outcome_report_text(
+    result: RegimeProtectOutcomeResult,
+    cluster_result: RegimeProtectClusterResult,
+) -> str:
+    fields = _format_cli_fields(
         (
-            ("regime_protect_cluster_count", _protect_cluster_count(result)),
-            ("regime_protect_cluster_outcome_count", len(result.outcomes)),
+            ("regime_protect_outcome_count", len(result.outcomes)),
+            (
+                "available_regime_protect_outcome_count",
+                _available_regime_protect_outcome_count(result),
+            ),
+            ("regime_protect_cluster_count", _protect_cluster_count(cluster_result)),
+            ("regime_protect_cluster_outcome_count", len(cluster_result.outcomes)),
             (
                 "false_alert_cluster_outcome_count",
-                _false_alert_cluster_outcome_count(result),
+                _false_alert_cluster_outcome_count(cluster_result),
             ),
-        ),
-        summary_table=result.table,
+        )
+    )
+    return "\n\n".join(
+        (
+            fields,
+            _format_table_section("protect_gate_summary", result.table),
+            _format_table_section("protect_cluster_summary", cluster_result.table),
+        )
     )
 
 
@@ -3370,6 +3395,14 @@ def _available_regime_posture_outcome_count(result: RegimePostureOutcomeResult) 
 
 
 def _available_regime_redeploy_outcome_count(result: RegimeRedeployOutcomeResult) -> int:
+    return sum(
+        1
+        for outcome in result.outcomes
+        if outcome.spy_return is not None and outcome.qqq_return is not None
+    )
+
+
+def _available_regime_protect_outcome_count(result: RegimeProtectOutcomeResult) -> int:
     return sum(
         1
         for outcome in result.outcomes

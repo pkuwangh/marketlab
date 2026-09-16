@@ -81,6 +81,9 @@ from marketlab.regime import (
     RegimePriceRefreshResult,
     RegimeProtectClusterOutcome,
     RegimeProtectClusterResult,
+    RegimeProtectForwardOutcome,
+    RegimeProtectOutcomeResult,
+    RegimeProtectOutcomeSummaryRow,
     RegimeRecentReportResult,
     RegimeRedeployForwardOutcome,
     RegimeRedeployOutcomeResult,
@@ -3277,12 +3280,72 @@ def test_regime_outcomes_episode_outputs_diagnostics(
     assert "before_3pct" in result.output
 
 
-def test_regime_outcomes_cluster_outputs_false_alert_diagnostics(
+def test_regime_outcomes_protect_outputs_gate_and_cluster_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     snapshot_root = tmp_path / "regime"
     price_root = tmp_path / "prices"
+
+    def fake_compute_regime_protect_outcomes(
+        *,
+        start_date: date,
+        end_date: date,
+        snapshot_root: Path,
+        price_root: Path,
+        horizons: tuple[int, ...],
+        snapshot_version: str | None,
+    ) -> RegimeProtectOutcomeResult:
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 8, 28)
+        assert snapshot_root == snapshot_root_arg
+        assert price_root == price_root_arg
+        assert horizons == (20,)
+        assert snapshot_version == "v1.0"
+        return RegimeProtectOutcomeResult(
+            start_date=start_date,
+            end_date=end_date,
+            outcomes=(
+                RegimeProtectForwardOutcome(
+                    source_date=date(2026, 2, 1),
+                    price_date=date(2026, 2, 1),
+                    bucket="protect:action:extension_unwind",
+                    action_state="scale_down_protect",
+                    action_path="extension_unwind",
+                    extension_memory_score=0.75,
+                    fragility_context_score=0.40,
+                    deterioration_score=0.65,
+                    confirming_family_count=2,
+                    non_vol_confirming_family_count=1,
+                    protect_strength=0.70,
+                    horizon_days=20,
+                    spy_return=0.03,
+                    qqq_return=0.04,
+                    spy_max_drawdown=-0.01,
+                    qqq_max_drawdown=-0.02,
+                ),
+            ),
+            summary_rows=(
+                RegimeProtectOutcomeSummaryRow(
+                    bucket="protect:action:extension_unwind",
+                    horizon_days=20,
+                    protect_count=1,
+                    available_count=1,
+                    avg_extension_memory=0.75,
+                    avg_fragility_context=0.40,
+                    avg_deterioration=0.65,
+                    avg_confirming_family_count=2.0,
+                    avg_non_vol_confirming_family_count=1.0,
+                    avg_protect_strength=0.70,
+                    avg_spy_return=0.03,
+                    avg_qqq_return=0.04,
+                    avg_spy_max_drawdown=-0.01,
+                    avg_qqq_max_drawdown=-0.02,
+                ),
+            ),
+            table="bucket                           horizon\n"
+            "protect:action:extension_unwind  20d",
+        )
 
     def fake_compute_regime_protect_clusters(
         *,
@@ -3327,6 +3390,10 @@ def test_regime_outcomes_cluster_outputs_false_alert_diagnostics(
     snapshot_root_arg = snapshot_root
     price_root_arg = price_root
     monkeypatch.setattr(
+        "marketlab.cli.compute_regime_protect_outcomes",
+        fake_compute_regime_protect_outcomes,
+    )
+    monkeypatch.setattr(
         "marketlab.cli.compute_regime_protect_clusters",
         fake_compute_regime_protect_clusters,
     )
@@ -3337,7 +3404,7 @@ def test_regime_outcomes_cluster_outputs_false_alert_diagnostics(
             "regime",
             "outcomes",
             "--by",
-            "cluster",
+            "protect",
             "--start",
             "2026-01-01",
             "--end",
@@ -3354,10 +3421,14 @@ def test_regime_outcomes_cluster_outputs_false_alert_diagnostics(
     )
 
     assert result.exit_code == 0
+    assert "regime_protect_outcome_count=1" in result.output
+    assert "available_regime_protect_outcome_count=1" in result.output
     assert "regime_protect_cluster_count=1" in result.output
     assert "regime_protect_cluster_outcome_count=1" in result.output
     assert "false_alert_cluster_outcome_count=1" in result.output
-    assert "summary_table:" in result.output
+    assert "protect_gate_summary:" in result.output
+    assert "protect_cluster_summary:" in result.output
+    assert "protect:action:extension_unwind" in result.output
     assert "extension_unwind" in result.output
 
 
