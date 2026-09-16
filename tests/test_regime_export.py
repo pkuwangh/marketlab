@@ -36,11 +36,21 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     _write_prices(price_root, symbol="SPY", start=first_date, closes=(100.0, 103.0))
     _write_prices(price_root, symbol="QQQ", start=first_date, closes=(200.0, 202.0))
     write_regime_snapshot(
-        _snapshot(source_date=first_date, spy_return_20d=0.01, extension_setup_score=0.76),
+        _snapshot(
+            source_date=first_date,
+            spy_return_20d=0.01,
+            extension_setup_score=0.76,
+            washout_setup_score=0.80,
+        ),
         snapshot_root=snapshot_root,
     )
     write_regime_snapshot(
-        _snapshot(source_date=second_date, spy_return_20d=0.03, extension_setup_score=0.40),
+        _snapshot(
+            source_date=second_date,
+            spy_return_20d=0.03,
+            extension_setup_score=0.40,
+            washout_setup_score=0.40,
+        ),
         snapshot_root=snapshot_root,
     )
 
@@ -71,7 +81,7 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["action_path"] == "extension_unwind"
     assert first_row["extension_setup"] == 0.76
     assert first_row["fragility_context"] == 0.20
-    assert first_row["washout_setup"] == 0.11
+    assert first_row["washout_setup"] == 0.80
     assert first_row["event_volatility_context"] == "near_term_event_premium"
     assert first_row["posture_state"] == "protected"
     assert _as_date(first_row["protected_since"]) == first_date
@@ -88,6 +98,13 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["extension_arm_rule"] == "strong"
     assert first_row["extension_arm_hit_count"] == 1
     assert first_row["extension_arm_window"] == 1
+    assert first_row["washout_armed"] is True
+    assert _as_date(first_row["washout_armed_since"]) == first_date
+    assert first_row["washout_armed_age"] == 0
+    assert first_row["washout_armed_decay"] == 1.0
+    assert first_row["washout_armed_source_strength"] == 0.80
+    assert first_row["washout_arm_rule"] == "strong"
+    assert first_row["washout_memory_score"] == 0.80
     second_row = dict(zip(headers, (cell.value for cell in worksheet[3]), strict=True))
     assert second_row["extension_elevated_since"] is None
     assert second_row["extension_elevated_age"] is None
@@ -95,6 +112,10 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert _as_date(second_row["extension_armed_since"]) == first_date
     assert second_row["extension_armed_age"] == 1
     assert second_row["extension_arm_rule"] == "strong"
+    assert second_row["washout_armed"] is True
+    assert _as_date(second_row["washout_armed_since"]) == first_date
+    assert second_row["washout_armed_age"] == 1
+    assert second_row["washout_memory_score"] > 0.40
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
     with csv_path.open(encoding="utf-8", newline="") as handle:
@@ -259,6 +280,7 @@ def _snapshot(
     source_date: date,
     spy_return_20d: float = 0.01,
     extension_setup_score: float = 0.50,
+    washout_setup_score: float = 0.11,
     action_path: str | None = "extension_unwind",
 ) -> RegimeSnapshot:
     return RegimeSnapshot(
@@ -304,7 +326,7 @@ def _snapshot(
         washout_pressure_score=0.11,
         extension_setup_score=extension_setup_score,
         fragility_context_score=0.20,
-        washout_setup_score=0.11,
+        washout_setup_score=washout_setup_score,
         deterioration_score=0.70,
         stabilization_score=0.10,
         protect_strength=0.70,

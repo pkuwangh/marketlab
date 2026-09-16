@@ -21,6 +21,7 @@ from marketlab.regime import (
     RegimePressureFeature,
     RegimeSnapshot,
     RegimeSnapshotResult,
+    RegimeWashoutMemory,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
@@ -38,6 +39,7 @@ from marketlab.regime import (
     format_regime_key_signals,
     load_regime_snapshot,
     refresh_regime_prices,
+    washout_memory_rows_from_snapshots,
     write_regime_snapshot,
 )
 from marketlab.versions import REGIME_SNAPSHOT_VERSION
@@ -371,7 +373,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert "redeploy" in summary_table
     assert "contradictions" not in summary_table
     assert "action          no_change;" not in summary_table
-    assert "below action threshold" in summary_table
+    assert "lean below action threshold" in summary_table
     assert "maintain" in summary_table
     assert "No actionable setup; maintain current posture" not in summary_table
     assert "no_change (stretch 1 / washout 0)" not in summary_table
@@ -399,6 +401,9 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert loaded.extension_setup_score == result.snapshot.extension_setup_score
     assert loaded.fragility_context_score == result.snapshot.fragility_context_score
     assert loaded.washout_setup_score == result.snapshot.washout_setup_score
+    assert loaded.washout_memory_status == result.snapshot.washout_memory_status
+    assert loaded.washout_armed == result.snapshot.washout_armed
+    assert loaded.washout_memory_score == result.snapshot.washout_memory_score
 
 
 def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
@@ -489,7 +494,9 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "elevated protect confirmation; families volatility,breadth" in summary_table
     assert "redeploy_setup" in summary_table
     assert "low washout; redeploy setup not armed" in summary_table
+    assert "washout_armed" in summary_table
     assert "stabilization" in summary_table
+    assert "0.19 < 0.35" in summary_table
     assert "low redeploy confirmation; families none" in summary_table
     assert "strength" in summary_table
     assert "event_vol" in summary_table
@@ -1210,6 +1217,114 @@ def test_extension_memory_strong_setup_arms_without_persistence() -> None:
     assert memory.arm_window == 1
 
 
+def test_washout_memory_arms_from_fast_persistence_and_decays() -> None:
+    start_date = date(2026, 1, 1)
+    snapshots = (
+        _snapshot(
+            source_date=start_date,
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.65,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=1),
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.20,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=2),
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.62,
+        ),
+        _snapshot(
+            source_date=start_date + timedelta(days=3),
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.40,
+        ),
+    )
+
+    memory = washout_memory_rows_from_snapshots(snapshots)
+
+    assert memory[start_date].armed is False
+    assert memory[start_date + timedelta(days=1)].armed is False
+    armed = memory[start_date + timedelta(days=2)]
+    assert armed.armed is True
+    assert armed.arm_rule == "persistent"
+    assert armed.arm_hit_count == 2
+    assert armed.arm_window == 3
+    decayed = memory[start_date + timedelta(days=3)]
+    assert decayed.armed is True
+    assert decayed.armed_age == 1
+    assert decayed.effective_score > 0.40
+
+
+def test_redeploy_requires_armed_washout_before_stabilization_can_confirm() -> None:
+    source_date = date(2026, 1, 1)
+    snapshot = _snapshot(
+        source_date=source_date,
+        regime="risk_off",
+        score=-5,
+        washout_pressure_score=0.40,
+        washout_setup_score=0.40,
+        vix_close=34.0,
+        vvix_close=130.0,
+    )
+    stabilization_signals = (
+        _market_signal(
+            source_date=source_date,
+            family="volatility",
+            name="price_proxy",
+            status="stressed",
+            score=-1,
+            value="VIX 34.0",
+            details={"vix_return_5d": -0.18},
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="volatility",
+            name="vol_of_vol",
+            status="stressed",
+            score=-1,
+            value=130.0,
+            details={"vvix_return_5d": -0.15},
+        ),
+    )
+
+    without_memory = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=stabilization_signals,
+    )
+    with_memory = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=stabilization_signals,
+        washout_memory=RegimeWashoutMemory(
+            source_date=source_date,
+            status="armed",
+            armed=True,
+            armed_since=source_date - timedelta(days=3),
+            armed_age=3,
+            armed_decay=0.80,
+            armed_source_strength=0.80,
+            arm_rule="strong",
+            arm_hit_count=1,
+            arm_window=1,
+            effective_score=0.64,
+            snapshot_count=4,
+        ),
+    )
+
+    assert without_memory.redeploy_strength >= 0.55
+    assert without_memory.washout_armed is False
+    assert without_memory.state == "no_change"
+    assert "washout setup is not armed" in without_memory.reason
+    assert with_memory.washout_armed is True
+    assert with_memory.state == "scale_up_redeploy"
+    assert "washout setup was armed" in with_memory.reason
+
+
 def test_derive_regime_action_state_allows_regime_break_without_extension() -> None:
     snapshot = _snapshot(
         source_date=date(2026, 1, 1),
@@ -1720,7 +1835,7 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
     assert action.redeploy_strength >= 0.55
     assert action.protect_strength < action.redeploy_strength
     assert action.action_path == "redeploy"
-    assert "Washout setup plus stabilization evidence" in action.reason
+    assert "Armed washout setup plus stabilization evidence" in action.reason
 
 
 def test_vvix_vs_vix_redeploys_when_vix_is_high_and_vvix_cools() -> None:
@@ -2355,6 +2470,8 @@ def test_compute_regime_redeploy_outcomes_summarizes_validation_buckets(
             regime="risk_off",
             score=-4,
             washout_setup_score=0.72,
+            washout_armed=True,
+            washout_memory_score=0.72,
             stabilization_score=0.20,
             redeploy_strength=0.38,
         ),
@@ -2768,6 +2885,8 @@ def _snapshot(
     extension_setup_score: float | None = None,
     fragility_context_score: float | None = None,
     washout_setup_score: float | None = None,
+    washout_armed: bool = False,
+    washout_memory_score: float = 0.0,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
     action_modules: tuple[RegimeActionModule, ...] = (),
     model_version: str = "fixture_model",
@@ -2823,6 +2942,8 @@ def _snapshot(
         extension_setup_score=extension_setup_score,
         fragility_context_score=fragility_context_score,
         washout_setup_score=washout_setup_score,
+        washout_armed=washout_armed,
+        washout_memory_score=washout_memory_score,
         pressure_features=pressure_features,
         action_modules=action_modules,
         signal_time=signal_time,

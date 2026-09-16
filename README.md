@@ -103,17 +103,22 @@ evidence tables from the snapshot command itself.
 Regime and market-signal snapshots are replaceable calculated under `data/snapshots/`;
 source observations remain under `data/observations/`.
 
-The v1.0 protect action uses saved same-version regime snapshots as its action-memory
+The v1.0 action model uses saved same-version regime snapshots as its setup-memory
 chain. In practice, run `regime backfill` once before relying on a single-date
 `regime snapshot` or `daily` run. A fresh single-date snapshot fails with a clear
 message when this prior chain is missing. Start the backfill far enough before the
 period you care about; extension-unwind memory can look back up to 40 saved trading
-snapshots.
+snapshots and washout memory up to 15.
 
 Extension memory does not arm from every one-day setup blip. The current defaults arm on
 either one strong setup snapshot (`extension_setup >= 0.75`) or persistent setup
 (`extension_setup >= 0.60` on at least 3 of the last 10 saved trading snapshots). These tuning
 parameters live together near the top of `src/marketlab/regime.py`.
+
+Washout memory is intentionally faster. It arms from either one strong snapshot
+(`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
+the last 5 saved trading snapshots). Redeploy then requires independent stabilization of at
+least `0.35`; geometric strength cannot compensate for an unarmed washout or missing confirmation.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
@@ -205,7 +210,7 @@ to regenerate older-version files such as `workbooks/regime-v0.0.xlsx`. The XLSX
 `RegimeData` table in place. Other workbook sheets are preserved, so you can create charts
 once in Excel and refresh the same workbook after each new backfill or daily run. Both
 formats include SPY/QQQ closes, indexed prices, headline regime/action fields, derived
-held posture, armed extension memory, normalized pressure feature values, and
+held posture, armed extension/washout memory, normalized pressure feature values, and
 protect/redeploy action evidence. `posture_age`, `extension_elevated_age`, and
 `extension_armed_age` are snapshot/trading-row counts, not calendar-day counts. The event-volatility
 label is inferred from VIX term-structure behavior, not from a maintained macro-event calendar.

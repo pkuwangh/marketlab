@@ -86,6 +86,16 @@ EXTENSION_ARM_PERSISTENCE_WINDOW = 10
 EXTENSION_ARM_PERSISTENCE_HITS = 3
 EXTENSION_ARMED_SETUP_THRESHOLD = EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
 ACTION_EXTENSION_ARMED_MAX_AGE_DAYS = 40
+WASHOUT_ARM_STRONG_SETUP_THRESHOLD = 0.75
+WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD = 0.60
+WASHOUT_ARM_PERSISTENCE_WINDOW = 5
+WASHOUT_ARM_PERSISTENCE_HITS = 2
+WASHOUT_ARMED_SETUP_THRESHOLD = WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD
+ACTION_WASHOUT_ARMED_MAX_AGE_DAYS = 15
+ACTION_MEMORY_MAX_AGE_DAYS = max(
+    ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
+    ACTION_WASHOUT_ARMED_MAX_AGE_DAYS,
+)
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
 REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
@@ -107,6 +117,7 @@ ACTION_REGIME_BREAK_CONTEXT_THRESHOLD = 0.70
 ACTION_CONFIRMATION_THRESHOLD = 0.35
 ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES = 2
 ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES = 2
+ACTION_REDEPLOY_STABILIZATION_THRESHOLD = 0.35
 PROTECTED_POSTURE_MAX_AGE_DAYS = 65
 REDEPLOY_POSTURE_MAX_AGE_DAYS = 20
 POSTURE_CLEAR_THRESHOLD = 0.35
@@ -348,6 +359,17 @@ class RegimeSnapshot:
     extension_arm_window: int | None = None
     extension_memory_score: float = 0.0
     extension_memory_snapshot_count: int = 0
+    washout_memory_status: str = "not_computed"
+    washout_armed: bool = False
+    washout_armed_since: date | None = None
+    washout_armed_age: int | None = None
+    washout_armed_decay: float | None = None
+    washout_armed_source_strength: float | None = None
+    washout_arm_rule: str | None = None
+    washout_arm_hit_count: int | None = None
+    washout_arm_window: int | None = None
+    washout_memory_score: float = 0.0
+    washout_memory_snapshot_count: int = 0
     pressure_confidence: str = "low"
     pressure_features: tuple[RegimePressureFeature, ...] = ()
     pressure_modules: tuple[RegimePressureModule, ...] = ()
@@ -441,6 +463,19 @@ class RegimeSnapshot:
             "extension_arm_window": self.extension_arm_window,
             "extension_memory_score": self.extension_memory_score,
             "extension_memory_snapshot_count": self.extension_memory_snapshot_count,
+            "washout_memory_status": self.washout_memory_status,
+            "washout_armed": self.washout_armed,
+            "washout_armed_since": (
+                self.washout_armed_since.isoformat() if self.washout_armed_since else None
+            ),
+            "washout_armed_age": self.washout_armed_age,
+            "washout_armed_decay": self.washout_armed_decay,
+            "washout_armed_source_strength": self.washout_armed_source_strength,
+            "washout_arm_rule": self.washout_arm_rule,
+            "washout_arm_hit_count": self.washout_arm_hit_count,
+            "washout_arm_window": self.washout_arm_window,
+            "washout_memory_score": self.washout_memory_score,
+            "washout_memory_snapshot_count": self.washout_memory_snapshot_count,
             "pressure_confidence": self.pressure_confidence,
             "pressure_features": [feature.to_dict() for feature in self.pressure_features],
             "pressure_modules": [module.to_dict() for module in self.pressure_modules],
@@ -450,8 +485,8 @@ class RegimeSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class RegimeExtensionMemory:
-    """Saved-snapshot memory for extension-unwind protect setups."""
+class RegimeSetupMemory:
+    """Saved-snapshot memory for one action setup."""
 
     source_date: date
     status: str
@@ -465,6 +500,10 @@ class RegimeExtensionMemory:
     arm_window: int | None
     effective_score: float
     snapshot_count: int
+
+
+RegimeExtensionMemory = RegimeSetupMemory
+RegimeWashoutMemory = RegimeSetupMemory
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,6 +536,17 @@ class RegimeActionState:
     extension_arm_window: int | None = None
     extension_memory_score: float = 0.0
     extension_memory_snapshot_count: int = 0
+    washout_memory_status: str = "not_computed"
+    washout_armed: bool = False
+    washout_armed_since: date | None = None
+    washout_armed_age: int | None = None
+    washout_armed_decay: float | None = None
+    washout_armed_source_strength: float | None = None
+    washout_arm_rule: str | None = None
+    washout_arm_hit_count: int | None = None
+    washout_arm_window: int | None = None
+    washout_memory_score: float = 0.0
+    washout_memory_snapshot_count: int = 0
     action_features: tuple[RegimeActionFeature, ...] = ()
     action_modules: tuple[RegimeActionModule, ...] = ()
 
@@ -529,6 +579,19 @@ class RegimeActionState:
             "extension_arm_window": self.extension_arm_window,
             "extension_memory_score": self.extension_memory_score,
             "extension_memory_snapshot_count": self.extension_memory_snapshot_count,
+            "washout_memory_status": self.washout_memory_status,
+            "washout_armed": self.washout_armed,
+            "washout_armed_since": (
+                self.washout_armed_since.isoformat() if self.washout_armed_since else None
+            ),
+            "washout_armed_age": self.washout_armed_age,
+            "washout_armed_decay": self.washout_armed_decay,
+            "washout_armed_source_strength": self.washout_armed_source_strength,
+            "washout_arm_rule": self.washout_arm_rule,
+            "washout_arm_hit_count": self.washout_arm_hit_count,
+            "washout_arm_window": self.washout_arm_window,
+            "washout_memory_score": self.washout_memory_score,
+            "washout_memory_snapshot_count": self.washout_memory_snapshot_count,
             "confidence": self.confidence,
             "reason": self.reason,
             "evidence": list(self.evidence),
@@ -794,6 +857,7 @@ class RegimeRedeployForwardOutcome:
     bucket: str
     action_state: str
     washout_setup_score: float | None
+    washout_memory_score: float
     stabilization_score: float
     redeploy_strength: float
     horizon_days: int
@@ -812,6 +876,7 @@ class RegimeRedeployOutcomeSummaryRow:
     redeploy_count: int
     available_count: int
     avg_washout_setup: float | None
+    avg_washout_memory: float | None
     avg_stabilization: float | None
     avg_redeploy_strength: float | None
     avg_spy_return: float | None
@@ -990,11 +1055,39 @@ class _ProtectGateResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _ExtensionArmTrigger:
+class _SetupArmTrigger:
     rule: str | None
     hit_count: int
     window: int
     source_strength: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class _SetupMemorySpec:
+    score_field: str
+    strong_threshold: float
+    persistence_threshold: float
+    persistence_window: int
+    persistence_hits: int
+    max_age_days: int
+
+
+_EXTENSION_MEMORY_SPEC = _SetupMemorySpec(
+    score_field="extension_setup_score",
+    strong_threshold=EXTENSION_ARM_STRONG_SETUP_THRESHOLD,
+    persistence_threshold=EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD,
+    persistence_window=EXTENSION_ARM_PERSISTENCE_WINDOW,
+    persistence_hits=EXTENSION_ARM_PERSISTENCE_HITS,
+    max_age_days=ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
+)
+_WASHOUT_MEMORY_SPEC = _SetupMemorySpec(
+    score_field="washout_setup_score",
+    strong_threshold=WASHOUT_ARM_STRONG_SETUP_THRESHOLD,
+    persistence_threshold=WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD,
+    persistence_window=WASHOUT_ARM_PERSISTENCE_WINDOW,
+    persistence_hits=WASHOUT_ARM_PERSISTENCE_HITS,
+    max_age_days=ACTION_WASHOUT_ARMED_MAX_AGE_DAYS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1300,14 +1393,14 @@ def compute_regime_snapshot(
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
     prior_snapshots = _load_recent_regime_snapshots_before(
         source_date=source_date,
-        lookback_days=ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
+        lookback_days=ACTION_MEMORY_MAX_AGE_DAYS,
         snapshot_root=snapshot_root,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
     )
     if require_action_history and not prior_snapshots:
         raise RegimeError(
-            _missing_extension_memory_history_message(
+            _missing_action_memory_history_message(
                 source_date=source_date,
                 snapshot_version=snapshot_version
                 or default_snapshot_version(
@@ -1394,7 +1487,7 @@ def compute_regime_backfill(
     action_history_snapshots = list(
         _load_recent_regime_snapshots_before(
             source_date=start_date,
-            lookback_days=ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
+            lookback_days=ACTION_MEMORY_MAX_AGE_DAYS,
             snapshot_root=snapshot_root,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
@@ -1542,10 +1635,16 @@ def _compute_regime_snapshot_from_histories(
         prior_snapshots=prior_snapshots,
         require_prior_history=require_action_history,
     )
+    washout_memory = _washout_memory_from_snapshot_chain(
+        snapshot=snapshot,
+        prior_snapshots=prior_snapshots,
+        require_prior_history=require_action_history,
+    )
     action = derive_regime_action_state(
         snapshot=snapshot,
         signals=signals,
         extension_memory=extension_memory,
+        washout_memory=washout_memory,
     )
     snapshot = _snapshot_with_action(snapshot=snapshot, action=action)
     snapshot_path = (
@@ -2052,8 +2151,18 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
         )
     rows.append(
         [
+            "washout_armed",
+            _washout_armed_value(action),
+            _washout_armed_read(action),
+        ]
+    )
+    rows.append(
+        [
             "stabilization",
-            _format_pressure_score(action.stabilization_score),
+            _gate_value(
+                score=action.stabilization_score,
+                threshold=ACTION_REDEPLOY_STABILIZATION_THRESHOLD,
+            ),
             _action_confirmation_read(
                 label="redeploy",
                 score=action.stabilization_score,
@@ -2220,11 +2329,24 @@ def _action_strength_read(action: RegimeActionState) -> str:
     if action.protect_strength > action.redeploy_strength:
         return _inactive_action_strength_read("protect", action.protect_strength)
     if action.redeploy_strength > action.protect_strength:
+        if (
+            not action.washout_armed
+            and action.redeploy_strength >= ACTION_STRENGTH_THRESHOLD - 0.10
+        ):
+            return "redeploy strength is diagnostic; washout setup not armed"
+        if (
+            action.washout_armed
+            and action.stabilization_score < ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+            and action.redeploy_strength >= ACTION_STRENGTH_THRESHOLD - 0.10
+        ):
+            return "redeploy strength is diagnostic; stabilization gate not passed"
         return _inactive_action_strength_read("redeploy", action.redeploy_strength)
     return "balanced below action threshold"
 
 
 def _inactive_action_strength_read(label: str, strength: float) -> str:
+    if strength >= ACTION_STRENGTH_THRESHOLD:
+        return f"{label} strength above threshold; action gates blocked"
     if strength >= ACTION_STRENGTH_THRESHOLD - 0.10:
         return f"{label} lean near {ACTION_STRENGTH_THRESHOLD:.2f} action threshold"
     return f"{label} lean below action threshold"
@@ -2332,13 +2454,64 @@ def _fragility_context_read(score: float) -> str:
 
 
 def _redeploy_setup_read(score: float) -> str:
-    if score >= ACTION_STRENGTH_THRESHOLD:
-        return "washout setup visible for redeploy"
-    if score >= ACTION_STRENGTH_THRESHOLD - 0.10:
-        return "near redeploy setup level"
+    if score >= WASHOUT_ARM_STRONG_SETUP_THRESHOLD:
+        return "strong one-day washout setup can arm redeploy"
+    if score >= WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD:
+        return "washout setup hit; needs persistence to arm"
+    if score >= WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD - 0.10:
+        return "near washout setup gate"
     if score >= 0.30:
         return "partial washout; redeploy setup not armed"
     return "low washout; redeploy setup not armed"
+
+
+def _washout_armed_value(action: RegimeActionState) -> str:
+    hits = _washout_arm_hits_value(action)
+    if action.washout_armed_since is None:
+        return f"no; {hits}; score {_format_pressure_score(action.washout_memory_score)}"
+    age = "-" if action.washout_armed_age is None else str(action.washout_armed_age)
+    return (
+        f"{'yes' if action.washout_armed else 'expired'}; "
+        f"since {action.washout_armed_since.isoformat()}; "
+        f"age {age}; {hits}; "
+        f"score {_format_pressure_score(action.washout_memory_score)}"
+    )
+
+
+def _washout_armed_read(action: RegimeActionState) -> str:
+    if action.washout_memory_status == "initializing":
+        return "no prior snapshot chain; run backfill before relying on single-date action"
+    if action.washout_armed:
+        decay = (
+            "-"
+            if action.washout_armed_decay is None
+            else _format_pressure_score(action.washout_armed_decay)
+        )
+        return f"{_washout_arm_rule_read(action)}; decay {decay}; supports redeploy"
+    if action.washout_armed_since is not None:
+        return f"{_washout_arm_rule_read(action)}; prior washout setup expired"
+    return (
+        f"needs setup >= {WASHOUT_ARM_STRONG_SETUP_THRESHOLD:.2f} or "
+        f"{WASHOUT_ARM_PERSISTENCE_HITS}/{WASHOUT_ARM_PERSISTENCE_WINDOW} hits "
+        f">= {WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f}"
+    )
+
+
+def _washout_arm_hits_value(action: RegimeActionState) -> str:
+    if action.washout_arm_hit_count is None or action.washout_arm_window is None:
+        return "hits -"
+    return f"hits {action.washout_arm_hit_count}/{action.washout_arm_window}"
+
+
+def _washout_arm_rule_read(action: RegimeActionState) -> str:
+    if action.washout_arm_rule == "strong":
+        return f"armed by setup >= {WASHOUT_ARM_STRONG_SETUP_THRESHOLD:.2f}"
+    if action.washout_arm_rule == "persistent":
+        return (
+            f"armed by persistent setup ({_washout_arm_hits_value(action)}, "
+            f"threshold {WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f})"
+        )
+    return "not armed by current washout rule"
 
 
 def _action_state_label(state: str) -> str:
@@ -3249,6 +3422,7 @@ def derive_regime_action_state(
     snapshot: RegimeSnapshot,
     signals: tuple[MarketSignal, ...] = (),
     extension_memory: RegimeExtensionMemory | None = None,
+    washout_memory: RegimeWashoutMemory | None = None,
 ) -> RegimeActionState:
     """Derive rare-action state from setup pressure and turn evidence."""
 
@@ -3301,6 +3475,10 @@ def derive_regime_action_state(
         snapshot=snapshot,
         extension_setup_score=extension_setup_score,
     )
+    washout_memory = washout_memory or _current_only_washout_memory(
+        snapshot=snapshot,
+        washout_setup_score=washout_setup_score,
+    )
     protect_gate = _protect_gate_result(
         extension_setup_score=extension_setup_score,
         extension_memory=extension_memory,
@@ -3312,15 +3490,19 @@ def derive_regime_action_state(
         protect_gate.extension_strength,
         protect_gate.regime_break_strength,
     )
-    redeploy_strength = math.sqrt(washout_setup_score * stabilization_score)
+    redeploy_strength = math.sqrt(washout_memory.effective_score * stabilization_score)
     action_score = redeploy_strength - protect_strength
     severe_funding_stress = _severe_funding_stress(signals)
+    redeploy_ready = (
+        washout_memory.armed
+        and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+        and redeploy_strength >= ACTION_STRENGTH_THRESHOLD
+    )
+    redeploy_margin_ready = (
+        redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
+    )
 
-    if (
-        redeploy_strength >= ACTION_STRENGTH_THRESHOLD
-        and redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
-        and severe_funding_stress
-    ):
+    if redeploy_ready and redeploy_margin_ready and severe_funding_stress:
         state = "no_change"
         action_path = None
         evidence = _action_feature_evidence(
@@ -3328,17 +3510,14 @@ def derive_regime_action_state(
             field_name="stabilization_score",
         )
         reason = "Redeploy setup present, but credit and liquidity stress block aggressive re-risk"
-    elif (
-        redeploy_strength >= ACTION_STRENGTH_THRESHOLD
-        and redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
-    ):
+    elif redeploy_ready and redeploy_margin_ready:
         state = "scale_up_redeploy"
         action_path = "redeploy"
         evidence = _action_feature_evidence(
             action_features,
             field_name="stabilization_score",
-        )
-        reason = "Washout setup plus stabilization evidence supports staged redeploy"
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = "Armed washout setup plus stabilization evidence supports staged redeploy"
     elif (
         protect_gate.path is not None
         and protect_strength - redeploy_strength >= ACTION_STRENGTH_MARGIN
@@ -3358,6 +3537,45 @@ def derive_regime_action_state(
             field_name="deterioration_score",
         ) + _protect_gate_evidence(protect_gate)
         reason = protect_gate.reason
+    elif (
+        washout_memory.armed
+        and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+        and redeploy_strength >= ACTION_STRENGTH_THRESHOLD
+    ):
+        state = "no_change"
+        action_path = None
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = "Redeploy setup and confirmation passed, but protect evidence still dominates"
+    elif (
+        washout_memory.armed
+        and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+    ):
+        state = "no_change"
+        action_path = None
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = "Redeploy setup and confirmation passed, but strength is below its gate"
+    elif washout_memory.armed:
+        state = "no_change"
+        action_path = None
+        evidence = washout_evidence
+        reason = "Washout setup is armed, but stabilization confirmation is below its gate"
+    elif (
+        stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+        and redeploy_strength >= ACTION_STRENGTH_THRESHOLD - 0.10
+    ):
+        state = "no_change"
+        action_path = None
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        )
+        reason = "Stabilization is visible, but washout setup is not armed"
     elif max(stretch_setup_score, washout_setup_score) >= 0.65:
         state = "no_change"
         action_path = None
@@ -3406,6 +3624,17 @@ def derive_regime_action_state(
         extension_arm_window=extension_memory.arm_window,
         extension_memory_score=extension_memory.effective_score,
         extension_memory_snapshot_count=extension_memory.snapshot_count,
+        washout_memory_status=washout_memory.status,
+        washout_armed=washout_memory.armed,
+        washout_armed_since=washout_memory.armed_since,
+        washout_armed_age=washout_memory.armed_age,
+        washout_armed_decay=washout_memory.armed_decay,
+        washout_armed_source_strength=washout_memory.armed_source_strength,
+        washout_arm_rule=washout_memory.arm_rule,
+        washout_arm_hit_count=washout_memory.arm_hit_count,
+        washout_arm_window=washout_memory.arm_window,
+        washout_memory_score=washout_memory.effective_score,
+        washout_memory_snapshot_count=washout_memory.snapshot_count,
         action_features=action_features,
         action_modules=action_modules,
     )
@@ -3442,6 +3671,17 @@ def _snapshot_with_action(
         extension_arm_window=action.extension_arm_window,
         extension_memory_score=action.extension_memory_score,
         extension_memory_snapshot_count=action.extension_memory_snapshot_count,
+        washout_memory_status=action.washout_memory_status,
+        washout_armed=action.washout_armed,
+        washout_armed_since=action.washout_armed_since,
+        washout_armed_age=action.washout_armed_age,
+        washout_armed_decay=action.washout_armed_decay,
+        washout_armed_source_strength=action.washout_armed_source_strength,
+        washout_arm_rule=action.washout_arm_rule,
+        washout_arm_hit_count=action.washout_arm_hit_count,
+        washout_arm_window=action.washout_arm_window,
+        washout_memory_score=action.washout_memory_score,
+        washout_memory_snapshot_count=action.washout_memory_snapshot_count,
         action_features=action.action_features,
         action_modules=action.action_modules,
     )
@@ -3489,14 +3729,15 @@ def _action_feature_evidence(
     )
 
 
-def _current_only_extension_memory(
+def _current_only_setup_memory(
     *,
     snapshot: RegimeSnapshot,
-    extension_setup_score: float,
-) -> RegimeExtensionMemory:
-    trigger = _extension_arm_trigger_for_scores((extension_setup_score,))
+    setup_score: float,
+    spec: _SetupMemorySpec,
+) -> RegimeSetupMemory:
+    trigger = _setup_arm_trigger_for_scores((setup_score,), spec=spec)
     armed = trigger.rule is not None
-    return RegimeExtensionMemory(
+    return RegimeSetupMemory(
         source_date=snapshot.source_date,
         status="current_only",
         armed=armed,
@@ -3507,8 +3748,32 @@ def _current_only_extension_memory(
         arm_rule=trigger.rule,
         arm_hit_count=trigger.hit_count,
         arm_window=trigger.window,
-        effective_score=_optional_clamped_score(extension_setup_score) or 0.0,
+        effective_score=_optional_clamped_score(setup_score) or 0.0,
         snapshot_count=1,
+    )
+
+
+def _current_only_extension_memory(
+    *,
+    snapshot: RegimeSnapshot,
+    extension_setup_score: float,
+) -> RegimeExtensionMemory:
+    return _current_only_setup_memory(
+        snapshot=snapshot,
+        setup_score=extension_setup_score,
+        spec=_EXTENSION_MEMORY_SPEC,
+    )
+
+
+def _current_only_washout_memory(
+    *,
+    snapshot: RegimeSnapshot,
+    washout_setup_score: float,
+) -> RegimeWashoutMemory:
+    return _current_only_setup_memory(
+        snapshot=snapshot,
+        setup_score=washout_setup_score,
+        spec=_WASHOUT_MEMORY_SPEC,
     )
 
 
@@ -3517,6 +3782,22 @@ def extension_memory_rows_from_snapshots(
 ) -> dict[date, RegimeExtensionMemory]:
     """Return extension-unwind setup memory for an ordered snapshot chain."""
 
+    return _setup_memory_rows_from_snapshots(snapshots, spec=_EXTENSION_MEMORY_SPEC)
+
+
+def washout_memory_rows_from_snapshots(
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> dict[date, RegimeWashoutMemory]:
+    """Return redeploy washout memory for an ordered snapshot chain."""
+
+    return _setup_memory_rows_from_snapshots(snapshots, spec=_WASHOUT_MEMORY_SPEC)
+
+
+def _setup_memory_rows_from_snapshots(
+    snapshots: tuple[RegimeSnapshot, ...],
+    *,
+    spec: _SetupMemorySpec,
+) -> dict[date, RegimeSetupMemory]:
     setup_run_active = False
     setup_run_armed = False
     armed_since: date | None = None
@@ -3525,18 +3806,18 @@ def extension_memory_rows_from_snapshots(
     arm_rule: str | None = None
     arm_hit_count: int | None = None
     arm_window: int | None = None
-    rows: dict[date, RegimeExtensionMemory] = {}
+    rows: dict[date, RegimeSetupMemory] = {}
     setup_scores: list[float | None] = []
     for index, snapshot in enumerate(sorted(snapshots, key=lambda item: item.source_date)):
-        setup_score = _optional_clamped_score(snapshot.extension_setup_score)
+        setup_score = _optional_clamped_score(getattr(snapshot, spec.score_field))
         setup_scores.append(setup_score)
-        setup_hit = _armed_extension_setup_active(setup_score)
+        setup_hit = setup_score is not None and setup_score >= spec.persistence_threshold
         if setup_hit and not setup_run_active:
             setup_run_armed = False
         setup_run_active = setup_hit
         if not setup_hit:
             setup_run_armed = False
-        trigger = _extension_arm_trigger_for_scores(tuple(setup_scores))
+        trigger = _setup_arm_trigger_for_scores(tuple(setup_scores), spec=spec)
         if trigger.rule is not None and not setup_run_armed:
             armed_since = snapshot.source_date
             armed_index = index
@@ -3547,14 +3828,14 @@ def extension_memory_rows_from_snapshots(
             setup_run_armed = True
 
         age = index - armed_index if armed_index is not None else None
-        is_armed = age is not None and age <= ACTION_EXTENSION_ARMED_MAX_AGE_DAYS
+        is_armed = age is not None and age <= spec.max_age_days
         status = "armed" if is_armed else "expired" if armed_since is not None else "unarmed"
         decay = (
-            max(0.0, 1.0 - age / ACTION_EXTENSION_ARMED_MAX_AGE_DAYS)
+            max(0.0, 1.0 - age / spec.max_age_days)
             if is_armed and age is not None
             else None
         )
-        rows[snapshot.source_date] = RegimeExtensionMemory(
+        rows[snapshot.source_date] = RegimeSetupMemory(
             source_date=snapshot.source_date,
             status=status,
             armed=is_armed,
@@ -3565,7 +3846,7 @@ def extension_memory_rows_from_snapshots(
             arm_rule=arm_rule if armed_since is not None else trigger.rule,
             arm_hit_count=arm_hit_count if armed_since is not None else trigger.hit_count,
             arm_window=arm_window if armed_since is not None else trigger.window,
-            effective_score=_extension_memory_effective_score(
+            effective_score=_setup_memory_effective_score(
                 current_setup_score=setup_score,
                 armed=is_armed,
                 armed_source_strength=source_strength,
@@ -3582,6 +3863,35 @@ def _extension_memory_from_snapshot_chain(
     prior_snapshots: tuple[RegimeSnapshot, ...],
     require_prior_history: bool,
 ) -> RegimeExtensionMemory:
+    return _setup_memory_from_snapshot_chain(
+        snapshot=snapshot,
+        prior_snapshots=prior_snapshots,
+        require_prior_history=require_prior_history,
+        spec=_EXTENSION_MEMORY_SPEC,
+    )
+
+
+def _washout_memory_from_snapshot_chain(
+    *,
+    snapshot: RegimeSnapshot,
+    prior_snapshots: tuple[RegimeSnapshot, ...],
+    require_prior_history: bool,
+) -> RegimeWashoutMemory:
+    return _setup_memory_from_snapshot_chain(
+        snapshot=snapshot,
+        prior_snapshots=prior_snapshots,
+        require_prior_history=require_prior_history,
+        spec=_WASHOUT_MEMORY_SPEC,
+    )
+
+
+def _setup_memory_from_snapshot_chain(
+    *,
+    snapshot: RegimeSnapshot,
+    prior_snapshots: tuple[RegimeSnapshot, ...],
+    require_prior_history: bool,
+    spec: _SetupMemorySpec,
+) -> RegimeSetupMemory:
     prior_chain = tuple(
         item
         for item in sorted(prior_snapshots, key=lambda prior: prior.source_date)
@@ -3591,16 +3901,16 @@ def _extension_memory_from_snapshot_chain(
     )
     if require_prior_history and not prior_chain:
         raise RegimeError(
-            _missing_extension_memory_history_message(
+            _missing_action_memory_history_message(
                 source_date=snapshot.source_date,
                 snapshot_version=snapshot.snapshot_version,
             )
         )
-    chain = (*prior_chain[-ACTION_EXTENSION_ARMED_MAX_AGE_DAYS:], snapshot)
-    rows = extension_memory_rows_from_snapshots(chain)
+    chain = (*prior_chain[-spec.max_age_days :], snapshot)
+    rows = _setup_memory_rows_from_snapshots(chain, spec=spec)
     memory = rows[snapshot.source_date]
     if not prior_chain and not memory.armed:
-        return RegimeExtensionMemory(
+        return RegimeSetupMemory(
             source_date=memory.source_date,
             status="initializing",
             armed=memory.armed,
@@ -3623,43 +3933,45 @@ def _optional_clamped_score(score: float | None) -> float | None:
     return _clamp(score, 0.0, 1.0)
 
 
-def _extension_arm_trigger_for_scores(
+def _setup_arm_trigger_for_scores(
     scores: tuple[float | None, ...],
-) -> _ExtensionArmTrigger:
+    *,
+    spec: _SetupMemorySpec,
+) -> _SetupArmTrigger:
     current_score = scores[-1] if scores else None
-    window_scores = scores[-EXTENSION_ARM_PERSISTENCE_WINDOW:]
+    window_scores = scores[-spec.persistence_window :]
     hit_scores = tuple(
         score
         for score in window_scores
-        if score is not None and score >= EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
+        if score is not None and score >= spec.persistence_threshold
     )
     hit_count = len(hit_scores)
     window = len(window_scores)
     if current_score is None:
-        return _ExtensionArmTrigger(
+        return _SetupArmTrigger(
             rule=None,
             hit_count=hit_count,
             window=window,
             source_strength=max(hit_scores) if hit_scores else None,
         )
-    if current_score >= EXTENSION_ARM_STRONG_SETUP_THRESHOLD:
-        return _ExtensionArmTrigger(
+    if current_score >= spec.strong_threshold:
+        return _SetupArmTrigger(
             rule="strong",
             hit_count=hit_count,
             window=window,
             source_strength=current_score,
         )
     if (
-        current_score >= EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
-        and hit_count >= EXTENSION_ARM_PERSISTENCE_HITS
+        current_score >= spec.persistence_threshold
+        and hit_count >= spec.persistence_hits
     ):
-        return _ExtensionArmTrigger(
+        return _SetupArmTrigger(
             rule="persistent",
             hit_count=hit_count,
             window=window,
             source_strength=max(hit_scores),
         )
-    return _ExtensionArmTrigger(
+    return _SetupArmTrigger(
         rule=None,
         hit_count=hit_count,
         window=window,
@@ -3667,7 +3979,7 @@ def _extension_arm_trigger_for_scores(
     )
 
 
-def _extension_memory_effective_score(
+def _setup_memory_effective_score(
     *,
     current_setup_score: float | None,
     armed: bool,
@@ -3684,7 +3996,11 @@ def _armed_extension_setup_active(setup_score: float | None) -> bool:
     return setup_score is not None and setup_score >= EXTENSION_ARMED_SETUP_THRESHOLD
 
 
-def _missing_extension_memory_history_message(
+def _armed_washout_setup_active(setup_score: float | None) -> bool:
+    return setup_score is not None and setup_score >= WASHOUT_ARMED_SETUP_THRESHOLD
+
+
+def _missing_action_memory_history_message(
     *,
     source_date: date,
     snapshot_version: str | None,
@@ -3692,7 +4008,7 @@ def _missing_extension_memory_history_message(
     suggested_start = source_date - timedelta(days=90)
     version_read = snapshot_version or REGIME_SNAPSHOT_VERSION
     return (
-        "Missing prior same-version regime snapshots for extension action memory: "
+        "Missing prior same-version regime snapshots for regime action memory: "
         f"date={source_date.isoformat()} snapshot_version={version_read}. "
         "Run a regime backfill first, for example "
         f"`./bin/marketlab regime backfill --start {suggested_start.isoformat()} "
@@ -3725,6 +4041,29 @@ def _extension_memory_rule_read(memory: RegimeExtensionMemory) -> str:
             f">= {EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f}"
         )
     return "the extension rule"
+
+
+def _washout_memory_reason(memory: RegimeWashoutMemory) -> str:
+    if memory.arm_rule == "strong":
+        rule_read = f"setup >= {WASHOUT_ARM_STRONG_SETUP_THRESHOLD:.2f}"
+    elif memory.arm_rule == "persistent":
+        rule_read = (
+            f"{memory.arm_hit_count}/{memory.arm_window} setup hits "
+            f">= {WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f}"
+        )
+    else:
+        rule_read = "the washout rule"
+    if memory.armed_since is None:
+        return f"washout setup is armed by {rule_read}"
+    if memory.armed_age is None:
+        return (
+            f"washout setup was armed by {rule_read} "
+            f"on {memory.armed_since.isoformat()}"
+        )
+    return (
+        f"washout setup was armed by {rule_read} on {memory.armed_since.isoformat()} "
+        f"({memory.armed_age} trading snapshots ago)"
+    )
 
 
 def _protect_gate_result(
@@ -5617,6 +5956,17 @@ def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
         extension_arm_window=snapshot.extension_arm_window,
         extension_memory_score=snapshot.extension_memory_score,
         extension_memory_snapshot_count=snapshot.extension_memory_snapshot_count,
+        washout_memory_status=snapshot.washout_memory_status,
+        washout_armed=snapshot.washout_armed,
+        washout_armed_since=snapshot.washout_armed_since,
+        washout_armed_age=snapshot.washout_armed_age,
+        washout_armed_decay=snapshot.washout_armed_decay,
+        washout_armed_source_strength=snapshot.washout_armed_source_strength,
+        washout_arm_rule=snapshot.washout_arm_rule,
+        washout_arm_hit_count=snapshot.washout_arm_hit_count,
+        washout_arm_window=snapshot.washout_arm_window,
+        washout_memory_score=snapshot.washout_memory_score,
+        washout_memory_snapshot_count=snapshot.washout_memory_snapshot_count,
         action_features=snapshot.action_features,
         action_modules=snapshot.action_modules,
     )
@@ -6171,6 +6521,9 @@ def summarize_regime_redeploy_outcomes(
                     avg_washout_setup=_average(
                         outcome.washout_setup_score for outcome in horizon_outcomes
                     ),
+                    avg_washout_memory=_average(
+                        outcome.washout_memory_score for outcome in horizon_outcomes
+                    ),
                     avg_stabilization=_average(
                         outcome.stabilization_score for outcome in horizon_outcomes
                     ),
@@ -6439,6 +6792,7 @@ def format_regime_redeploy_outcome_summary(
             "signals",
             "available",
             "washout",
+            "memory",
             "stabilize",
             "strength",
             "avg_spy",
@@ -6455,6 +6809,7 @@ def format_regime_redeploy_outcome_summary(
                 str(row.redeploy_count),
                 str(row.available_count),
                 _format_pressure_score(row.avg_washout_setup),
+                _format_pressure_score(row.avg_washout_memory),
                 _format_pressure_score(row.avg_stabilization),
                 _format_pressure_score(row.avg_redeploy_strength),
                 _format_percent(row.avg_spy_return),
@@ -7216,6 +7571,7 @@ def _regime_redeploy_outcomes(
             bucket=bucket,
             action_state=snapshot.action_state,
             washout_setup_score=snapshot.washout_setup_score,
+            washout_memory_score=snapshot.washout_memory_score,
             stabilization_score=snapshot.stabilization_score,
             redeploy_strength=snapshot.redeploy_strength,
             horizon_days=horizon,
@@ -7229,14 +7585,13 @@ def _regime_redeploy_outcomes(
 
 
 def _redeploy_validation_bucket(snapshot: RegimeSnapshot) -> str:
-    washout_setup = snapshot.washout_setup_score or 0.0
     stabilization = snapshot.stabilization_score
     if snapshot.action_state == "scale_up_redeploy":
         return "redeploy:action"
     if snapshot.action_reason.startswith("Redeploy setup present, but"):
         return "redeploy:funding_blocked"
-    has_setup = washout_setup >= ACTION_STRENGTH_THRESHOLD
-    has_stabilization = stabilization >= ACTION_STRENGTH_THRESHOLD
+    has_setup = snapshot.washout_armed
+    has_stabilization = stabilization >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
     if has_setup and has_stabilization:
         return "redeploy:confirmed_no_action"
     if has_setup:
@@ -8018,6 +8373,35 @@ def _snapshot_from_dict(row: dict[str, Any]) -> RegimeSnapshot:
         ),
         extension_memory_score=_optional_float(row.get("extension_memory_score")) or 0.0,
         extension_memory_snapshot_count=int(row.get("extension_memory_snapshot_count", 0)),
+        washout_memory_status=str(row.get("washout_memory_status", "not_computed")),
+        washout_armed=bool(row.get("washout_armed", False)),
+        washout_armed_since=(
+            date.fromisoformat(str(row["washout_armed_since"]))
+            if row.get("washout_armed_since")
+            else None
+        ),
+        washout_armed_age=(
+            int(row["washout_armed_age"])
+            if row.get("washout_armed_age") is not None
+            else None
+        ),
+        washout_armed_decay=_optional_float(row.get("washout_armed_decay")),
+        washout_armed_source_strength=_optional_float(
+            row.get("washout_armed_source_strength")
+        ),
+        washout_arm_rule=_optional_str(row.get("washout_arm_rule")),
+        washout_arm_hit_count=(
+            int(row["washout_arm_hit_count"])
+            if row.get("washout_arm_hit_count") is not None
+            else None
+        ),
+        washout_arm_window=(
+            int(row["washout_arm_window"])
+            if row.get("washout_arm_window") is not None
+            else None
+        ),
+        washout_memory_score=_optional_float(row.get("washout_memory_score")) or 0.0,
+        washout_memory_snapshot_count=int(row.get("washout_memory_snapshot_count", 0)),
         pressure_confidence=str(row.get("pressure_confidence", "low")),
         pressure_features=pressure_features,
         pressure_modules=pressure_modules,

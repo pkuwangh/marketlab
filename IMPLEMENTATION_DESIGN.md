@@ -181,6 +181,10 @@ key-signals table. `--detail` adds:
 - market signals;
 - pressure features.
 
+Regime actions use the ordered same-version snapshot chain for bounded extension and washout setup
+memory. Single-date snapshot and daily workflows require prior history; backfill establishes and
+recomputes that chain in date order.
+
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action;
 explicit `--by` options cover regime, pressure, signal, and policy. `regime export` writes saved

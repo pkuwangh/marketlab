@@ -31,6 +31,7 @@ from marketlab.regime import (
     derive_regime_postures,
     extension_memory_rows_from_snapshots,
     load_regime_snapshot,
+    washout_memory_rows_from_snapshots,
 )
 from marketlab.snapshots.models import SignalTime, signal_time_value, snapshot_source_dates
 from marketlab.versions import REGIME_VERSION
@@ -99,6 +100,15 @@ _BASE_COLUMNS = (
     "extension_arm_window",
     "fragility_context",
     "washout_setup",
+    "washout_armed",
+    "washout_armed_since",
+    "washout_armed_age",
+    "washout_armed_decay",
+    "washout_armed_source_strength",
+    "washout_arm_rule",
+    "washout_arm_hit_count",
+    "washout_arm_window",
+    "washout_memory_score",
     "protect_strength",
     "redeploy_strength",
     "net_action_score",
@@ -138,6 +148,7 @@ _DATE_COLUMNS = frozenset(
         "redeploy_since",
         "extension_elevated_since",
         "extension_armed_since",
+        "washout_armed_since",
     }
 )
 _PERCENT_COLUMNS = frozenset(
@@ -396,7 +407,8 @@ def _rows_for_snapshots(
             spy_history=tuple(load_price_history(symbol="SPY", price_root=price_root)),
         )
     }
-    armed_rows = _armed_extension_memory_rows(snapshots)
+    extension_memory_rows = _armed_extension_memory_rows(snapshots)
+    washout_memory_rows = _armed_washout_memory_rows(snapshots)
 
     rows: list[dict[str, Any]] = []
     for snapshot in snapshots:
@@ -408,7 +420,8 @@ def _rows_for_snapshots(
             qqq_base=qqq_base,
         )
         _add_posture(row, postures.get(snapshot.source_date))
-        row.update(armed_rows.get(snapshot.source_date, {}))
+        row.update(extension_memory_rows.get(snapshot.source_date, {}))
+        row.update(washout_memory_rows.get(snapshot.source_date, {}))
         _add_pressure_features(row, snapshot)
         _add_pressure_modules(row, snapshot)
         _add_action_features(row, snapshot)
@@ -470,6 +483,27 @@ def _armed_extension_memory_rows(
 
 def _armed_extension_setup_active(setup_score: float | None) -> bool:
     return setup_score is not None and setup_score >= EXTENSION_ARMED_SETUP_THRESHOLD
+
+
+def _armed_washout_memory_rows(
+    snapshots: tuple[RegimeSnapshot, ...],
+) -> dict[date, dict[str, Any]]:
+    memory_by_date = washout_memory_rows_from_snapshots(snapshots)
+    rows: dict[date, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        memory = memory_by_date[snapshot.source_date]
+        rows[snapshot.source_date] = {
+            "washout_armed": memory.armed,
+            "washout_armed_since": memory.armed_since,
+            "washout_armed_age": memory.armed_age,
+            "washout_armed_decay": memory.armed_decay,
+            "washout_armed_source_strength": memory.armed_source_strength,
+            "washout_arm_rule": memory.arm_rule,
+            "washout_arm_hit_count": memory.arm_hit_count,
+            "washout_arm_window": memory.arm_window,
+            "washout_memory_score": memory.effective_score,
+        }
+    return rows
 
 
 def _base_row(

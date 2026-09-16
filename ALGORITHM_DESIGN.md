@@ -105,8 +105,8 @@ The current v1.0 implementation computes:
 This is useful research scaffolding, not a finished model. The current implementation is v1.0
 research code. It separates extension setup, fragility setup, deterioration confirmation,
 and stabilization confirmation, and it uses saved same-version regime snapshots as the
-extension action-memory chain. Thresholds and decay windows are still research assumptions,
-not calibrated production policy.
+extension and washout action-memory chain. Thresholds and decay windows are still research
+assumptions, not calibrated production policy.
 
 ## Setup, Confirmation, Action
 
@@ -203,7 +203,7 @@ Proposals:
 
 ### Problem: Geometric Compensation Hides Weak Setup
 
-The current protect strength is approximately:
+The original protect strength was approximately:
 
 ```text
 protect_strength = sqrt(stretch * deterioration)
@@ -214,12 +214,13 @@ protect days have stretch below the empirical stretch p90, around 0.49 in the re
 That explains many false positives: the signal can fire from one extreme input even when the setup
 is not actually extended.
 
-Proposals:
+Implemented v1.0 direction:
 
-- Replace geometric compensation with hard gates.
 - Extension-unwind path: `extension_setup_gate AND broad_confirmation_gate`.
 - Regime-break path: `strong_broad_deterioration_gate`.
-- Study strength scores after the gates pass, not as a substitute for the gates.
+- Redeploy path: `armed_washout_gate AND stabilization_gate`.
+- Strength scores remain useful after the gates pass, but cannot substitute for a missing setup
+  or confirmation gate.
 
 ### Problem: Same-Day Setup And Confirmation Were Too Rigid
 
@@ -235,6 +236,10 @@ Implemented v1.0 direction:
 - Avoid noisy one-day arming: default v1.0 parameters arm from either
   `extension_setup >= 0.75` on one snapshot or `extension_setup >= 0.60` on at least
   3 of the last 10 saved trading snapshots.
+- Apply the same sequencing principle to redeploy with faster parameters: arm washout from either
+  `washout_setup >= 0.75` on one snapshot or `washout_setup >= 0.60` on at least 2 of the last
+  5 saved trading snapshots, retain it for up to 15 snapshots with decay, and require current
+  stabilization of at least `0.35`.
 
 Open research:
 
@@ -264,11 +269,16 @@ Proposals:
 Washout pressure is associated with realized drawdown, but forward returns can also be strong.
 That makes washout closer to a redeploy setup than a bearish warning or a mechanical buy signal.
 
-Proposals:
+Implemented v1.0 direction:
 
 - Treat washout as `redeploy_setup`.
 - Require stabilization confirmation before redeploy: volatility cooling, breadth stabilizing, or
   credit no longer worsening.
+- Arm washout setup before applying stabilization and strength gates so high stabilization cannot
+  geometrically compensate for a setup that never existed.
+
+Open research:
+
 - Track whether redeploy signals fire too early during continuing stress.
 
 ### Problem: Shock Windows Distort Ordinary Correction Research
