@@ -2411,12 +2411,27 @@ def _inactive_action_strength_read(label: str, strength: float) -> str:
 
 
 def _action_decision_read(action: RegimeActionState) -> str:
-    reason = _nonredundant_action_reason(action)
-    if reason:
-        return reason
-    if action.state == "no_change":
-        return "no action trigger"
-    return "action threshold crossed"
+    if action.state == "scale_down_protect":
+        return "armed extension confirmed by lifecycle deterioration"
+    if action.state == "scale_up_redeploy":
+        return "armed washout confirmed by stabilization"
+    if action.action_path == "regime_break_warning":
+        return "warning only; broad deterioration without armed extension"
+    if action.action_path == "volatility_only_warning":
+        return "warning only; volatility lacks internal confirmation"
+    if action.action_path == "washout_blocks_protect":
+        return "protect arrived after washout; do not de-risk late"
+    if action.reason.startswith("Redeploy setup present, but"):
+        return "redeploy blocked by credit/liquidity stress"
+    if action.reason.startswith("Redeploy setup and confirmation passed"):
+        return "redeploy gates passed; combined strength below threshold"
+    if action.reason.startswith("Washout setup is armed"):
+        return "washout armed; stabilization below gate"
+    if action.reason.startswith("Stabilization is visible"):
+        return "stabilization visible; washout not armed"
+    if action.reason.startswith("Setup pressure present"):
+        return "setup present; confirmation incomplete"
+    return "no action trigger"
 
 
 def _action_confirmation_read(
@@ -2503,11 +2518,11 @@ def _extension_arm_rule_read(action: RegimeActionState) -> str:
 
 def _fragility_context_read(score: float) -> str:
     if score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD:
-        return "regime-break setup active"
+        return "broad fragility warning active"
     if score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD - 0.10:
-        return "near regime-break setup gate"
+        return "near broad fragility warning gate"
     if score >= 0.30:
-        return "partial fragility setup; not enough for regime-break"
+        return "partial fragility context"
     return "low fragility setup"
 
 
@@ -2586,14 +2601,6 @@ def _data_quality_read(missing_inputs: tuple[str, ...]) -> str:
     if missing_inputs:
         return "data gaps: " + ",".join(missing_inputs)
     return "data complete"
-
-
-def _nonredundant_action_reason(action: RegimeActionState) -> str | None:
-    default_reason = "No actionable setup; maintain current posture"
-    if action.state == "no_change" and action.reason.startswith(default_reason):
-        suffix = action.reason[len(default_reason) :].lstrip(": ")
-        return suffix or None
-    return action.reason
 
 
 def _event_volatility_context_value(context: str) -> str:

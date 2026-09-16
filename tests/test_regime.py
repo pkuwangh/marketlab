@@ -448,6 +448,7 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
         protect_strength=0.67,
         redeploy_strength=0.24,
         action_score=-0.43,
+        action_path="regime_break_warning",
         event_volatility_context="near_term_event_premium_with_confirmation",
         action_modules=(
             RegimeActionModule(
@@ -495,7 +496,7 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "extension-unwind setup not armed" in summary_table
     assert "fragility_setup" in summary_table
     assert "0.68 < 0.70" in summary_table
-    assert "near regime-break setup gate" in summary_table
+    assert "near broad fragility warning gate" in summary_table
     assert "deterioration" in summary_table
     assert "elevated protect confirmation; families volatility,breadth" in summary_table
     assert "redeploy_setup" in summary_table
@@ -510,8 +511,9 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "event-vol premium is visible with breadth/credit confirmation" in summary_table
     assert "action" in summary_table
     assert "maintain; medium confidence" in summary_table
+    assert "warning only; broad deterioration without armed extension" in summary_table
     assert "protect gates" not in summary_table
-    assert "trend damage is already visible" in summary_table
+    assert "trend damage is already visible" not in summary_table
 
 
 def test_compute_regime_snapshot_rejects_stale_vix_term_structure(tmp_path: Path) -> None:
