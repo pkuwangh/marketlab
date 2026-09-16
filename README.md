@@ -95,6 +95,10 @@ Compute the market regime directly:
 ./bin/marketlab regime snapshot --date 2026-09-04 --refresh-sources
 ```
 
+An EOD snapshot requires an exact SPY observation for `--date`; it will not silently use the
+previous trading day. Omit `--refresh-sources` only when local source observations already include
+that date. Otherwise the command fails with the latest available SPY date and a refresh hint.
+
 `regime snapshot` is a snapshot command. By default it prints concise metadata plus the
 key-signals table: headline regime, setup/evidence, and action. Use `regime report`
 to inspect the recent multi-day regime trend, or add `--detail` when debugging the heavier

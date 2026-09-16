@@ -1646,6 +1646,7 @@ def _compute_regime_snapshot_from_histories(
         workflow="Market regime snapshot",
     )
     signal_time_text = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
+    _require_exact_spy_price_anchor(source_date=source_date, histories=histories)
     snapshot_version_text = snapshot_version or default_snapshot_version(
         source_date,
         signal_time=signal_time_text,
@@ -1765,6 +1766,28 @@ def _compute_regime_snapshot_from_histories(
             action.action_modules,
             action_features=action.action_features,
         ),
+    )
+
+
+def _require_exact_spy_price_anchor(
+    *,
+    source_date: date,
+    histories: dict[str, tuple[DailyPriceObservation, ...]],
+) -> None:
+    spy_history = histories.get("SPY", ())
+    spy_index = _asof_index(spy_history, source_date)
+    if spy_index is not None and spy_history[spy_index].observed_date == source_date:
+        return
+
+    latest_date = spy_history[spy_index].observed_date if spy_index is not None else None
+    if latest_date is None:
+        detail = "no SPY observation is available on or before that date"
+    else:
+        detail = f"the latest available SPY observation is {latest_date.isoformat()}"
+    raise RegimeError(
+        f"Cannot compute the {source_date.isoformat()} EOD regime snapshot because {detail}. "
+        "Refresh source observations with --refresh-sources or choose a snapshot date "
+        "that has an exact SPY EOD observation."
     )
 
 

@@ -181,6 +181,10 @@ key-signals table. `--detail` adds:
 - market signals;
 - pressure features.
 
+Date-level EOD snapshot computation requires an exact SPY observation for the requested source
+date. It fails instead of silently anchoring a new snapshot to the prior trading day; callers must
+refresh source observations or request a date present in local SPY history.
+
 Regime actions use the ordered same-version snapshot chain for bounded extension and washout setup
 memory. Single-date snapshot and daily workflows require prior history; backfill establishes and
 recomputes that chain in date order. Extension setup is a gated combination of trend extension and

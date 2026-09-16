@@ -108,6 +108,33 @@ def test_compute_regime_snapshot_requires_prior_action_history_for_single_date(
         )
 
 
+def test_compute_regime_snapshot_requires_exact_spy_price_anchor(tmp_path: Path) -> None:
+    source_date = date(2026, 9, 16)
+    price_root = tmp_path / "prices"
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=date(2026, 9, 15),
+        closes=[100.0],
+    )
+
+    with pytest.raises(
+        RegimeError,
+        match=(
+            "Cannot compute the 2026-09-16 EOD regime snapshot.*"
+            "latest available SPY observation is 2026-09-15.*"
+            "--refresh-sources"
+        ),
+    ):
+        compute_regime_snapshot(
+            source_date=source_date,
+            price_root=price_root,
+            market_series_root=tmp_path / "market-series",
+            snapshot_root=tmp_path / "snapshots",
+            signal_snapshot_root=tmp_path / "signals",
+        )
+
+
 def test_compute_regime_backfill_rejects_non_eod_signal_time(tmp_path: Path) -> None:
     with pytest.raises(RegimeError, match="supports only signal_time=eod"):
         compute_regime_backfill(
