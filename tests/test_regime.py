@@ -482,9 +482,9 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "extension" in summary_table
     assert "0.08 < 0.60" in summary_table
     assert "extension-unwind setup not armed" in summary_table
-    assert "fragility" in summary_table
+    assert "fragility_setup" in summary_table
     assert "0.68 < 0.70" in summary_table
-    assert "near regime-break context gate" in summary_table
+    assert "near regime-break setup gate" in summary_table
     assert "deterioration" in summary_table
     assert "elevated protect confirmation; families volatility,breadth" in summary_table
     assert "redeploy_setup" in summary_table

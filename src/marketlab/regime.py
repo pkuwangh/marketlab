@@ -2013,7 +2013,7 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
     if snapshot.fragility_context_score is not None:
         rows.append(
             [
-                "fragility",
+                "fragility_setup",
                 _gate_value(
                     score=snapshot.fragility_context_score,
                     threshold=ACTION_REGIME_BREAK_CONTEXT_THRESHOLD,
@@ -2323,12 +2323,12 @@ def _extension_arm_rule_read(action: RegimeActionState) -> str:
 
 def _fragility_context_read(score: float) -> str:
     if score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD:
-        return "regime-break context active"
+        return "regime-break setup active"
     if score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD - 0.10:
-        return "near regime-break context gate"
+        return "near regime-break setup gate"
     if score >= 0.30:
-        return "some fragility; not enough for regime-break"
-    return "low fragility context"
+        return "partial fragility setup; not enough for regime-break"
+    return "low fragility setup"
 
 
 def _redeploy_setup_read(score: float) -> str:
@@ -3782,7 +3782,7 @@ def _protect_gate_result(
             non_vol_confirming_families=non_vol_confirming_families,
             warning_only=False,
             reason=(
-                "fragility context plus broad non-vol deterioration bypasses extension setup "
+                "fragility setup plus broad non-vol deterioration bypasses extension setup "
                 f"(non-vol families {non_vol_read})"
             ),
         )

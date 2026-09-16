@@ -70,7 +70,8 @@ The regime engine should keep the main views separate:
 | --- | --- | --- |
 | Directional regime | Summarize whether the current tape is risk-on, neutral, or risk-off. | Should marginal beta be above, near, or below neutral? |
 | Protect extension setup | Detect price extension and volatility complacency. | Is the tape extended enough to arm a later protect check? |
-| Fragility / deterioration context | Track breadth, credit, liquidity, volatility, and trend damage. | Is internal support weakening or confirming a break? |
+| Protect fragility setup | Detect vulnerable breadth, credit, liquidity, and rates context. | Is the backdrop fragile enough for a regime-break protect check? |
+| Action confirmation | Track recent deterioration or stabilization across trend, volatility, breadth, credit, and liquidity. | Is a protect or redeploy setup now being confirmed? |
 | Redeploy setup pressure | Detect stress, forced selling, panic, and broad washout. | Is the tape washed out enough to watch for stabilization? |
 
 The headline regime is background context. It is not the action. A strong `risk_on` market can be
@@ -102,7 +103,7 @@ The current v1.0 implementation computes:
 - A provisional portfolio policy mapping from action state to marginal beta/cash/overlay posture.
 
 This is useful research scaffolding, not a finished model. The current implementation is v1.0
-research code. It separates extension setup, fragility context, deterioration confirmation,
+research code. It separates extension setup, fragility setup, deterioration confirmation,
 and stabilization confirmation, and it uses saved same-version regime snapshots as the
 extension action-memory chain. Thresholds and decay windows are still research assumptions,
 not calibrated production policy.
