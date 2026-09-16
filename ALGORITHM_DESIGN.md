@@ -229,7 +229,7 @@ Implemented v1.0 direction:
   its score is their geometric mean only after both gates pass.
 - Extension-unwind path: `armed_extension AND long_term_uptrend AND lifecycle_confirmation`.
 - Regime-break evidence is diagnostic context only.
-- Redeploy path: `armed_washout_gate AND stabilization_gate`.
+- Redeploy path: `armed_prior_washout AND current_broad_washout AND washout_release AND stabilization_gate`.
 - Strength scores remain useful after the gates pass, but cannot substitute for a missing setup
   or confirmation gate.
 
@@ -249,11 +249,12 @@ Implemented v1.0 direction:
   3 of the last 10 saved trading snapshots.
 - Apply the same sequencing principle to redeploy with faster parameters: arm washout from either
   `washout_setup >= 0.75` on one snapshot or `washout_setup >= 0.60` on at least 2 of the last
-  5 saved trading snapshots, retain it for up to 15 snapshots with decay, and require current
-  stabilization of at least `0.75` across at least two families. Each family begins confirming at
-  `0.35`.
-- Arm once per continuous setup run. A setup that remains elevated past expiration cannot silently
-  re-arm as the history window advances; it must first reset below the persistence threshold.
+  5 saved trading snapshots. Each qualifying stress snapshot refreshes memory, and the 15-snapshot
+  grace period begins after the final qualifying stress observation.
+- Require current broad washout of at least `0.35` and a structured-washout release of at least
+  `0.05` from its remembered peak before stabilization can trigger redeploy.
+- Require current stabilization of at least `0.75` across at least two families. Each family begins
+  confirming at `0.35`.
 
 Open research:
 
@@ -286,23 +287,32 @@ That makes washout closer to a redeploy setup than a bearish warning or a mechan
 Implemented v1.0 direction:
 
 - Treat washout as `redeploy_setup`.
-- Require concurrent trend damage, volatility stress, and at least one transmission channel from
-  breadth, credit, or liquidity; unrelated neutral modules no longer dilute a valid setup.
+- Require concurrent trend damage, volatility stress, and acute transmission through breadth or
+  credit. Slow weekly NFCI liquidity history remains context and a severe-funding veto, but cannot
+  establish tactical washout by itself.
 - Require strong, broad stabilization confirmation before redeploy. The current gate requires an
   aggregate score of at least `0.75` across at least two of trend, volatility, breadth, credit, and
   liquidity; one strong family cannot trigger redeploy alone.
 - Arm washout setup before applying stabilization and strength gates so high stabilization cannot
   geometrically compensate for a setup that never existed.
+- Keep remembered setup and current opportunity separate: memory establishes that capitulation
+  occurred, while current broad washout confirms that the opportunity has not already cleared.
+- Require structured washout to release from its remembered peak before calling stabilization a
+  redeploy transition. Redeploy strength combines current broad washout with stabilization rather
+  than using decayed memory as a substitute for current stress.
 - Let valid redeploy confirmation win once washout is armed; an ineligible raw protect score does
   not block the phase transition.
 - An intermediate 2016-2026 replay increased redeploy from 11 COVID-concentrated action rows to
   148 rows, but their lower forward return and larger adverse excursion showed that the gate had
-  become too permissive. Requiring strong multi-family stabilization reduces the reviewed replay
-  to 39 action rows across 19 washout runs. This is broader coverage, not proof of profitability.
+  become too permissive. The current lifecycle produces 29 action days across 8 distinct armed
+  washout events through the reviewed June 2026 outcome window. Event-level 20-day SPY return is
+  `+5.1%` with `-1.9%` average maximum drawdown, versus v0.0's `+1.5%` and `-4.6%` across 16 fallback
+  event clusters. This is not validation: the event count is small, and the three 2021-2024 events
+  still have negative average 40- and 65-day returns.
 
 Open research:
 
-- Track whether redeploy signals fire too early during continuing stress.
+- Track whether a fixed `0.05` release is sufficient across different volatility regimes.
 
 ### Problem: Shock Windows Distort Ordinary Correction Research
 
@@ -337,8 +347,10 @@ Forward replay should evaluate each layer separately:
 - Active posture episodes: does maintaining a protected or redeploying state improve portfolio
   outcomes after friction?
 
-Use episode-level diagnostics for corrections. Daily overlapping forward windows are useful, but
-they can overcount one event. A correction episode report should show:
+Use episode-level diagnostics for corrections and actions. Daily overlapping forward windows are
+useful for posture and background distributions, but they overcount one multi-day call. The default
+action report therefore keeps an all-days baseline while measuring protect/redeploy from the first
+action day of each armed-setup lifecycle. A correction episode report should show:
 
 - correction threshold, such as 5% or 8%;
 - whether warning arrived before the first -3% or -5% drawdown crossing;
@@ -410,5 +422,6 @@ context, and realized outcome.
 4. Tighten event-volatility handling so scheduled macro premium does not masquerade as broad
    deterioration.
 5. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
-6. Measure redeploy by independent episodes and tranches, not overlapping daily action rows alone.
+6. Measure redeploy tranches and held posture separately from the implemented first-event action
+   replay.
 7. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.

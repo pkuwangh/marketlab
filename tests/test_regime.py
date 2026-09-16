@@ -1279,13 +1279,21 @@ def test_structured_washout_setup_requires_damage_stress_and_transmission() -> N
         _pressure_module("breadth_fragility", stretch=0.10, washout=0.34),
         _pressure_module("credit_risk_appetite", stretch=0.10, washout=0.20),
     )
-    with_transmission = (
+    with_slow_liquidity_only = (
         *without_transmission,
         _pressure_module("liquidity_conditions", stretch=0.10, washout=0.50),
     )
+    with_fast_transmission = (
+        _pressure_module("trend_extension", stretch=0.10, washout=0.80),
+        _pressure_module("vol_complacency", stretch=0.10, washout=0.80),
+        _pressure_module("breadth_fragility", stretch=0.10, washout=0.34),
+        _pressure_module("credit_risk_appetite", stretch=0.10, washout=0.50),
+        _pressure_module("liquidity_conditions", stretch=0.10, washout=0.90),
+    )
 
     assert _structured_washout_setup_score(without_transmission) == 0.0
-    assert _structured_washout_setup_score(with_transmission) == pytest.approx(
+    assert _structured_washout_setup_score(with_slow_liquidity_only) == 0.0
+    assert _structured_washout_setup_score(with_fast_transmission) == pytest.approx(
         (0.80 * 0.80 * 0.50) ** (1.0 / 3.0)
     )
 
@@ -1334,7 +1342,7 @@ def test_washout_memory_arms_from_fast_persistence_and_decays() -> None:
     assert decayed.effective_score > 0.40
 
 
-def test_washout_memory_does_not_rearm_during_one_continuous_setup_run() -> None:
+def test_washout_memory_grace_starts_after_last_qualifying_stress_snapshot() -> None:
     start_date = date(2026, 1, 1)
     snapshots = tuple(
         _snapshot(
@@ -1346,16 +1354,35 @@ def test_washout_memory_does_not_rearm_during_one_continuous_setup_run() -> None
         for offset in range(30)
     )
 
-    memory = _washout_memory_from_snapshot_chain(
+    active_memory = _washout_memory_from_snapshot_chain(
         snapshot=snapshots[-1],
         prior_snapshots=snapshots[:-1],
         require_prior_history=True,
     )
 
-    assert memory.armed is False
-    assert memory.status == "expired"
-    assert memory.armed_since == start_date
-    assert memory.armed_age == 29
+    assert active_memory.armed is True
+    assert active_memory.status == "armed"
+    assert active_memory.armed_since == start_date
+    assert active_memory.armed_age == 0
+
+    released_snapshots = snapshots + tuple(
+        _snapshot(
+            source_date=start_date + timedelta(days=30 + offset),
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.20,
+        )
+        for offset in range(16)
+    )
+    expired_memory = _washout_memory_from_snapshot_chain(
+        snapshot=released_snapshots[-1],
+        prior_snapshots=released_snapshots[:-1],
+        require_prior_history=True,
+    )
+
+    assert expired_memory.armed is False
+    assert expired_memory.status == "expired"
+    assert expired_memory.armed_age == 16
 
 
 def test_redeploy_requires_armed_washout_before_stabilization_can_confirm() -> None:
@@ -1420,6 +1447,76 @@ def test_redeploy_requires_armed_washout_before_stabilization_can_confirm() -> N
     assert with_memory.washout_armed is True
     assert with_memory.state == "scale_up_redeploy"
     assert "washout setup was armed" in with_memory.reason
+
+
+def test_redeploy_requires_current_washout_and_release_from_peak() -> None:
+    source_date = date(2026, 1, 1)
+    stabilization_signals = (
+        _market_signal(
+            source_date=source_date,
+            family="volatility",
+            name="price_proxy",
+            status="stressed",
+            score=-1,
+            value="VIX 34.0",
+            details={"vix_return_5d": -0.18},
+        ),
+        _market_signal(
+            source_date=source_date,
+            family="volatility",
+            name="vol_of_vol",
+            status="stressed",
+            score=-1,
+            value=130.0,
+            details={"vvix_return_5d": -0.15},
+        ),
+    )
+    memory = RegimeWashoutMemory(
+        source_date=source_date,
+        status="armed",
+        armed=True,
+        armed_since=source_date - timedelta(days=3),
+        armed_age=1,
+        armed_decay=0.90,
+        armed_source_strength=0.80,
+        arm_rule="strong",
+        arm_hit_count=1,
+        arm_window=1,
+        effective_score=0.72,
+        snapshot_count=4,
+    )
+
+    cleared = derive_regime_action_state(
+        snapshot=_snapshot(
+            source_date=source_date,
+            regime="risk_off",
+            score=-5,
+            washout_pressure_score=0.20,
+            washout_setup_score=0.40,
+            vix_close=34.0,
+            vvix_close=130.0,
+        ),
+        signals=stabilization_signals,
+        washout_memory=memory,
+    )
+    unreleased = derive_regime_action_state(
+        snapshot=_snapshot(
+            source_date=source_date,
+            regime="risk_off",
+            score=-5,
+            washout_pressure_score=0.80,
+            washout_setup_score=0.78,
+            vix_close=34.0,
+            vvix_close=130.0,
+        ),
+        signals=stabilization_signals,
+        washout_memory=memory,
+    )
+
+    assert cleared.state == "no_change"
+    assert "current broad washout has already cleared" in cleared.reason
+    assert unreleased.state == "no_change"
+    assert "wait for pressure to release" in unreleased.reason
 
 
 def test_redeploy_requires_stabilization_across_multiple_families() -> None:
@@ -1940,6 +2037,7 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
         vvix_close=130.0,
         stretch_pressure_score=0.05,
         washout_pressure_score=0.90,
+        washout_setup_score=0.70,
     )
 
     action = derive_regime_action_state(
@@ -1982,6 +2080,20 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
                 details={"financial_conditions_change_4w": -0.10},
             ),
         ),
+        washout_memory=RegimeWashoutMemory(
+            source_date=snapshot.source_date,
+            status="armed",
+            armed=True,
+            armed_since=snapshot.source_date - timedelta(days=3),
+            armed_age=1,
+            armed_decay=0.90,
+            armed_source_strength=0.80,
+            arm_rule="strong",
+            arm_hit_count=1,
+            arm_window=1,
+            effective_score=0.72,
+            snapshot_count=4,
+        ),
     )
 
     assert action.state == "scale_up_redeploy"
@@ -1990,7 +2102,7 @@ def test_derive_regime_action_state_flags_washout_market() -> None:
     assert action.redeploy_strength >= 0.55
     assert action.protect_strength < action.redeploy_strength
     assert action.action_path == "redeploy"
-    assert "Armed washout setup plus stabilization evidence" in action.reason
+    assert "Armed prior washout" in action.reason
 
 
 def test_vvix_vs_vix_redeploys_when_vix_is_high_and_vvix_cools() -> None:
@@ -2111,6 +2223,7 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
         vvix_close=130.0,
         stretch_pressure_score=0.05,
         washout_pressure_score=0.90,
+        washout_setup_score=0.70,
     )
 
     action = derive_regime_action_state(
@@ -2152,6 +2265,20 @@ def test_derive_regime_action_state_blocks_washout_when_funding_breaks() -> None
                 value=0.4,
                 details={"financial_conditions_change_4w": -0.10},
             ),
+        ),
+        washout_memory=RegimeWashoutMemory(
+            source_date=snapshot.source_date,
+            status="armed",
+            armed=True,
+            armed_since=snapshot.source_date - timedelta(days=3),
+            armed_age=1,
+            armed_decay=0.90,
+            armed_source_strength=0.80,
+            arm_rule="strong",
+            arm_hit_count=1,
+            arm_window=1,
+            effective_score=0.72,
+            snapshot_count=4,
         ),
     )
 
@@ -2416,6 +2543,21 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
     )
     write_regime_snapshot(
         _snapshot(
+            source_date=start_date + timedelta(days=4),
+            regime="risk_off",
+            score=-4,
+            action_state="scale_up_redeploy",
+            action_confidence="medium",
+            action_reason="Washout/re-risk threshold remains crossed",
+            stretch_score=0,
+            washout_score=3,
+            washout_armed=True,
+            washout_armed_since=start_date,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
             source_date=start_date + timedelta(days=2),
             regime="risk_off",
             score=-5,
@@ -2443,6 +2585,18 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
             qqq_return_20d=-0.13,
             qqq_ma50_distance=-0.10,
             vix_close=34.0,
+            washout_armed=True,
+            washout_armed_since=start_date,
+        ),
+        snapshot_root=snapshot_root,
+    )
+    write_regime_snapshot(
+        _snapshot(
+            source_date=start_date + timedelta(days=3),
+            regime="risk_off",
+            score=-4,
+            washout_armed=True,
+            washout_armed_since=start_date,
         ),
         snapshot_root=snapshot_root,
     )
@@ -2461,7 +2615,7 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
 
     result = compute_regime_action_outcomes(
         start_date=start_date,
-        end_date=start_date + timedelta(days=2),
+        end_date=start_date + timedelta(days=4),
         snapshot_root=snapshot_root,
         signal_snapshot_root=tmp_path / "signals",
         price_root=price_root,
@@ -2472,22 +2626,68 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
         "no_change",
         "scale_down_protect",
         "scale_up_redeploy",
+        "no_change",
+        "scale_up_redeploy",
     ]
     frequency = {row.action_state: row for row in result.frequency_rows}
-    assert frequency["no_change"].action_count == 1
+    assert frequency["no_change"].action_count == 2
     assert frequency["scale_down_protect"].action_count == 1
-    assert frequency["scale_up_redeploy"].action_count == 1
+    assert frequency["scale_up_redeploy"].action_count == 2
     action_row = next(
-        row for row in result.summary_rows if row.bucket == "action:scale_up_redeploy"
+        row for row in result.summary_rows if row.bucket == "event:scale_up_redeploy"
     )
     assert action_row.action_count == 1
     assert action_row.available_count == 1
     assert round(action_row.avg_spy_return or 0.0, 4) == round(20.0 / 102.0, 4)
     assert "scale_down_protect" in result.frequency_table
     assert "====" not in result.frequency_table
-    assert "action:scale_up_redeploy" in result.table
+    baseline_row = next(
+        row for row in result.summary_rows if row.bucket == "baseline:all_days"
+    )
+    assert baseline_row.action_count == 5
+    assert "event:scale_up_redeploy" in result.table
     assert "====" in result.table.splitlines()[1]
     assert "\n---" in result.table
+
+
+def test_action_outcomes_do_not_restart_event_at_report_boundary(tmp_path: Path) -> None:
+    prior_date = date(2025, 12, 31)
+    start_date = date(2026, 1, 1)
+    snapshot_root = tmp_path / "snapshots"
+    price_root = tmp_path / "prices"
+    for source_date in (prior_date, start_date):
+        write_regime_snapshot(
+            _snapshot(
+                source_date=source_date,
+                regime="risk_off",
+                score=-4,
+                action_state="scale_up_redeploy",
+            ),
+            snapshot_root=snapshot_root,
+        )
+    _write_price_history(
+        price_root,
+        symbol="SPY",
+        start=prior_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
+        symbol="QQQ",
+        start=prior_date,
+        closes=[100.0 + index for index in range(30)],
+    )
+
+    result = compute_regime_action_outcomes(
+        start_date=start_date,
+        end_date=start_date,
+        snapshot_root=snapshot_root,
+        signal_snapshot_root=tmp_path / "signals",
+        price_root=price_root,
+        horizons=(20,),
+    )
+
+    assert {row.bucket for row in result.summary_rows} == {"baseline:all_days"}
 
 
 def test_derive_regime_postures_carries_protect_until_reset(tmp_path: Path) -> None:
@@ -2670,6 +2870,8 @@ def test_compute_regime_redeploy_outcomes_summarizes_validation_buckets(
     setup_row = next(row for row in result.summary_rows if row.bucket == "redeploy:setup_only")
     assert setup_row.redeploy_count == 1
     assert setup_row.avg_washout_setup == 0.72
+    assert setup_row.avg_current_washout == 0.0
+    assert setup_row.avg_washout_release == 0.0
     assert "redeploy:action" in result.table
 
 
@@ -3161,6 +3363,7 @@ def _snapshot(
     extension_armed: bool = False,
     extension_memory_score: float = 0.0,
     washout_armed: bool = False,
+    washout_armed_since: date | None = None,
     washout_memory_score: float = 0.0,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
     action_features: tuple[RegimeActionFeature, ...] = (),
@@ -3222,6 +3425,7 @@ def _snapshot(
         extension_armed=extension_armed,
         extension_memory_score=extension_memory_score,
         washout_armed=washout_armed,
+        washout_armed_since=washout_armed_since,
         washout_memory_score=washout_memory_score,
         pressure_features=pressure_features,
         action_features=action_features,

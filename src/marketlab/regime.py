@@ -97,6 +97,9 @@ ACTION_WASHOUT_ARMED_MAX_AGE_DAYS = 15
 WASHOUT_SETUP_TREND_GATE = 0.50
 WASHOUT_SETUP_VOLATILITY_GATE = 0.50
 WASHOUT_SETUP_TRANSMISSION_GATE = 0.35
+ACTION_REDEPLOY_CURRENT_WASHOUT_THRESHOLD = 0.35
+ACTION_REDEPLOY_WASHOUT_RELEASE_THRESHOLD = 0.05
+ACTION_EVENT_FALLBACK_MAX_GAP_SNAPSHOTS = 5
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
 REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
@@ -734,6 +737,7 @@ class RegimeActionForwardOutcome:
     stretch_score: int
     washout_score: int
     action_confidence: str
+    is_action_event: bool
     horizon_days: int
     spy_return: float | None
     qqq_return: float | None
@@ -860,6 +864,8 @@ class RegimeRedeployForwardOutcome:
     action_state: str
     washout_setup_score: float | None
     washout_memory_score: float
+    current_washout_score: float
+    washout_release_score: float
     stabilization_score: float
     redeploy_strength: float
     horizon_days: int
@@ -879,6 +885,8 @@ class RegimeRedeployOutcomeSummaryRow:
     available_count: int
     avg_washout_setup: float | None
     avg_washout_memory: float | None
+    avg_current_washout: float | None
+    avg_washout_release: float | None
     avg_stabilization: float | None
     avg_redeploy_strength: float | None
     avg_spy_return: float | None
@@ -1125,6 +1133,7 @@ class _SetupMemorySpec:
     persistence_window: int
     persistence_hits: int
     max_age_days: int
+    refresh_grace_on_hit: bool = False
 
 
 _EXTENSION_MEMORY_SPEC = _SetupMemorySpec(
@@ -1142,6 +1151,7 @@ _WASHOUT_MEMORY_SPEC = _SetupMemorySpec(
     persistence_window=WASHOUT_ARM_PERSISTENCE_WINDOW,
     persistence_hits=WASHOUT_ARM_PERSISTENCE_HITS,
     max_age_days=ACTION_WASHOUT_ARMED_MAX_AGE_DAYS,
+    refresh_grace_on_hit=True,
 )
 
 
@@ -2209,6 +2219,39 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             _washout_armed_read(action),
         ]
     )
+    current_washout_score = snapshot.washout_pressure_score or 0.0
+    rows.append(
+        [
+            "current_washout",
+            _gate_value(
+                score=current_washout_score,
+                threshold=ACTION_REDEPLOY_CURRENT_WASHOUT_THRESHOLD,
+            ),
+            (
+                "broad washout opportunity remains"
+                if current_washout_score >= ACTION_REDEPLOY_CURRENT_WASHOUT_THRESHOLD
+                else "broad washout opportunity has cleared"
+            ),
+        ]
+    )
+    washout_release = _washout_release_score(
+        action=action,
+        current_setup_score=snapshot.washout_setup_score or 0.0,
+    )
+    rows.append(
+        [
+            "washout_release",
+            _gate_value(
+                score=washout_release,
+                threshold=ACTION_REDEPLOY_WASHOUT_RELEASE_THRESHOLD,
+            ),
+            (
+                "structured washout has released from its remembered peak"
+                if washout_release >= ACTION_REDEPLOY_WASHOUT_RELEASE_THRESHOLD
+                else "structured washout remains near its remembered peak"
+            ),
+        ]
+    )
     rows.append(
         [
             "stabilization",
@@ -2409,7 +2452,7 @@ def _action_decision_read(action: RegimeActionState) -> str:
     if action.state == "scale_down_protect":
         return "armed extension confirmed by lifecycle deterioration"
     if action.state == "scale_up_redeploy":
-        return "armed washout confirmed by stabilization"
+        return "armed washout, current opportunity, release, and stabilization confirmed"
     if action.action_path == "regime_break_warning":
         return "warning only; broad deterioration without armed extension"
     if action.action_path == "volatility_only_warning":
@@ -2420,6 +2463,10 @@ def _action_decision_read(action: RegimeActionState) -> str:
         return "redeploy blocked by credit/liquidity stress"
     if action.reason.startswith("Redeploy setup and confirmation passed"):
         return "redeploy gates passed; combined strength below threshold"
+    if "current broad washout has already cleared" in action.reason:
+        return "stabilization visible; current washout opportunity has cleared"
+    if "wait for pressure to release" in action.reason:
+        return "stabilization visible; washout has not released from its peak"
     if action.reason.startswith("Washout setup is armed"):
         return "washout armed; strong/broad stabilization incomplete"
     if action.reason.startswith("Stabilization is visible"):
@@ -2541,7 +2588,7 @@ def _washout_armed_value(action: RegimeActionState) -> str:
     return (
         f"{'yes' if action.washout_armed else 'expired'}; "
         f"since {action.washout_armed_since.isoformat()}; "
-        f"age {age}; {hits}; "
+        f"grace age {age}; {hits}; "
         f"score {_format_pressure_score(action.washout_memory_score)}"
     )
 
@@ -2555,7 +2602,10 @@ def _washout_armed_read(action: RegimeActionState) -> str:
             if action.washout_armed_decay is None
             else _format_pressure_score(action.washout_armed_decay)
         )
-        return f"{_washout_arm_rule_read(action)}; decay {decay}; supports redeploy"
+        return (
+            f"{_washout_arm_rule_read(action)}; grace decay {decay}; "
+            "grace starts after the latest qualifying stress snapshot"
+        )
     if action.washout_armed_since is not None:
         return f"{_washout_arm_rule_read(action)}; prior washout setup expired"
     return (
@@ -2580,6 +2630,17 @@ def _washout_arm_rule_read(action: RegimeActionState) -> str:
             f"threshold {WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD:.2f})"
         )
     return "not armed by current washout rule"
+
+
+def _washout_release_score(
+    *,
+    action: RegimeActionState | RegimeSnapshot,
+    current_setup_score: float,
+) -> float:
+    peak_score = action.washout_armed_source_strength
+    if not action.washout_armed or peak_score is None:
+        return 0.0
+    return max(0.0, peak_score - current_setup_score)
 
 
 def _action_state_label(state: str) -> str:
@@ -3554,7 +3615,21 @@ def derive_regime_action_state(
         protect_gate.extension_strength,
         protect_gate.regime_break_strength,
     )
-    redeploy_strength = math.sqrt(washout_memory.effective_score * stabilization_score)
+    current_washout_score = _action_setup_score(
+        snapshot.washout_pressure_score,
+        fallback_evidence_count=len(washout_evidence),
+    )
+    washout_release = _washout_release_from_peak(
+        current_setup_score=washout_setup_score,
+        washout_memory=washout_memory,
+    )
+    current_washout_ready = (
+        current_washout_score >= ACTION_REDEPLOY_CURRENT_WASHOUT_THRESHOLD
+    )
+    washout_release_ready = (
+        washout_release >= ACTION_REDEPLOY_WASHOUT_RELEASE_THRESHOLD
+    )
+    redeploy_strength = math.sqrt(current_washout_score * stabilization_score)
     action_score = redeploy_strength - protect_strength
     severe_funding_stress = _severe_funding_stress(signals)
     stabilization_families = _redeploy_stabilization_families(action_modules)
@@ -3564,6 +3639,8 @@ def derive_regime_action_state(
     )
     redeploy_ready = (
         washout_memory.armed
+        and current_washout_ready
+        and washout_release_ready
         and redeploy_confirmation_ready
         and redeploy_strength >= ACTION_STRENGTH_THRESHOLD
     )
@@ -3584,7 +3661,10 @@ def derive_regime_action_state(
             action_features,
             field_name="stabilization_score",
         ) + (_washout_memory_reason(washout_memory),)
-        reason = "Armed washout setup plus stabilization evidence supports staged redeploy"
+        reason = (
+            "Armed prior washout, current opportunity, pressure release, and "
+            "stabilization support staged redeploy"
+        )
     elif protect_ready:
         state = "scale_down_protect"
         action_path = protect_gate.path
@@ -3617,10 +3697,26 @@ def derive_regime_action_state(
             field_name="deterioration_score",
         ) + _protect_gate_evidence(protect_gate)
         reason = protect_gate.reason
-    elif (
-        washout_memory.armed
-        and redeploy_confirmation_ready
-    ):
+    elif washout_memory.armed and redeploy_confirmation_ready and not current_washout_ready:
+        state = "no_change"
+        action_path = None
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = (
+            "Washout setup and stabilization are present, but current broad "
+            "washout has already cleared"
+        )
+    elif washout_memory.armed and redeploy_confirmation_ready and not washout_release_ready:
+        state = "no_change"
+        action_path = None
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = "Washout remains near its remembered peak; wait for pressure to release"
+    elif washout_memory.armed and redeploy_confirmation_ready:
         state = "no_change"
         action_path = None
         evidence = _action_feature_evidence(
@@ -3908,6 +4004,20 @@ def _setup_memory_rows_from_snapshots(
             arm_hit_count = trigger.hit_count
             arm_window = trigger.window
             setup_run_armed = True
+        elif (
+            spec.refresh_grace_on_hit
+            and setup_run_armed
+            and setup_hit
+            and armed_index is not None
+        ):
+            armed_index = index
+            source_strength = max(
+                score
+                for score in (source_strength, setup_score)
+                if score is not None
+            )
+            arm_hit_count = trigger.hit_count
+            arm_window = trigger.window
 
         age = index - armed_index if armed_index is not None else None
         is_armed = age is not None and age <= spec.max_age_days
@@ -4303,6 +4413,17 @@ def _redeploy_confirmation_ready(
         and len(_redeploy_stabilization_families(action_modules))
         >= ACTION_REDEPLOY_CONFIRMATION_MIN_FAMILIES
     )
+
+
+def _washout_release_from_peak(
+    *,
+    current_setup_score: float,
+    washout_memory: RegimeWashoutMemory,
+) -> float:
+    peak_score = washout_memory.armed_source_strength
+    if not washout_memory.armed or peak_score is None:
+        return 0.0
+    return max(0.0, peak_score - current_setup_score)
 
 
 def _protect_gate_evidence(gate: _ProtectGateResult) -> tuple[str, ...]:
@@ -5405,12 +5526,11 @@ def _structured_washout_setup_score(
     module_by_name = {module.name: module for module in modules}
     trend = module_by_name.get("trend_extension")
     volatility = module_by_name.get("vol_complacency")
-    transmission_modules = tuple(
+    fast_transmission_modules = tuple(
         module_by_name.get(name)
         for name in (
             "breadth_fragility",
             "credit_risk_appetite",
-            "liquidity_conditions",
         )
     )
     if trend is None or volatility is None:
@@ -5420,7 +5540,7 @@ def _structured_washout_setup_score(
     transmission_score = max(
         (
             module.washout_score or 0.0
-            for module in transmission_modules
+            for module in fast_transmission_modules
             if module is not None
         ),
         default=0.0,
@@ -6102,21 +6222,32 @@ def compute_regime_action_outcomes(
         raise RegimeError(f"No market regime snapshots found from {start_date} to {end_date}")
 
     histories = _load_histories(symbols=("SPY", "QQQ"), price_root=price_root)
+    prior_snapshots = _load_regime_snapshots_before(
+        source_date=start_date,
+        snapshot_root=snapshot_root,
+        signal_time=SignalTime.EOD,
+        snapshot_version=snapshot_version,
+    )
     snapshot_actions = tuple(
-        (snapshot, _action_state_from_snapshot(snapshot))
-        for snapshot in snapshots
+        (snapshot, _action_state_from_snapshot(snapshot)) for snapshot in snapshots
     )
     actions = tuple(action for _snapshot, action in snapshot_actions)
-    outcomes = tuple(
-        outcome
-        for snapshot, action in snapshot_actions
-        for outcome in _regime_action_outcomes(
-            snapshot=snapshot,
-            action=action,
-            histories=histories,
-            horizons=horizons,
-        )
+    action_event_dates = _action_event_dates(
+        snapshots=snapshots,
+        prior_snapshots=prior_snapshots,
     )
+    outcome_rows: list[RegimeActionForwardOutcome] = []
+    for snapshot, action in snapshot_actions:
+        outcome_rows.extend(
+            _regime_action_outcomes(
+                snapshot=snapshot,
+                action=action,
+                is_action_event=snapshot.source_date in action_event_dates,
+                histories=histories,
+                horizons=horizons,
+            )
+        )
+    outcomes = tuple(outcome_rows)
     frequency_rows = summarize_regime_action_frequency(actions)
     summary_rows = summarize_regime_action_outcomes(outcomes)
     frequency_table = format_regime_action_frequency(frequency_rows)
@@ -6137,6 +6268,46 @@ def compute_regime_action_outcomes(
         frequency_table=frequency_table,
         table=table,
     )
+
+
+def _action_event_dates(
+    *,
+    snapshots: tuple[RegimeSnapshot, ...],
+    prior_snapshots: tuple[RegimeSnapshot, ...],
+) -> set[date]:
+    target_dates = {snapshot.source_date for snapshot in snapshots}
+    seen_lifecycles: set[tuple[str, str | None, date]] = set()
+    last_fallback_index: dict[str, int] = {}
+    event_dates: set[date] = set()
+    history = tuple(sorted((*prior_snapshots, *snapshots), key=lambda row: row.source_date))
+    for index, snapshot in enumerate(history):
+        state = snapshot.action_state
+        if state == "no_change":
+            continue
+        lifecycle = _action_lifecycle_key(snapshot)
+        if lifecycle is not None:
+            is_event = lifecycle not in seen_lifecycles
+            seen_lifecycles.add(lifecycle)
+        else:
+            last_index = last_fallback_index.get(state)
+            is_event = (
+                last_index is None
+                or index - last_index - 1 > ACTION_EVENT_FALLBACK_MAX_GAP_SNAPSHOTS
+            )
+            last_fallback_index[state] = index
+        if is_event and snapshot.source_date in target_dates:
+            event_dates.add(snapshot.source_date)
+    return event_dates
+
+
+def _action_lifecycle_key(
+    snapshot: RegimeSnapshot,
+) -> tuple[str, str | None, date] | None:
+    if snapshot.action_state == "scale_up_redeploy" and snapshot.washout_armed_since:
+        return (snapshot.action_state, snapshot.action_path, snapshot.washout_armed_since)
+    if snapshot.action_state == "scale_down_protect" and snapshot.extension_armed_since:
+        return (snapshot.action_state, snapshot.action_path, snapshot.extension_armed_since)
+    return None
 
 
 def _action_state_from_snapshot(snapshot: RegimeSnapshot) -> RegimeActionState:
@@ -6648,9 +6819,12 @@ def summarize_regime_action_outcomes(
 ) -> tuple[RegimeActionOutcomeSummaryRow, ...]:
     """Summarize forward market outcomes by rare-action state."""
 
-    buckets: dict[str, list[RegimeActionForwardOutcome]] = {"all": list(outcomes)}
+    buckets: dict[str, list[RegimeActionForwardOutcome]] = {
+        "baseline:all_days": list(outcomes)
+    }
     for outcome in outcomes:
-        buckets.setdefault(f"action:{outcome.action_state}", []).append(outcome)
+        if outcome.is_action_event:
+            buckets.setdefault(f"event:{outcome.action_state}", []).append(outcome)
 
     rows: list[RegimeActionOutcomeSummaryRow] = []
     for bucket in sorted(buckets):
@@ -6784,6 +6958,12 @@ def summarize_regime_redeploy_outcomes(
                     ),
                     avg_washout_memory=_average(
                         outcome.washout_memory_score for outcome in horizon_outcomes
+                    ),
+                    avg_current_washout=_average(
+                        outcome.current_washout_score for outcome in horizon_outcomes
+                    ),
+                    avg_washout_release=_average(
+                        outcome.washout_release_score for outcome in horizon_outcomes
                     ),
                     avg_stabilization=_average(
                         outcome.stabilization_score for outcome in horizon_outcomes
@@ -7013,7 +7193,7 @@ def format_regime_action_outcome_summary(
         [
             "bucket",
             "horizon",
-            "actions",
+            "samples",
             "available",
             "avg_spy",
             "avg_qqq",
@@ -7111,8 +7291,10 @@ def format_regime_redeploy_outcome_summary(
             "horizon",
             "signals",
             "available",
-            "washout",
+            "setup",
             "memory",
+            "current",
+            "release",
             "stabilize",
             "strength",
             "avg_spy",
@@ -7130,6 +7312,8 @@ def format_regime_redeploy_outcome_summary(
                 str(row.available_count),
                 _format_pressure_score(row.avg_washout_setup),
                 _format_pressure_score(row.avg_washout_memory),
+                _format_pressure_score(row.avg_current_washout),
+                _format_pressure_score(row.avg_washout_release),
                 _format_pressure_score(row.avg_stabilization),
                 _format_pressure_score(row.avg_redeploy_strength),
                 _format_percent(row.avg_spy_return),
@@ -7331,7 +7515,9 @@ def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
     header_separator = "  ".join("=" * width for width in widths)
     group_separator = "  ".join("-" * width for width in widths)
     lines = [
-        "  ".join(value.ljust(widths[index]) for index, value in enumerate(rows[0])),
+        "  ".join(
+            value.ljust(widths[index]) for index, value in enumerate(rows[0])
+        ).rstrip(),
         header_separator,
     ]
     previous_group: str | None = None
@@ -7341,6 +7527,7 @@ def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
             lines.append(group_separator)
         lines.append(
             "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+            .rstrip()
         )
         previous_group = current_group
     return "\n".join(lines)
@@ -7867,6 +8054,7 @@ def _regime_action_outcomes(
     *,
     snapshot: RegimeSnapshot,
     action: RegimeActionState,
+    is_action_event: bool,
     histories: dict[str, tuple[DailyPriceObservation, ...]],
     horizons: tuple[int, ...],
 ) -> tuple[RegimeActionForwardOutcome, ...]:
@@ -7882,6 +8070,7 @@ def _regime_action_outcomes(
             stretch_score=action.stretch_score,
             washout_score=action.washout_score,
             action_confidence=action.confidence,
+            is_action_event=is_action_event,
             horizon_days=horizon,
             spy_return=_forward_return(spy_history, index=spy_index, horizon=horizon),
             qqq_return=_forward_return(qqq_history, index=qqq_index, horizon=horizon),
@@ -7940,6 +8129,11 @@ def _regime_redeploy_outcomes(
             action_state=snapshot.action_state,
             washout_setup_score=snapshot.washout_setup_score,
             washout_memory_score=snapshot.washout_memory_score,
+            current_washout_score=snapshot.washout_pressure_score or 0.0,
+            washout_release_score=_washout_release_score(
+                action=snapshot,
+                current_setup_score=snapshot.washout_setup_score or 0.0,
+            ),
             stabilization_score=snapshot.stabilization_score,
             redeploy_strength=snapshot.redeploy_strength,
             horizon_days=horizon,
@@ -8075,6 +8269,10 @@ def _redeploy_validation_bucket(snapshot: RegimeSnapshot) -> str:
         return "redeploy:action"
     if snapshot.action_reason.startswith("Redeploy setup present, but"):
         return "redeploy:funding_blocked"
+    if "current broad washout has already cleared" in snapshot.action_reason:
+        return "redeploy:current_washout_cleared"
+    if "wait for pressure to release" in snapshot.action_reason:
+        return "redeploy:washout_not_released"
     has_setup = snapshot.washout_armed
     has_stabilization = _redeploy_confirmation_ready(
         stabilization_score=stabilization,
@@ -9120,7 +9318,9 @@ def _format_table(rows: list[list[str]]) -> str:
     widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
     lines = []
     for row_index, row in enumerate(rows):
-        lines.append("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+        lines.append(
+            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
+        )
         if row_index == 0:
             lines.append("  ".join("-" * width for width in widths))
     return "\n".join(lines)

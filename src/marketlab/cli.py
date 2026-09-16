@@ -3162,11 +3162,15 @@ def _echo_regime_action_outcome_result(result: RegimeActionOutcomeResult) -> Non
 def _regime_action_outcome_report_text(result: RegimeActionOutcomeResult) -> str:
     return _format_outcome_tables(
         (
-            ("regime_action_count", len(result.actions)),
-            ("regime_action_outcome_count", len(result.outcomes)),
+            ("regime_action_day_count", len(result.actions)),
+            ("regime_action_event_count", _regime_action_event_count(result)),
             (
-                "available_regime_action_outcome_count",
-                _available_regime_action_outcome_count(result),
+                "regime_action_event_outcome_count",
+                _regime_action_event_outcome_count(result),
+            ),
+            (
+                "available_regime_action_event_outcome_count",
+                _available_regime_action_event_outcome_count(result),
             ),
         ),
         frequency_table=result.frequency_table,
@@ -3378,11 +3382,29 @@ def _available_regime_outcome_count(result: RegimeOutcomeResult) -> int:
     )
 
 
-def _available_regime_action_outcome_count(result: RegimeActionOutcomeResult) -> int:
+def _regime_action_event_count(result: RegimeActionOutcomeResult) -> int:
+    return len(
+        {
+            outcome.source_date
+            for outcome in result.outcomes
+            if outcome.is_action_event
+        }
+    )
+
+
+def _regime_action_event_outcome_count(result: RegimeActionOutcomeResult) -> int:
+    return sum(1 for outcome in result.outcomes if outcome.is_action_event)
+
+
+def _available_regime_action_event_outcome_count(
+    result: RegimeActionOutcomeResult,
+) -> int:
     return sum(
         1
         for outcome in result.outcomes
-        if outcome.spy_return is not None and outcome.qqq_return is not None
+        if outcome.is_action_event
+        and outcome.spy_return is not None
+        and outcome.qqq_return is not None
     )
 
 

@@ -2844,6 +2844,7 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
                     stretch_score=4,
                     washout_score=0,
                     action_confidence="high",
+                    is_action_event=True,
                     horizon_days=20,
                     spy_return=-0.02,
                     qqq_return=-0.04,
@@ -2860,7 +2861,7 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
             ),
             summary_rows=(
                 RegimeActionOutcomeSummaryRow(
-                    bucket="action:scale_down_protect",
+                    bucket="event:scale_down_protect",
                     horizon_days=20,
                     action_count=1,
                     available_count=1,
@@ -2871,7 +2872,7 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
                 ),
             ),
             frequency_table="action_state        count\nscale_down_protect  1",
-            table="bucket                     horizon\naction:scale_down_protect  20d",
+            table="bucket                    horizon\nevent:scale_down_protect  20d",
         )
 
     snapshot_root_arg = snapshot_root
@@ -2903,13 +2904,14 @@ def test_regime_outcomes_defaults_to_action_frequency_and_summary_tables(
     )
 
     assert result.exit_code == 0
-    assert "regime_action_count=1" in result.output
-    assert "regime_action_outcome_count=1" in result.output
-    assert "available_regime_action_outcome_count=1" in result.output
+    assert "regime_action_day_count=1" in result.output
+    assert "regime_action_event_count=1" in result.output
+    assert "regime_action_event_outcome_count=1" in result.output
+    assert "available_regime_action_event_outcome_count=1" in result.output
     assert "frequency_table:" in result.output
     assert "summary_table:" in result.output
     assert "scale_down_protect  1" in result.output
-    assert "action:scale_down_protect  20d" in result.output
+    assert "event:scale_down_protect  20d" in result.output
 
 
 def test_regime_outcomes_posture_outputs_summary_table(
@@ -3057,10 +3059,12 @@ def test_regime_outcomes_redeploy_outputs_summary_table(
                     source_date=date(2026, 8, 1),
                     price_date=date(2026, 8, 1),
                     bucket="redeploy:action",
-                        action_state="scale_up_redeploy",
-                        washout_setup_score=0.72,
-                        washout_memory_score=0.74,
-                        stabilization_score=0.70,
+                    action_state="scale_up_redeploy",
+                    washout_setup_score=0.72,
+                    washout_memory_score=0.74,
+                    current_washout_score=0.58,
+                    washout_release_score=0.12,
+                    stabilization_score=0.70,
                     redeploy_strength=0.71,
                     horizon_days=20,
                     spy_return=0.04,
@@ -3074,10 +3078,12 @@ def test_regime_outcomes_redeploy_outputs_summary_table(
                     bucket="redeploy:action",
                     horizon_days=20,
                     redeploy_count=1,
-                        available_count=1,
-                        avg_washout_setup=0.72,
-                        avg_washout_memory=0.74,
-                        avg_stabilization=0.70,
+                    available_count=1,
+                    avg_washout_setup=0.72,
+                    avg_washout_memory=0.74,
+                    avg_current_washout=0.58,
+                    avg_washout_release=0.12,
+                    avg_stabilization=0.70,
                     avg_redeploy_strength=0.71,
                     avg_spy_return=0.04,
                     avg_qqq_return=0.05,

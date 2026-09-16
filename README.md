@@ -122,12 +122,17 @@ indexes remain above their 200-day trends.
 Washout memory is intentionally faster. It arms from either one strong snapshot
 (`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
 the last 5 saved trading snapshots). Washout setup requires trend damage, volatility stress, and
-at least one transmission channel from breadth, credit, or liquidity. A continuous setup run arms
-only once and expires after 15 saved trading snapshots; it must reset before it can arm again.
-Redeploy then requires strong stabilization of at least `0.75` across at least two independent
-families. A family counts as confirming at `0.35`. Geometric strength cannot compensate for an
-unarmed washout or weak/narrow confirmation, and late protect evidence cannot block a valid
-redeploy.
+acute transmission through breadth or credit; slower NFCI liquidity data remains context and a
+funding-stress veto, but cannot establish tactical washout by itself. Qualifying stress refreshes
+the memory, so its 15-snapshot grace period starts after the last qualifying stress snapshot, not
+the first setup date.
+
+Redeploy then requires four distinct gates: armed prior washout, current broad washout of at least
+`0.35`, at least a `0.05` release from the remembered structured-washout peak, and stabilization of
+at least `0.75` across at least two independent families. A family counts as confirming at `0.35`.
+Redeploy strength uses current broad washout and stabilization; remembered setup establishes phase
+eligibility but cannot substitute for a current opportunity. Late protect evidence cannot block a
+valid redeploy.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
@@ -187,6 +192,12 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 
 Add `--save` to write the same report to a versioned canonical text file such as
 `workbooks/outcomes-action-v1.0.txt`.
+
+The default action outcome table uses every saved date only for the `baseline:all_days` row. Protect
+and redeploy rows use the first action day from each distinct armed-setup lifecycle, so gaps between
+confirmations do not count the same market episode repeatedly. Older snapshots without lifecycle
+fields fall back to grouping same-action rows separated by no more than five saved snapshots. The
+separate frequency table still reports daily action-state counts.
 
 Replay headline regime labels, held posture, protect/redeploy diagnostics, normalized pressure
 buckets, SPY correction episodes, market-signal rows, or policy states:

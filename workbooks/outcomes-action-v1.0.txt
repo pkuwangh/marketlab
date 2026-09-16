@@ -1,0 +1,35 @@
+outcome_group=action
+artifact_version=v1.0
+snapshot_version=v1.0
+outcome_start=2016-01-01
+outcome_end=2026-06-01
+outcome_horizons=20,40,65
+generated_at=2026-09-16T21:50:00+00:00
+command=marketlab regime outcomes --by action --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
+
+regime_action_day_count=2617
+regime_action_event_count=22
+regime_action_event_outcome_count=66
+available_regime_action_event_outcome_count=66
+
+frequency_table:
+action_state        count  share
+------------------  -----  -----
+no_change           2561   97.9%
+scale_down_protect  27     1.0%
+scale_up_redeploy   29     1.1%
+
+summary_table:
+bucket                    horizon  samples  available  avg_spy  avg_qqq  spy_dd  qqq_dd
+========================  =======  =======  =========  =======  =======  ======  ======
+baseline:all_days         20d      2617     2617       +1.3%    +1.7%    -2.5%   -3.1%
+baseline:all_days         40d      2617     2617       +2.5%    +3.4%    -3.5%   -4.4%
+baseline:all_days         65d      2617     2617       +4.1%    +5.5%    -4.4%   -5.5%
+------------------------  -------  -------  ---------  -------  -------  ------  ------
+event:scale_down_protect  20d      14       14         +0.6%    +0.3%    -1.8%   -2.9%
+event:scale_down_protect  40d      14       14         +0.4%    +2.0%    -4.5%   -4.9%
+event:scale_down_protect  65d      14       14         +0.2%    +2.5%    -7.4%   -7.4%
+------------------------  -------  -------  ---------  -------  -------  ------  ------
+event:scale_up_redeploy   20d      8        8          +5.1%    +5.1%    -1.9%   -2.3%
+event:scale_up_redeploy   40d      8        8          +5.3%    +5.8%    -3.4%   -4.9%
+event:scale_up_redeploy   65d      8        8          +6.3%    +7.1%    -4.6%   -6.4%

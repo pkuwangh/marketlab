@@ -185,19 +185,22 @@ Regime actions use the ordered same-version snapshot chain for bounded extension
 memory. Single-date snapshot and daily workflows require prior history; backfill establishes and
 recomputes that chain in date order. Extension setup is a gated combination of trend extension and
 volatility complacency. Washout setup is a gated combination of trend damage, volatility stress,
-and the strongest available breadth/credit/liquidity transmission channel. Protect requires an
-armed extension plus lifecycle confirmation; redeploy requires an armed washout plus stabilization.
-Washout setup memory arms once per continuous setup run and replays the complete same-version
-snapshot chain so an expired run cannot re-arm merely because a bounded history window advanced.
-Redeploy requires strong aggregate stabilization across at least two action families. Washout phase
-blocks late protect action, and eligible redeploy is not arbitrated against an ineligible raw
-protect-strength score.
+and acute breadth or credit transmission. Qualifying washout observations refresh memory, so its
+bounded grace period starts after the latest qualifying stress row. Protect requires an armed
+extension plus lifecycle confirmation. Redeploy separately requires armed prior washout, residual
+current broad washout, release from the remembered setup peak, and strong stabilization across at
+least two action families. Washout phase blocks late protect action, and eligible redeploy is not
+arbitrated against an ineligible raw protect-strength score.
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
-saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action;
-protect and redeploy modes diagnose their setup/confirmation gates, protect also groups repeated
-action days into alert clusters, posture evaluates the held state, and episode evaluates correction
-coverage. Additional `--by` options cover regime, pressure, signal, and policy. `regime export`
+saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action: the
+baseline uses all dates, while protect/redeploy outcome rows use only the first action date from
+each distinct armed-setup lifecycle; older snapshots without lifecycle fields group same-action
+rows separated by no more than five saved snapshots. The frequency table remains daily. Protect
+and redeploy modes
+diagnose their setup/confirmation gates, protect also groups repeated action days into alert
+clusters, posture evaluates the held state, and episode evaluates correction coverage. Additional
+`--by` options cover regime, pressure, signal, and policy. `regime export`
 writes saved regime snapshots into stable `workbooks/regime.xlsx` and `workbooks/regime.csv` files
 so Excel charts can be maintained manually and refreshed in place.
 
