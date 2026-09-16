@@ -187,8 +187,11 @@ recomputes that chain in date order. Extension setup is a gated combination of t
 volatility complacency. Washout setup is a gated combination of trend damage, volatility stress,
 and the strongest available breadth/credit/liquidity transmission channel. Protect requires an
 armed extension plus lifecycle confirmation; redeploy requires an armed washout plus stabilization.
-Washout phase blocks late protect action, and eligible redeploy is not arbitrated against an
-ineligible raw protect-strength score.
+Washout setup memory arms once per continuous setup run and replays the complete same-version
+snapshot chain so an expired run cannot re-arm merely because a bounded history window advanced.
+Redeploy requires strong aggregate stabilization across at least two action families. Washout phase
+blocks late protect action, and eligible redeploy is not arbitrated against an ineligible raw
+protect-strength score.
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action;

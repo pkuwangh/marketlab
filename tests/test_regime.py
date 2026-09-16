@@ -26,6 +26,7 @@ from marketlab.regime import (
     RegimeWashoutMemory,
     _structured_extension_setup_score,
     _structured_washout_setup_score,
+    _washout_memory_from_snapshot_chain,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
@@ -503,7 +504,7 @@ def test_format_regime_key_signals_explains_failed_protect_gates() -> None:
     assert "low washout; redeploy setup not armed" in summary_table
     assert "washout_armed" in summary_table
     assert "stabilization" in summary_table
-    assert "0.19 < 0.35" in summary_table
+    assert "0.19 < 0.75" in summary_table
     assert "low redeploy confirmation; families none" in summary_table
     assert "strength" in summary_table
     assert "event_vol" in summary_table
@@ -1333,6 +1334,30 @@ def test_washout_memory_arms_from_fast_persistence_and_decays() -> None:
     assert decayed.effective_score > 0.40
 
 
+def test_washout_memory_does_not_rearm_during_one_continuous_setup_run() -> None:
+    start_date = date(2026, 1, 1)
+    snapshots = tuple(
+        _snapshot(
+            source_date=start_date + timedelta(days=offset),
+            regime="risk_off",
+            score=-4,
+            washout_setup_score=0.80,
+        )
+        for offset in range(30)
+    )
+
+    memory = _washout_memory_from_snapshot_chain(
+        snapshot=snapshots[-1],
+        prior_snapshots=snapshots[:-1],
+        require_prior_history=True,
+    )
+
+    assert memory.armed is False
+    assert memory.status == "expired"
+    assert memory.armed_since == start_date
+    assert memory.armed_age == 29
+
+
 def test_redeploy_requires_armed_washout_before_stabilization_can_confirm() -> None:
     source_date = date(2026, 1, 1)
     snapshot = _snapshot(
@@ -1395,6 +1420,64 @@ def test_redeploy_requires_armed_washout_before_stabilization_can_confirm() -> N
     assert with_memory.washout_armed is True
     assert with_memory.state == "scale_up_redeploy"
     assert "washout setup was armed" in with_memory.reason
+
+
+def test_redeploy_requires_stabilization_across_multiple_families() -> None:
+    source_date = date(2026, 1, 1)
+    snapshot = _snapshot(
+        source_date=source_date,
+        regime="risk_off",
+        score=-5,
+        spy_return_20d=-0.10,
+        qqq_return_20d=-0.12,
+        washout_pressure_score=0.80,
+        washout_setup_score=0.80,
+        vix_close=34.0,
+        vvix_close=130.0,
+    )
+    action = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=(
+            _market_signal(
+                source_date=source_date,
+                family="volatility",
+                name="price_proxy",
+                status="stressed",
+                score=-1,
+                value="VIX 34.0",
+                details={"vix_return_5d": -0.20},
+            ),
+            _market_signal(
+                source_date=source_date,
+                family="volatility",
+                name="vol_of_vol",
+                status="stressed",
+                score=-1,
+                value=130.0,
+                details={"vvix_return_5d": -0.20},
+            ),
+        ),
+        washout_memory=RegimeWashoutMemory(
+            source_date=source_date,
+            status="armed",
+            armed=True,
+            armed_since=source_date - timedelta(days=3),
+            armed_age=3,
+            armed_decay=0.80,
+            armed_source_strength=0.80,
+            arm_rule="strong",
+            arm_hit_count=1,
+            arm_window=1,
+            effective_score=0.64,
+            snapshot_count=4,
+        ),
+    )
+
+    assert action.stabilization_score >= 0.75
+    assert action.redeploy_strength >= 0.55
+    assert action.state == "no_change"
+    assert "not yet strong and broad" in action.reason
+    assert "families volatility" in action.reason
 
 
 def test_derive_regime_action_state_treats_regime_break_as_warning_context() -> None:

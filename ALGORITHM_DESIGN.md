@@ -250,7 +250,10 @@ Implemented v1.0 direction:
 - Apply the same sequencing principle to redeploy with faster parameters: arm washout from either
   `washout_setup >= 0.75` on one snapshot or `washout_setup >= 0.60` on at least 2 of the last
   5 saved trading snapshots, retain it for up to 15 snapshots with decay, and require current
-  stabilization of at least `0.35`.
+  stabilization of at least `0.75` across at least two families. Each family begins confirming at
+  `0.35`.
+- Arm once per continuous setup run. A setup that remains elevated past expiration cannot silently
+  re-arm as the history window advances; it must first reset below the persistence threshold.
 
 Open research:
 
@@ -285,14 +288,17 @@ Implemented v1.0 direction:
 - Treat washout as `redeploy_setup`.
 - Require concurrent trend damage, volatility stress, and at least one transmission channel from
   breadth, credit, or liquidity; unrelated neutral modules no longer dilute a valid setup.
-- Require stabilization confirmation before redeploy: volatility cooling, breadth stabilizing, or
-  credit no longer worsening.
+- Require strong, broad stabilization confirmation before redeploy. The current gate requires an
+  aggregate score of at least `0.75` across at least two of trend, volatility, breadth, credit, and
+  liquidity; one strong family cannot trigger redeploy alone.
 - Arm washout setup before applying stabilization and strength gates so high stabilization cannot
   geometrically compensate for a setup that never existed.
 - Let valid redeploy confirmation win once washout is armed; an ineligible raw protect score does
   not block the phase transition.
-- The 2016-2026 replay increases redeploy from 11 COVID-concentrated action rows to 148 rows spread
-  across every calendar year in the sample. This is broader coverage, not proof of profitability.
+- An intermediate 2016-2026 replay increased redeploy from 11 COVID-concentrated action rows to
+  148 rows, but their lower forward return and larger adverse excursion showed that the gate had
+  become too permissive. Requiring strong multi-family stabilization reduces the reviewed replay
+  to 39 action rows across 19 washout runs. This is broader coverage, not proof of profitability.
 
 Open research:
 

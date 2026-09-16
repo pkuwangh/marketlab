@@ -97,10 +97,6 @@ ACTION_WASHOUT_ARMED_MAX_AGE_DAYS = 15
 WASHOUT_SETUP_TREND_GATE = 0.50
 WASHOUT_SETUP_VOLATILITY_GATE = 0.50
 WASHOUT_SETUP_TRANSMISSION_GATE = 0.35
-ACTION_MEMORY_MAX_AGE_DAYS = max(
-    ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
-    ACTION_WASHOUT_ARMED_MAX_AGE_DAYS,
-)
 REGIME_FEATURE_VERSION = versioned_label("market_regime_features", REGIME_VERSION)
 REGIME_MODEL_VERSION = versioned_label("market_regime_score", REGIME_VERSION)
 REGIME_ACTION_VERSION = versioned_label("regime_action", REGIME_VERSION)
@@ -120,7 +116,8 @@ ACTION_EXTENSION_SETUP_THRESHOLD = 0.60
 ACTION_REGIME_BREAK_CONTEXT_THRESHOLD = 0.70
 ACTION_CONFIRMATION_THRESHOLD = 0.35
 ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES = 2
-ACTION_REDEPLOY_STABILIZATION_THRESHOLD = 0.35
+ACTION_REDEPLOY_STABILIZATION_THRESHOLD = 0.75
+ACTION_REDEPLOY_CONFIRMATION_MIN_FAMILIES = 2
 ACTION_SPY_ROLLOVER_FULL_AT = 0.03
 ACTION_QQQ_ROLLOVER_FULL_AT = 0.04
 PROTECTED_POSTURE_MAX_AGE_DAYS = 65
@@ -1449,9 +1446,8 @@ def compute_regime_snapshot(
         workflow="Market regime snapshot",
     )
     signal_time = _require_eod_signal_time(signal_time, workflow="Market regime snapshot")
-    prior_snapshots = _load_recent_regime_snapshots_before(
+    prior_snapshots = _load_regime_snapshots_before(
         source_date=source_date,
-        lookback_days=ACTION_MEMORY_MAX_AGE_DAYS,
         snapshot_root=snapshot_root,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
@@ -1543,9 +1539,8 @@ def compute_regime_backfill(
     signal_snapshot_paths: list[Path] = []
     skipped_snapshot_paths: list[Path] = []
     action_history_snapshots = list(
-        _load_recent_regime_snapshots_before(
+        _load_regime_snapshots_before(
             source_date=start_date,
-            lookback_days=ACTION_MEMORY_MAX_AGE_DAYS,
             snapshot_root=snapshot_root,
             signal_time=signal_time,
             snapshot_version=snapshot_version,
@@ -2224,10 +2219,7 @@ def format_regime_key_signals(result: RegimeSnapshotResult) -> str:
             _action_confirmation_read(
                 label="redeploy",
                 score=action.stabilization_score,
-                families=_confirming_families(
-                    modules=action.action_modules,
-                    field_name="stabilization_score",
-                ),
+                families=_redeploy_stabilization_families(action.action_modules),
             ),
         ]
     )
@@ -2394,10 +2386,13 @@ def _action_strength_read(action: RegimeActionState) -> str:
             return "redeploy strength is diagnostic; washout setup not armed"
         if (
             action.washout_armed
-            and action.stabilization_score < ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+            and not _redeploy_confirmation_ready(
+                stabilization_score=action.stabilization_score,
+                action_modules=action.action_modules,
+            )
             and action.redeploy_strength >= ACTION_STRENGTH_THRESHOLD - 0.10
         ):
-            return "redeploy strength is diagnostic; stabilization gate not passed"
+            return "redeploy strength is diagnostic; strong/broad stabilization not passed"
         return _inactive_action_strength_read("redeploy", action.redeploy_strength)
     return "balanced below action threshold"
 
@@ -2426,7 +2421,7 @@ def _action_decision_read(action: RegimeActionState) -> str:
     if action.reason.startswith("Redeploy setup and confirmation passed"):
         return "redeploy gates passed; combined strength below threshold"
     if action.reason.startswith("Washout setup is armed"):
-        return "washout armed; stabilization below gate"
+        return "washout armed; strong/broad stabilization incomplete"
     if action.reason.startswith("Stabilization is visible"):
         return "stabilization visible; washout not armed"
     if action.reason.startswith("Setup pressure present"):
@@ -3562,9 +3557,14 @@ def derive_regime_action_state(
     redeploy_strength = math.sqrt(washout_memory.effective_score * stabilization_score)
     action_score = redeploy_strength - protect_strength
     severe_funding_stress = _severe_funding_stress(signals)
+    stabilization_families = _redeploy_stabilization_families(action_modules)
+    redeploy_confirmation_ready = _redeploy_confirmation_ready(
+        stabilization_score=stabilization_score,
+        action_modules=action_modules,
+    )
     redeploy_ready = (
         washout_memory.armed
-        and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+        and redeploy_confirmation_ready
         and redeploy_strength >= ACTION_STRENGTH_THRESHOLD
     )
     protect_ready = protect_gate.path is not None and not washout_memory.armed
@@ -3619,7 +3619,7 @@ def derive_regime_action_state(
         reason = protect_gate.reason
     elif (
         washout_memory.armed
-        and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+        and redeploy_confirmation_ready
     ):
         state = "no_change"
         action_path = None
@@ -3628,6 +3628,20 @@ def derive_regime_action_state(
             field_name="stabilization_score",
         ) + (_washout_memory_reason(washout_memory),)
         reason = "Redeploy setup and confirmation passed, but strength is below its gate"
+    elif (
+        washout_memory.armed
+        and stabilization_score >= ACTION_CONFIRMATION_THRESHOLD
+    ):
+        state = "no_change"
+        action_path = None
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="stabilization_score",
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = (
+            "Washout setup is armed, but stabilization is not yet strong and broad "
+            f"(families {_family_list_read(stabilization_families)})"
+        )
     elif washout_memory.armed:
         state = "no_change"
         action_path = None
@@ -3974,7 +3988,17 @@ def _setup_memory_from_snapshot_chain(
                 snapshot_version=snapshot.snapshot_version,
             )
         )
-    chain = (*prior_chain[-spec.max_age_days :], snapshot)
+    history = (*prior_chain, snapshot)
+    replay_start = max(0, len(history) - spec.max_age_days - spec.persistence_window)
+    # Do not begin in the middle of a continuous setup run. That would mistake
+    # an expired run for a fresh arm whenever the bounded replay window advanced.
+    while (
+        replay_start > 0
+        and _setup_score_is_hit(history[replay_start], spec=spec)
+        and _setup_score_is_hit(history[replay_start - 1], spec=spec)
+    ):
+        replay_start -= 1
+    chain = history[replay_start:]
     rows = _setup_memory_rows_from_snapshots(chain, spec=spec)
     memory = rows[snapshot.source_date]
     if not prior_chain and not memory.armed:
@@ -3999,6 +4023,11 @@ def _optional_clamped_score(score: float | None) -> float | None:
     if score is None:
         return None
     return _clamp(score, 0.0, 1.0)
+
+
+def _setup_score_is_hit(snapshot: RegimeSnapshot, *, spec: _SetupMemorySpec) -> bool:
+    score = _optional_clamped_score(getattr(snapshot, spec.score_field))
+    return score is not None and score >= spec.persistence_threshold
 
 
 def _setup_arm_trigger_for_scores(
@@ -4252,6 +4281,27 @@ def _confirming_families(
         module.family
         for module in modules
         if getattr(module, field_name) >= ACTION_CONFIRMATION_THRESHOLD
+    )
+
+
+def _redeploy_stabilization_families(
+    action_modules: tuple[RegimeActionModule, ...],
+) -> tuple[str, ...]:
+    return _confirming_families(
+        modules=action_modules,
+        field_name="stabilization_score",
+    )
+
+
+def _redeploy_confirmation_ready(
+    *,
+    stabilization_score: float,
+    action_modules: tuple[RegimeActionModule, ...],
+) -> bool:
+    return (
+        stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+        and len(_redeploy_stabilization_families(action_modules))
+        >= ACTION_REDEPLOY_CONFIRMATION_MIN_FAMILIES
     )
 
 
@@ -7387,10 +7437,9 @@ def _load_recent_regime_snapshots_through(
     return tuple(snapshots[-lookback_days:])
 
 
-def _load_recent_regime_snapshots_before(
+def _load_regime_snapshots_before(
     *,
     source_date: date,
-    lookback_days: int,
     snapshot_root: Path,
     signal_time: SignalTime | str,
     snapshot_version: str | None,
@@ -7410,7 +7459,7 @@ def _load_recent_regime_snapshots_before(
             )
             if snapshot is not None and snapshot.price_date == snapshot.source_date:
                 snapshots.append(snapshot)
-    return tuple(snapshots[-lookback_days:])
+    return tuple(snapshots)
 
 
 def _load_regime_snapshots_through(
@@ -8027,7 +8076,10 @@ def _redeploy_validation_bucket(snapshot: RegimeSnapshot) -> str:
     if snapshot.action_reason.startswith("Redeploy setup present, but"):
         return "redeploy:funding_blocked"
     has_setup = snapshot.washout_armed
-    has_stabilization = stabilization >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
+    has_stabilization = _redeploy_confirmation_ready(
+        stabilization_score=stabilization,
+        action_modules=snapshot.action_modules,
+    )
     if has_setup and has_stabilization:
         return "redeploy:confirmed_no_action"
     if has_setup:

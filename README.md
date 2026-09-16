@@ -122,9 +122,12 @@ indexes remain above their 200-day trends.
 Washout memory is intentionally faster. It arms from either one strong snapshot
 (`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
 the last 5 saved trading snapshots). Washout setup requires trend damage, volatility stress, and
-at least one transmission channel from breadth, credit, or liquidity. Redeploy then requires
-independent stabilization of at least `0.35`; geometric strength cannot compensate for an
-unarmed washout or missing confirmation, and late protect evidence cannot block a valid redeploy.
+at least one transmission channel from breadth, credit, or liquidity. A continuous setup run arms
+only once and expires after 15 saved trading snapshots; it must reset before it can arm again.
+Redeploy then requires strong stabilization of at least `0.75` across at least two independent
+families. A family counts as confirming at `0.35`. Geometric strength cannot compensate for an
+unarmed washout or weak/narrow confirmation, and late protect evidence cannot block a valid
+redeploy.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
