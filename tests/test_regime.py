@@ -13,15 +13,19 @@ from marketlab.market_signals import (
 )
 from marketlab.prices import DailyPriceObservation, load_price_history, write_price_observations
 from marketlab.regime import (
+    RegimeActionFeature,
     RegimeActionModule,
     RegimeActionState,
     RegimeComponentScore,
     RegimeError,
     RegimeExtensionMemory,
     RegimePressureFeature,
+    RegimePressureModule,
     RegimeSnapshot,
     RegimeSnapshotResult,
     RegimeWashoutMemory,
+    _structured_extension_setup_score,
+    _structured_washout_setup_score,
     compute_market_signal_outcomes,
     compute_regime_action_outcomes,
     compute_regime_backfill,
@@ -270,11 +274,12 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.snapshot.washout_pressure_score is not None
     assert result.snapshot.extension_setup_score is not None
     assert result.snapshot.fragility_context_score is not None
-    assert result.snapshot.washout_setup_score == result.snapshot.washout_pressure_score
+    assert result.snapshot.washout_setup_score == 0.0
+    assert result.snapshot.washout_pressure_score > result.snapshot.washout_setup_score
     assert result.pressure.extension_setup_score == result.snapshot.extension_setup_score
     assert result.pressure.fragility_context_score == result.snapshot.fragility_context_score
     assert result.snapshot.stretch_score == int(round(result.snapshot.stretch_pressure_score * 5))
-    assert result.snapshot.washout_score == int(round(result.snapshot.washout_pressure_score * 5))
+    assert result.snapshot.washout_score == int(round(result.snapshot.washout_setup_score * 5))
     assert result.snapshot.protect_strength < 0.55
     assert result.snapshot.redeploy_strength < 0.55
     assert len(result.pressure.features) == 18
@@ -941,28 +946,29 @@ def test_derive_regime_action_state_keeps_volatility_only_warning_out_of_protect
         washout_pressure_score=0.02,
     )
 
+    warning_signals = (
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="volatility",
+            name="price_proxy",
+            status="calm",
+            score=1,
+            value="VIX 12.5",
+            details={"vix_return_5d": 0.08},
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="volatility",
+            name="vol_of_vol",
+            status="calm",
+            score=1,
+            value=82.0,
+            details={"vvix_return_5d": 0.14},
+        ),
+    )
     action = derive_regime_action_state(
         snapshot=snapshot,
-        signals=(
-            _market_signal(
-                source_date=snapshot.source_date,
-                family="volatility",
-                name="price_proxy",
-                status="calm",
-                score=1,
-                value="VIX 12.5",
-                details={"vix_return_5d": 0.08},
-            ),
-            _market_signal(
-                source_date=snapshot.source_date,
-                family="volatility",
-                name="vol_of_vol",
-                status="calm",
-                score=1,
-                value=82.0,
-                details={"vvix_return_5d": 0.14},
-            ),
-        ),
+        signals=warning_signals,
     )
 
     assert action.state == "no_change"
@@ -987,52 +993,62 @@ def test_derive_regime_action_state_detects_paired_divergence_inside_turn_module
         washout_pressure_score=0.02,
     )
 
+    action_signals = (
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="volatility",
+            name="price_proxy",
+            status="rising",
+            score=-1,
+            value=20.0,
+            details={"vix_return_5d": 0.20, "vix_change_5d": 3.0},
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="breadth",
+            name="price_proxy",
+            status="narrow",
+            score=-1,
+            value="weak breadth",
+            details={
+                "rsp_spy_relative_5d": -0.03,
+                "iwm_spy_relative_5d": -0.04,
+            },
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="breadth",
+            name="participation",
+            status="weak",
+            score=-1,
+            value=35.0,
+            details={
+                "sp500_above_50d_change_5d": -10.0,
+                "sp500_above_200d_change_5d": -6.0,
+            },
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="credit",
+            name="price_proxy",
+            status="weak",
+            score=-1,
+            value="HYG/TLT weak",
+            details={"hyg_tlt_relative_5d": -0.04},
+        ),
+        _market_signal(
+            source_date=snapshot.source_date,
+            family="credit",
+            name="credit_spread",
+            status="mixed",
+            score=0,
+            value=4.0,
+            details={"credit_spread_change_5d": 0.40},
+        ),
+    )
     action = derive_regime_action_state(
         snapshot=snapshot,
-        signals=(
-            _market_signal(
-                source_date=snapshot.source_date,
-                family="breadth",
-                name="price_proxy",
-                status="narrow",
-                score=-1,
-                value="weak breadth",
-                details={
-                    "rsp_spy_relative_5d": -0.03,
-                    "iwm_spy_relative_5d": -0.04,
-                },
-            ),
-            _market_signal(
-                source_date=snapshot.source_date,
-                family="breadth",
-                name="participation",
-                status="weak",
-                score=-1,
-                value=35.0,
-                details={
-                    "sp500_above_50d_change_5d": -10.0,
-                    "sp500_above_200d_change_5d": -6.0,
-                },
-            ),
-            _market_signal(
-                source_date=snapshot.source_date,
-                family="credit",
-                name="price_proxy",
-                status="weak",
-                score=-1,
-                value="HYG/TLT weak",
-                details={"hyg_tlt_relative_5d": -0.04},
-            ),
-            _market_signal(
-                source_date=snapshot.source_date,
-                family="credit",
-                name="credit_spread",
-                status="mixed",
-                score=0,
-                value=4.0,
-                details={"credit_spread_change_5d": 0.40},
-            ),
-        ),
+        signals=action_signals,
     )
 
     features = {feature.name: feature for feature in action.action_features}
@@ -1051,6 +1067,27 @@ def test_derive_regime_action_state_detects_paired_divergence_inside_turn_module
     assert "equity_credit_divergence" in credit_module.feature_names
     assert breadth_module.deterioration_score > 0.0
     assert credit_module.deterioration_score > 0.0
+
+    after_washout = derive_regime_action_state(
+        snapshot=snapshot,
+        signals=action_signals,
+        washout_memory=RegimeWashoutMemory(
+            source_date=snapshot.source_date,
+            status="armed",
+            armed=True,
+            armed_since=snapshot.source_date - timedelta(days=2),
+            armed_age=2,
+            armed_decay=0.85,
+            armed_source_strength=0.80,
+            arm_rule="strong",
+            arm_hit_count=1,
+            arm_window=1,
+            effective_score=0.68,
+            snapshot_count=3,
+        ),
+    )
+    assert after_washout.state == "no_change"
+    assert after_washout.action_path == "washout_blocks_protect"
 
 
 def test_derive_regime_action_state_uses_armed_extension_memory_after_setup_cools() -> None:
@@ -1218,6 +1255,38 @@ def test_extension_memory_strong_setup_arms_without_persistence() -> None:
     assert memory.arm_window == 1
 
 
+def test_structured_extension_setup_requires_trend_and_volatility() -> None:
+    one_leg_only = (
+        _pressure_module("trend_extension", stretch=0.80, washout=0.10),
+        _pressure_module("vol_complacency", stretch=0.49, washout=0.10),
+    )
+    balanced = (
+        _pressure_module("trend_extension", stretch=0.80, washout=0.10),
+        _pressure_module("vol_complacency", stretch=0.60, washout=0.10),
+    )
+
+    assert _structured_extension_setup_score(one_leg_only) == 0.0
+    assert _structured_extension_setup_score(balanced) == pytest.approx((0.80 * 0.60) ** 0.5)
+
+
+def test_structured_washout_setup_requires_damage_stress_and_transmission() -> None:
+    without_transmission = (
+        _pressure_module("trend_extension", stretch=0.10, washout=0.80),
+        _pressure_module("vol_complacency", stretch=0.10, washout=0.80),
+        _pressure_module("breadth_fragility", stretch=0.10, washout=0.34),
+        _pressure_module("credit_risk_appetite", stretch=0.10, washout=0.20),
+    )
+    with_transmission = (
+        *without_transmission,
+        _pressure_module("liquidity_conditions", stretch=0.10, washout=0.50),
+    )
+
+    assert _structured_washout_setup_score(without_transmission) == 0.0
+    assert _structured_washout_setup_score(with_transmission) == pytest.approx(
+        (0.80 * 0.80 * 0.50) ** (1.0 / 3.0)
+    )
+
+
 def test_washout_memory_arms_from_fast_persistence_and_decays() -> None:
     start_date = date(2026, 1, 1)
     snapshots = (
@@ -1326,7 +1395,7 @@ def test_redeploy_requires_armed_washout_before_stabilization_can_confirm() -> N
     assert "washout setup was armed" in with_memory.reason
 
 
-def test_derive_regime_action_state_allows_regime_break_without_extension() -> None:
+def test_derive_regime_action_state_treats_regime_break_as_warning_context() -> None:
     snapshot = _snapshot(
         source_date=date(2026, 1, 1),
         regime="neutral",
@@ -1375,11 +1444,11 @@ def test_derive_regime_action_state_allows_regime_break_without_extension() -> N
         ),
     )
 
-    assert action.state == "scale_down_protect"
-    assert action.action_path == "regime_break"
+    assert action.state == "no_change"
+    assert action.action_path == "regime_break_warning"
     assert action.stretch_score <= 1
     assert action.protect_strength >= 0.55
-    assert "regime_break protect" in action.reason
+    assert "regime_break_warning" in action.reason
     assert "non-vol families" in action.reason
 
 
@@ -2806,6 +2875,23 @@ def test_compute_regime_protect_outcomes_summarizes_gate_buckets(
             feature_names=("breadth_turn",),
             reason="fixture",
         ),
+        RegimeActionModule(
+            family="trend",
+            name="trend_turn",
+            deterioration_score=0.60,
+            stabilization_score=0.0,
+            feature_count=1,
+            feature_names=("trend_turn",),
+            reason="fixture",
+        ),
+    )
+    breadth_divergence = RegimeActionFeature(
+        family="breadth",
+        name="price_breadth_divergence",
+        deterioration_score=0.70,
+        stabilization_score=0.0,
+        evidence_kind="divergence",
+        reason="fixture",
     )
     snapshots = (
         _snapshot(
@@ -2818,6 +2904,7 @@ def test_compute_regime_protect_outcomes_summarizes_gate_buckets(
             protect_strength=0.70,
             extension_armed=True,
             extension_memory_score=0.80,
+            action_features=(breadth_divergence,),
             action_modules=confirming_modules,
         ),
         _snapshot(
@@ -2828,6 +2915,7 @@ def test_compute_regime_protect_outcomes_summarizes_gate_buckets(
             protect_strength=0.69,
             extension_armed=True,
             extension_memory_score=0.80,
+            action_features=(breadth_divergence,),
             action_modules=confirming_modules,
         ),
         _snapshot(
@@ -2862,8 +2950,8 @@ def test_compute_regime_protect_outcomes_summarizes_gate_buckets(
         if row.bucket == "protect:confirmed_no_action:extension_unwind"
     )
     assert confirmed.protect_count == 1
-    assert confirmed.avg_confirming_family_count == 2.0
-    assert confirmed.avg_non_vol_confirming_family_count == 1.0
+    assert confirmed.avg_confirming_family_count == 3.0
+    assert confirmed.avg_non_vol_confirming_family_count == 2.0
     assert "deteriorate" in result.table
 
 
@@ -2990,6 +3078,7 @@ def _snapshot(
     washout_armed: bool = False,
     washout_memory_score: float = 0.0,
     pressure_features: tuple[RegimePressureFeature, ...] = (),
+    action_features: tuple[RegimeActionFeature, ...] = (),
     action_modules: tuple[RegimeActionModule, ...] = (),
     model_version: str = "fixture_model",
     signal_time: str = "eod",
@@ -3050,9 +3139,29 @@ def _snapshot(
         washout_armed=washout_armed,
         washout_memory_score=washout_memory_score,
         pressure_features=pressure_features,
+        action_features=action_features,
         action_modules=action_modules,
         signal_time=signal_time,
         snapshot_version=snapshot_version,
+    )
+
+
+def _pressure_module(
+    name: str,
+    *,
+    stretch: float,
+    washout: float,
+) -> RegimePressureModule:
+    return RegimePressureModule(
+        source_date=date(2026, 1, 1),
+        pressure_version="fixture_pressure",
+        family="fixture",
+        name=name,
+        stretch_score=stretch,
+        washout_score=washout,
+        feature_count=1,
+        feature_names=("fixture",),
+        reason="fixture",
     )
 
 

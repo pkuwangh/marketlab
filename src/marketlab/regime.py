@@ -86,12 +86,17 @@ EXTENSION_ARM_PERSISTENCE_WINDOW = 10
 EXTENSION_ARM_PERSISTENCE_HITS = 3
 EXTENSION_ARMED_SETUP_THRESHOLD = EXTENSION_ARM_PERSISTENCE_SETUP_THRESHOLD
 ACTION_EXTENSION_ARMED_MAX_AGE_DAYS = 40
+EXTENSION_SETUP_TREND_GATE = 0.50
+EXTENSION_SETUP_VOLATILITY_GATE = 0.50
 WASHOUT_ARM_STRONG_SETUP_THRESHOLD = 0.75
 WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD = 0.60
 WASHOUT_ARM_PERSISTENCE_WINDOW = 5
 WASHOUT_ARM_PERSISTENCE_HITS = 2
 WASHOUT_ARMED_SETUP_THRESHOLD = WASHOUT_ARM_PERSISTENCE_SETUP_THRESHOLD
 ACTION_WASHOUT_ARMED_MAX_AGE_DAYS = 15
+WASHOUT_SETUP_TREND_GATE = 0.50
+WASHOUT_SETUP_VOLATILITY_GATE = 0.50
+WASHOUT_SETUP_TRANSMISSION_GATE = 0.35
 ACTION_MEMORY_MAX_AGE_DAYS = max(
     ACTION_EXTENSION_ARMED_MAX_AGE_DAYS,
     ACTION_WASHOUT_ARMED_MAX_AGE_DAYS,
@@ -111,13 +116,13 @@ PRESSURE_LOOKBACK_SAMPLES = 252
 MIN_PRESSURE_FEATURE_SAMPLES = 20
 MIN_PRESSURE_BUCKET_SAMPLES = 20
 ACTION_STRENGTH_THRESHOLD = 0.55
-ACTION_STRENGTH_MARGIN = 0.15
 ACTION_EXTENSION_SETUP_THRESHOLD = 0.60
 ACTION_REGIME_BREAK_CONTEXT_THRESHOLD = 0.70
 ACTION_CONFIRMATION_THRESHOLD = 0.35
-ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES = 2
 ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES = 2
 ACTION_REDEPLOY_STABILIZATION_THRESHOLD = 0.35
+ACTION_SPY_ROLLOVER_FULL_AT = 0.03
+ACTION_QQQ_ROLLOVER_FULL_AT = 0.04
 PROTECTED_POSTURE_MAX_AGE_DAYS = 65
 REDEPLOY_POSTURE_MAX_AGE_DAYS = 20
 POSTURE_CLEAR_THRESHOLD = 0.35
@@ -2759,10 +2764,12 @@ def _component_signal_details(
     if component_name == "trend":
         details.update(
             {
+                "spy_return_5d": features["SPY"].return_5d,
                 "spy_return_20d": snapshot.spy_return_20d,
                 "spy_return_60d": snapshot.spy_return_60d,
                 "spy_ma50_distance": snapshot.spy_ma50_distance,
                 "spy_ma200_distance": snapshot.spy_ma200_distance,
+                "qqq_return_5d": features["QQQ"].return_5d,
                 "qqq_return_20d": snapshot.qqq_return_20d,
                 "qqq_return_60d": features["QQQ"].return_60d,
                 "qqq_ma50_distance": snapshot.qqq_ma50_distance,
@@ -3535,8 +3542,10 @@ def derive_regime_action_state(
     protect_gate = _protect_gate_result(
         extension_setup_score=extension_setup_score,
         extension_memory=extension_memory,
+        long_term_uptrend=_protect_long_term_uptrend(snapshot),
         fragility_context_score=fragility_context_score,
         deterioration_score=deterioration_score,
+        action_features=action_features,
         action_modules=action_modules,
     )
     protect_strength = max(
@@ -3551,11 +3560,9 @@ def derive_regime_action_state(
         and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
         and redeploy_strength >= ACTION_STRENGTH_THRESHOLD
     )
-    redeploy_margin_ready = (
-        redeploy_strength - protect_strength >= ACTION_STRENGTH_MARGIN
-    )
+    protect_ready = protect_gate.path is not None and not washout_memory.armed
 
-    if redeploy_ready and redeploy_margin_ready and severe_funding_stress:
+    if redeploy_ready and severe_funding_stress:
         state = "no_change"
         action_path = None
         evidence = _action_feature_evidence(
@@ -3563,7 +3570,7 @@ def derive_regime_action_state(
             field_name="stabilization_score",
         )
         reason = "Redeploy setup present, but credit and liquidity stress block aggressive re-risk"
-    elif redeploy_ready and redeploy_margin_ready:
+    elif redeploy_ready:
         state = "scale_up_redeploy"
         action_path = "redeploy"
         evidence = _action_feature_evidence(
@@ -3571,10 +3578,7 @@ def derive_regime_action_state(
             field_name="stabilization_score",
         ) + (_washout_memory_reason(washout_memory),)
         reason = "Armed washout setup plus stabilization evidence supports staged redeploy"
-    elif (
-        protect_gate.path is not None
-        and protect_strength - redeploy_strength >= ACTION_STRENGTH_MARGIN
-    ):
+    elif protect_ready:
         state = "scale_down_protect"
         action_path = protect_gate.path
         evidence = _action_feature_evidence(
@@ -3582,6 +3586,22 @@ def derive_regime_action_state(
             field_name="deterioration_score",
         ) + _protect_gate_evidence(protect_gate)
         reason = f"{protect_gate.path} protect: {protect_gate.reason}"
+    elif protect_gate.path is not None and washout_memory.armed:
+        state = "no_change"
+        action_path = "washout_blocks_protect"
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="deterioration_score",
+        ) + (_washout_memory_reason(washout_memory),)
+        reason = "Protect confirmation arrived after washout armed; do not de-risk late"
+    elif protect_gate.reason.startswith("regime_break_warning"):
+        state = "no_change"
+        action_path = "regime_break_warning"
+        evidence = _action_feature_evidence(
+            action_features,
+            field_name="deterioration_score",
+        ) + _protect_gate_evidence(protect_gate)
+        reason = protect_gate.reason
     elif protect_gate.warning_only and protect_strength >= ACTION_STRENGTH_THRESHOLD:
         state = "no_change"
         action_path = "volatility_only_warning"
@@ -3590,18 +3610,6 @@ def derive_regime_action_state(
             field_name="deterioration_score",
         ) + _protect_gate_evidence(protect_gate)
         reason = protect_gate.reason
-    elif (
-        washout_memory.armed
-        and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
-        and redeploy_strength >= ACTION_STRENGTH_THRESHOLD
-    ):
-        state = "no_change"
-        action_path = None
-        evidence = _action_feature_evidence(
-            action_features,
-            field_name="stabilization_score",
-        ) + (_washout_memory_reason(washout_memory),)
-        reason = "Redeploy setup and confirmation passed, but protect evidence still dominates"
     elif (
         washout_memory.armed
         and stabilization_score >= ACTION_REDEPLOY_STABILIZATION_THRESHOLD
@@ -4123,8 +4131,10 @@ def _protect_gate_result(
     *,
     extension_setup_score: float,
     extension_memory: RegimeExtensionMemory,
+    long_term_uptrend: bool,
     fragility_context_score: float,
     deterioration_score: float,
+    action_features: tuple[RegimeActionFeature, ...],
     action_modules: tuple[RegimeActionModule, ...],
 ) -> _ProtectGateResult:
     confirming_families = _confirming_families(
@@ -4136,22 +4146,21 @@ def _protect_gate_result(
     )
     extension_strength = math.sqrt(extension_memory.effective_score * deterioration_score)
     regime_break_strength = math.sqrt(fragility_context_score * deterioration_score)
-    broad_confirmation = (
-        len(confirming_families) >= ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES
-        and bool(non_vol_confirming_families)
+    internal_divergence_families = _internal_divergence_families(action_features)
+    lifecycle_confirmation = (
+        "trend" in confirming_families or len(internal_divergence_families) >= 2
     )
     extension_ready = (
         extension_memory.armed
+        and long_term_uptrend
         and extension_strength >= ACTION_STRENGTH_THRESHOLD
-        and broad_confirmation
-    )
-    regime_break_ready = (
-        fragility_context_score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD
-        and regime_break_strength >= ACTION_STRENGTH_THRESHOLD
-        and len(non_vol_confirming_families) >= ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES
+        and "volatility" in confirming_families
+        and bool(internal_divergence_families)
+        and lifecycle_confirmation
     )
     families_read = _family_list_read(confirming_families)
     non_vol_read = _family_list_read(non_vol_confirming_families)
+    divergence_read = _family_list_read(internal_divergence_families)
     if extension_ready:
         return _ProtectGateResult(
             path="extension_unwind",
@@ -4161,21 +4170,9 @@ def _protect_gate_result(
             non_vol_confirming_families=non_vol_confirming_families,
             warning_only=False,
             reason=(
-                f"{_extension_memory_reason(extension_memory)} and broad deterioration confirms it "
-                f"(families {families_read})"
-            ),
-        )
-    if regime_break_ready:
-        return _ProtectGateResult(
-            path="regime_break",
-            extension_strength=extension_strength,
-            regime_break_strength=regime_break_strength,
-            confirming_families=confirming_families,
-            non_vol_confirming_families=non_vol_confirming_families,
-            warning_only=False,
-            reason=(
-                "fragility setup plus broad non-vol deterioration bypasses extension setup "
-                f"(non-vol families {non_vol_read})"
+                f"{_extension_memory_reason(extension_memory)}, volatility turns, and price "
+                "rollover or broad internal divergence confirms it "
+                f"(divergence {divergence_read}; families {families_read})"
             ),
         )
 
@@ -4188,6 +4185,14 @@ def _protect_gate_result(
         reason = (
             "volatility_only_warning: volatility deterioration is visible, "
             "but normal protect requires non-vol confirmation"
+        )
+    elif (
+        fragility_context_score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD
+        and len(non_vol_confirming_families) >= ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES
+    ):
+        reason = (
+            "regime_break_warning: broad deterioration without prior extension is context, "
+            f"not a de-risk action (non-vol families {non_vol_read})"
         )
     elif (
         extension_memory.armed
@@ -4207,6 +4212,27 @@ def _protect_gate_result(
         non_vol_confirming_families=non_vol_confirming_families,
         warning_only=warning_only,
         reason=reason,
+    )
+
+
+def _protect_long_term_uptrend(snapshot: RegimeSnapshot) -> bool:
+    return _ge(snapshot.spy_ma200_distance, 0.0) and _ge(
+        snapshot.qqq_ma200_distance,
+        0.0,
+    )
+
+
+def _internal_divergence_families(
+    features: tuple[RegimeActionFeature, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            feature.family
+            for feature in features
+            if feature.family in {"breadth", "credit"}
+            and feature.evidence_kind == "divergence"
+            and feature.deterioration_score >= ACTION_CONFIRMATION_THRESHOLD
+        )
     )
 
 
@@ -4341,7 +4367,7 @@ def _action_features(
     signals: tuple[MarketSignal, ...],
 ) -> tuple[RegimeActionFeature, ...]:
     features = [
-        _trend_turn_feature(snapshot=snapshot),
+        _trend_turn_feature(snapshot=snapshot, signals=signals),
         _vix_turn_feature(signals=signals),
         _vvix_turn_feature(snapshot=snapshot, signals=signals),
         _vix_term_structure_turn_feature(signals=signals),
@@ -4354,19 +4380,40 @@ def _action_features(
     return tuple(feature for feature in features if feature is not None)
 
 
-def _trend_turn_feature(*, snapshot: RegimeSnapshot) -> RegimeActionFeature | None:
-    deterioration = _average_scores(
+def _trend_turn_feature(
+    *,
+    snapshot: RegimeSnapshot,
+    signals: tuple[MarketSignal, ...],
+) -> RegimeActionFeature | None:
+    trend_signal = _signal_by_name(signals, family="trend", name="price_proxy")
+    spy_return_5d = _signal_detail_float(trend_signal, "spy_return_5d")
+    qqq_return_5d = _signal_detail_float(trend_signal, "qqq_return_5d")
+    short_deterioration = _average_scores(
+        (
+            _negative_change_score(spy_return_5d, full_at=ACTION_SPY_ROLLOVER_FULL_AT),
+            _negative_change_score(qqq_return_5d, full_at=ACTION_QQQ_ROLLOVER_FULL_AT),
+        )
+    )
+    medium_deterioration = _average_scores(
         (
             _negative_change_score(snapshot.spy_return_20d, full_at=0.08),
             _negative_change_score(snapshot.qqq_return_20d, full_at=0.10),
         )
     )
-    stabilization = _average_scores(
+    deterioration = _max_scores((short_deterioration, medium_deterioration))
+    short_stabilization = _average_scores(
+        (
+            _positive_change_score(spy_return_5d, full_at=ACTION_SPY_ROLLOVER_FULL_AT),
+            _positive_change_score(qqq_return_5d, full_at=ACTION_QQQ_ROLLOVER_FULL_AT),
+        )
+    )
+    medium_stabilization = _average_scores(
         (
             _positive_change_score(snapshot.spy_return_20d, full_at=0.08),
             _positive_change_score(snapshot.qqq_return_20d, full_at=0.10),
         )
     )
+    stabilization = _max_scores((short_stabilization, medium_stabilization))
     if deterioration is None and stabilization is None:
         return None
     return RegimeActionFeature(
@@ -4375,7 +4422,8 @@ def _trend_turn_feature(*, snapshot: RegimeSnapshot) -> RegimeActionFeature | No
         deterioration_score=deterioration or 0.0,
         stabilization_score=stabilization or 0.0,
         reason=(
-            "SPY/QQQ 20d momentum "
+            "SPY/QQQ 5d and 20d momentum "
+            f"{_format_percent(spy_return_5d)}/{_format_percent(qqq_return_5d)} and "
             f"{_format_percent(snapshot.spy_return_20d)}/{_format_percent(snapshot.qqq_return_20d)}"
         ),
     )
@@ -5150,11 +5198,7 @@ def derive_regime_pressure_snapshot(
         for spec in PRESSURE_FEATURE_SPECS
     )
     modules = _pressure_modules(source_date=source_date, features=features)
-    extension_setup_score = _pressure_score_for_modules(
-        modules,
-        module_names=("trend_extension", "vol_complacency"),
-        field_name="stretch_score",
-    )
+    extension_setup_score = _structured_extension_setup_score(modules)
     fragility_context_score = _pressure_score_for_modules(
         modules,
         module_names=(
@@ -5165,12 +5209,16 @@ def derive_regime_pressure_snapshot(
         ),
         field_name="stretch_score",
     )
-    washout_setup_score = _aggregate_pressure_score(modules, field_name="washout_score")
+    washout_pressure_score = _aggregate_pressure_score(
+        modules,
+        field_name="washout_score",
+    )
+    washout_setup_score = _structured_washout_setup_score(modules)
     return RegimePressureSnapshot(
         source_date=source_date,
         pressure_version=REGIME_PRESSURE_VERSION,
         stretch_pressure_score=_aggregate_pressure_score(modules, field_name="stretch_score"),
-        washout_pressure_score=washout_setup_score,
+        washout_pressure_score=washout_pressure_score,
         extension_setup_score=extension_setup_score,
         fragility_context_score=fragility_context_score,
         washout_setup_score=washout_setup_score,
@@ -5292,6 +5340,59 @@ def _pressure_score_for_modules(
         tuple(module for module in modules if module.name in allowed_names),
         field_name=field_name,
     )
+
+
+def _structured_washout_setup_score(
+    modules: tuple[RegimePressureModule, ...],
+) -> float:
+    module_by_name = {module.name: module for module in modules}
+    trend = module_by_name.get("trend_extension")
+    volatility = module_by_name.get("vol_complacency")
+    transmission_modules = tuple(
+        module_by_name.get(name)
+        for name in (
+            "breadth_fragility",
+            "credit_risk_appetite",
+            "liquidity_conditions",
+        )
+    )
+    if trend is None or volatility is None:
+        return 0.0
+    trend_score = trend.washout_score or 0.0
+    volatility_score = volatility.washout_score or 0.0
+    transmission_score = max(
+        (
+            module.washout_score or 0.0
+            for module in transmission_modules
+            if module is not None
+        ),
+        default=0.0,
+    )
+    if (
+        trend_score < WASHOUT_SETUP_TREND_GATE
+        or volatility_score < WASHOUT_SETUP_VOLATILITY_GATE
+        or transmission_score < WASHOUT_SETUP_TRANSMISSION_GATE
+    ):
+        return 0.0
+    return (trend_score * volatility_score * transmission_score) ** (1.0 / 3.0)
+
+
+def _structured_extension_setup_score(
+    modules: tuple[RegimePressureModule, ...],
+) -> float:
+    module_by_name = {module.name: module for module in modules}
+    trend = module_by_name.get("trend_extension")
+    volatility = module_by_name.get("vol_complacency")
+    if trend is None or volatility is None:
+        return 0.0
+    trend_score = trend.stretch_score or 0.0
+    volatility_score = volatility.stretch_score or 0.0
+    if (
+        trend_score < EXTENSION_SETUP_TREND_GATE
+        or volatility_score < EXTENSION_SETUP_VOLATILITY_GATE
+    ):
+        return 0.0
+    return math.sqrt(trend_score * volatility_score)
 
 
 def _pressure_feature(
@@ -7805,17 +7906,20 @@ def _regime_protect_outcomes(
     qqq_history = histories.get("QQQ", ())
     spy_index = _exact_date_index(spy_history, snapshot.price_date)
     qqq_index = _exact_date_index(qqq_history, snapshot.price_date)
-    confirming_families = _confirming_families(
+    module_confirming_families = _confirming_families(
         modules=snapshot.action_modules,
         field_name="deterioration_score",
     )
+    confirming_families = _protect_evidence_families(snapshot)
     non_vol_confirming_families = tuple(
         family for family in confirming_families if family != "volatility"
     )
     bucket = _protect_validation_bucket(
         snapshot,
-        confirming_families=confirming_families,
-        non_vol_confirming_families=non_vol_confirming_families,
+        confirming_families=module_confirming_families,
+        non_vol_confirming_families=tuple(
+            family for family in module_confirming_families if family != "volatility"
+        ),
     )
     return tuple(
         RegimeProtectForwardOutcome(
@@ -7865,24 +7969,29 @@ def _protect_validation_bucket(
     regime_break_strength = math.sqrt(
         fragility_context_score * snapshot.deterioration_score
     )
-    broad_confirmation = (
-        len(confirming_families) >= ACTION_EXTENSION_CONFIRMATION_MIN_FAMILIES
-        and bool(non_vol_confirming_families)
+    internal_divergence_families = _internal_divergence_families(snapshot.action_features)
+    lifecycle_confirmation = (
+        "trend" in confirming_families or len(internal_divergence_families) >= 2
     )
     extension_ready = (
         snapshot.extension_armed
+        and _protect_long_term_uptrend(snapshot)
         and extension_strength >= ACTION_STRENGTH_THRESHOLD
-        and broad_confirmation
+        and "volatility" in confirming_families
+        and bool(internal_divergence_families)
+        and lifecycle_confirmation
     )
-    regime_break_ready = (
+    regime_break_warning = (
         fragility_context_score >= ACTION_REGIME_BREAK_CONTEXT_THRESHOLD
         and regime_break_strength >= ACTION_STRENGTH_THRESHOLD
         and len(non_vol_confirming_families) >= ACTION_REGIME_BREAK_NON_VOL_MIN_FAMILIES
     )
     if extension_ready:
+        if snapshot.washout_armed:
+            return "protect:washout_blocked"
         return "protect:confirmed_no_action:extension_unwind"
-    if regime_break_ready:
-        return "protect:confirmed_no_action:regime_break"
+    if regime_break_warning:
+        return "protect:regime_break_warning"
 
     volatility_only = confirming_families == ("volatility",)
     if (
@@ -7938,6 +8047,18 @@ def _protect_clusters_from_snapshots(
     return tuple(clusters)
 
 
+def _protect_evidence_families(snapshot: RegimeSnapshot) -> tuple[str, ...]:
+    module_families = _confirming_families(
+        modules=snapshot.action_modules,
+        field_name="deterioration_score",
+    )
+    return tuple(
+        dict.fromkeys(
+            (*module_families, *_internal_divergence_families(snapshot.action_features))
+        )
+    )
+
+
 def _protect_cluster_outcomes(
     *,
     cluster: tuple[RegimeSnapshot, ...],
@@ -7955,10 +8076,7 @@ def _protect_cluster_outcomes(
         index=spy_index,
         lookback=252,
     )
-    confirming_families = _confirming_families(
-        modules=first_snapshot.action_modules,
-        field_name="deterioration_score",
-    )
+    confirming_families = _protect_evidence_families(first_snapshot)
     late_signal = (
         drawdown_from_peak is not None
         and drawdown_from_peak <= -CORRECTION_EPISODE_MIN_DRAWDOWN

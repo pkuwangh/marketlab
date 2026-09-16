@@ -183,7 +183,12 @@ key-signals table. `--detail` adds:
 
 Regime actions use the ordered same-version snapshot chain for bounded extension and washout setup
 memory. Single-date snapshot and daily workflows require prior history; backfill establishes and
-recomputes that chain in date order.
+recomputes that chain in date order. Extension setup is a gated combination of trend extension and
+volatility complacency. Washout setup is a gated combination of trend damage, volatility stress,
+and the strongest available breadth/credit/liquidity transmission channel. Protect requires an
+armed extension plus lifecycle confirmation; redeploy requires an armed washout plus stabilization.
+Washout phase blocks late protect action, and eligible redeploy is not arbitrated against an
+ineligible raw protect-strength score.
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action;

@@ -113,12 +113,18 @@ snapshots and washout memory up to 15.
 Extension memory does not arm from every one-day setup blip. The current defaults arm on
 either one strong setup snapshot (`extension_setup >= 0.75`) or persistent setup
 (`extension_setup >= 0.60` on at least 3 of the last 10 saved trading snapshots). These tuning
-parameters live together near the top of `src/marketlab/regime.py`.
+parameters live together near the top of `src/marketlab/regime.py`. The setup itself requires
+both trend extension and volatility complacency to be at least `0.50`; one extreme leg cannot
+compensate for a missing one. Protect then requires a volatility turn, breadth/credit divergence,
+and either short-term SPY/QQQ rollover or divergence across both breadth and credit while the
+indexes remain above their 200-day trends.
 
 Washout memory is intentionally faster. It arms from either one strong snapshot
 (`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
-the last 5 saved trading snapshots). Redeploy then requires independent stabilization of at
-least `0.35`; geometric strength cannot compensate for an unarmed washout or missing confirmation.
+the last 5 saved trading snapshots). Washout setup requires trend damage, volatility stress, and
+at least one transmission channel from breadth, credit, or liquidity. Redeploy then requires
+independent stabilization of at least `0.35`; geometric strength cannot compensate for an
+unarmed washout or missing confirmation, and late protect evidence cannot block a valid redeploy.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.

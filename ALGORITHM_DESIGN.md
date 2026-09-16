@@ -97,6 +97,8 @@ The current v1.0 implementation computes:
 
 - Directional regime score from family-level market signals.
 - Stretch/washout pressure from rolling percentile-normalized features.
+- Structured extension and washout setup scores whose required legs cannot compensate for one
+  another.
 - Deterioration/stabilization action evidence from bounded modules across trend, volatility,
   breadth, credit, and liquidity.
 - Rare action states: `no_change`, `scale_down_protect`, `scale_up_redeploy`.
@@ -123,8 +125,8 @@ For protect:
 extension_setup   = price extension / volatility complacency
 fragility_context = breadth, credit, liquidity, volatility, or trend weakness
 protect_confirm   = broad deterioration; volatility-only is not enough by itself
-protect_action    = armed extension setup + broad confirmation,
-                    or a harder regime-break path fires
+protect_action    = armed extension setup + volatility turn + internal divergence
+                    + (price rollover or breadth-and-credit divergence)
 ```
 
 For redeploy:
@@ -136,7 +138,9 @@ redeploy_action  = setup was armed and confirmation appears
 ```
 
 Stretch alone is not bearish. It often means strong risk-on momentum. Washout alone is not
-automatically bullish. It becomes actionable only when stabilization appears.
+automatically bullish. It becomes actionable only when stabilization appears. Protect and
+redeploy are phase-exclusive: once washout is armed, late protect evidence cannot override a
+valid redeploy transition.
 
 ## Research Observations and Proposals
 
@@ -147,8 +151,8 @@ and recent snapshot reviews. They are not implemented guarantees.
 
 ### Data-Driven Protect Review
 
-The first protect review shows that current `scale_down_protect` is not a reliable correction
-warning yet:
+The first protect review showed that the pre-redesign `scale_down_protect` was not a reliable
+correction warning:
 
 - 88 protect days collapsed into 42 distinct signal clusters using a 5-trading-day grouping rule.
 - 32 of 42 clusters had no 5% SPY drawdown in the next 40 trading days.
@@ -163,9 +167,12 @@ warning yet:
   COVID-style shock is an acceptable protect false negative; the protect model is mainly trying to
   catch deterioration/divergence after extension, not every exogenous crash.
 
-Conclusion: protect should be redesigned before threshold tuning. The current action combines
-different market states, fires too often on volatility-only moves, and misses corrections where
-extension and deterioration occur at different times.
+The lifecycle redesign materially improves the full 2016-2026 replay without tuning to maximize
+historical returns: protect falls from 81 to 27 daily action rows, while 40-day SPY forward return
+moves from +1.2% to -2.9% versus +2.5% on all dates. However, the post-2020 slice is only modestly
+better than baseline (+1.3% versus +2.4% at 40 days), and the full-sample result is influenced by
+the COVID window. Protect is therefore improved but not validated. Do not add filters merely to
+make this sample prettier; improve inputs and test future data.
 
 ### Problem: Stretch Is Not Bearish By Itself
 
@@ -173,7 +180,7 @@ Initial outcome replays show that high stretch pressure has often been followed 
 SPY/QQQ forward returns and modest drawdown. That means stretch is frequently strong risk-on
 momentum, not a standalone de-risk signal.
 
-Proposals:
+Implemented v1.0 direction:
 
 - Split current stretch pressure into cleaner `extension_setup` and `fragility_context` features.
 - Keep price extension and volatility complacency in `extension_setup`.
@@ -183,21 +190,21 @@ Proposals:
 
 ### Problem: Protect Currently Mixes Different States
 
-Same-day `scale_down_protect` has not separated bad forward windows well enough. The current
-action state can mean several different things:
+Pre-redesign same-day `scale_down_protect` did not separate bad forward windows well enough. The
+action state could mean several different things:
 
 - pre-correction extension with emerging deterioration;
 - stress that is already visible;
 - a false warning during a strong tape;
 - event-volatility premium before a scheduled macro catalyst.
 
-Proposals:
+Implemented v1.0 direction:
 
-- Split protect into at least two paths:
-  - `extension_unwind`: extension setup was armed, then broad deterioration appears.
-  - `regime_break`: no prior extension is required, but broad deterioration must be stronger.
-- Require at least two deterioration families for normal protect, with at least one non-volatility
-  internal family such as breadth, credit, liquidity, or trend.
+- Keep one actionable path, `extension_unwind`: extension setup was armed, then lifecycle
+  deterioration appears while SPY and QQQ remain above their 200-day trends.
+- Require volatility deterioration, at least one breadth/credit divergence, and either short-term
+  price rollover or divergence in both breadth and credit.
+- Treat broad `regime_break` deterioration without prior extension as warning context, not action.
 - Treat volatility-only confirmation as warning/context, not a normal `scale_down_protect`.
 - Report which path fired and which families confirmed it.
 - Diagnose protect by exclusive setup/confirmation buckets and by independent clusters of
@@ -218,8 +225,10 @@ is not actually extended.
 
 Implemented v1.0 direction:
 
-- Extension-unwind path: `extension_setup_gate AND broad_confirmation_gate`.
-- Regime-break path: `strong_broad_deterioration_gate`.
+- Extension setup requires both trend extension and volatility complacency to be at least 0.50;
+  its score is their geometric mean only after both gates pass.
+- Extension-unwind path: `armed_extension AND long_term_uptrend AND lifecycle_confirmation`.
+- Regime-break evidence is diagnostic context only.
 - Redeploy path: `armed_washout_gate AND stabilization_gate`.
 - Strength scores remain useful after the gates pass, but cannot substitute for a missing setup
   or confirmation gate.
@@ -274,10 +283,16 @@ That makes washout closer to a redeploy setup than a bearish warning or a mechan
 Implemented v1.0 direction:
 
 - Treat washout as `redeploy_setup`.
+- Require concurrent trend damage, volatility stress, and at least one transmission channel from
+  breadth, credit, or liquidity; unrelated neutral modules no longer dilute a valid setup.
 - Require stabilization confirmation before redeploy: volatility cooling, breadth stabilizing, or
   credit no longer worsening.
 - Arm washout setup before applying stabilization and strength gates so high stabilization cannot
   geometrically compensate for a setup that never existed.
+- Let valid redeploy confirmation win once washout is armed; an ineligible raw protect score does
+  not block the phase transition.
+- The 2016-2026 replay increases redeploy from 11 COVID-concentrated action rows to 148 rows spread
+  across every calendar year in the sample. This is broader coverage, not proof of profitability.
 
 Open research:
 
@@ -338,7 +353,7 @@ The action output controls only the tactical sleeve:
 | State | Intent | Typical bounded response |
 | --- | --- | --- |
 | `no_change` | Evidence is too balanced or incomplete. | Maintain current posture. |
-| `scale_down_protect` | Armed extension has confirmed deterioration, or a harder regime-break path has fired. | Reduce marginal beta, rebuild cash, sell covered calls, avoid fresh long calls. |
+| `scale_down_protect` | Armed extension has confirmed a volatility turn plus price/internal deterioration. | Reduce marginal beta, rebuild cash, sell covered calls, avoid fresh long calls. |
 | `scale_up_redeploy` | Washout setup has confirmed stabilization. | Deploy cash in tranches, consider 60-90 DTE calls/call spreads, underwrite lower entries with defined risk. |
 
 Future posture replay must make state persistent. After protect activates, later `no_change` dates
@@ -382,13 +397,12 @@ context, and realized outcome.
 
 ## Near-Term Algorithm Backlog
 
-1. Re-run episode-level correction coverage and false-alert analysis on v1.0 snapshots.
+1. Collect forward out-of-sample evidence for the current protect lifecycle; do not optimize the
+   remaining weak post-2020 result in sample.
 2. Study whether the fixed extension arm threshold should become a rolling p90 threshold.
 3. Compare 20 and 40 trading-snapshot decay windows for extension-unwind memory.
 4. Tighten event-volatility handling so scheduled macro premium does not masquerade as broad
    deterioration.
-5. Calibrate regime-break thresholds separately from extension-unwind thresholds.
-6. Extend the armed-setup idea to redeploy only after protect behavior is stable.
-7. Leave redeploy mostly unchanged for now, except for separate validation.
-8. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
-9. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.
+5. Add stronger breadth, sentiment, and positioning sources only when their histories are replayable.
+6. Measure redeploy by independent episodes and tranches, not overlapping daily action rows alone.
+7. Expand Bulltard candidate outcomes from triage labels into lifecycle episodes.
