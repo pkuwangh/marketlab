@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict, replace
 from datetime import timedelta
 
@@ -11,7 +12,61 @@ from marketlab.regime_lifecycle import (
     _reopen_after_new_low,
     maximum_evidence,
     transition,
+    update_setup,
 )
+
+
+def test_new_washout_episode_clears_old_retry_metadata():
+    kwargs = dict(prices={"SPY": 80}, anchors={"SPY": 100}, kind="washout", config=DEFAULT_CONFIG)
+    old = update_setup(None, day="old", index=0, hit=0.9, stress=0.9, **kwargs)
+    old.update(retry_date="old-retry", entry_count=2, consumed=True, retry_lows={"SPY": 70})
+    new = update_setup(old, day="new", index=16, hit=0.9, stress=0.9, **kwargs)
+    assert new["id"] == "washout:new"
+    assert "retry_date" not in new
+    assert new["entry_count"] == 0
+    assert not new["consumed"]
+    assert new["retry_lows"] is None
+
+
+def test_two_washout_attempts_share_setup_but_keep_separate_holding_clocks():
+    config = replace(DEFAULT_CONFIG, redeploy_cap=1, break_path=False)
+    histories = {s: [price(DAY - timedelta(days=1), 100, s)] for s in ("SPY", "QQQ")}
+    state, entries, ids = None, [], []
+    for i, (level, stressed) in enumerate(
+        (
+            (80, True),
+            (84, False),
+            (84, False),
+            (79, True),
+            (82, False),
+            (82, False),
+            (78, True),
+            (81, False),
+        )
+    ):
+        day = DAY + timedelta(days=i)
+        snap, signals = inputs(
+            day,
+            stress=0.9 if stressed else 0.5,
+            move=-0.04 if stressed else 0.04,
+            vol=0.2 if stressed else -0.2,
+        )
+        for symbol in histories:
+            histories[symbol].append(price(day, level, symbol))
+        action, _, _ = transition(
+            snapshot=snap, signals=signals, histories=histories, previous=state, config=config
+        )
+        state = json.loads(json.dumps(action.lifecycle))
+        ids.append(state["washout"]["id"])
+        if action.state == "redeploy-washout":
+            entries.append(i)
+            assert state["held"]["age"] == 0
+            assert state["held"]["date"] == str(day)
+    assert entries == [1, 4]
+    assert len(set(ids)) == 1
+    assert state["washout"]["entry_count"] == 2
+    assert state["washout"]["consumed"]
+    assert state["held"]["posture"] == "neutral"
 
 
 @pytest.mark.parametrize("original,expected", [(None, False), ((0.4, 0), False), ((0.1, 0), True)])

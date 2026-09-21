@@ -317,6 +317,7 @@ def update_setup(old, *, day, index, hit, stress, prices, anchors, kind, config)
         qualifying = qualifying and state.get("renewal_ready", False)
     if not active and qualifying:
         establishing = [hits[-1]] if hit >= config.strong_hit else hits[-count:]
+        state.pop("retry_date", None)
         state.update(
             {
                 "id": f"{kind}:{day}",
