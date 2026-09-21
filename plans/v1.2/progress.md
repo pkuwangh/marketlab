@@ -76,3 +76,19 @@ core 2022 worsens (-26.15% versus -25.15%) and post-2020 falls slightly (+107.42
 Keep the bounded new-damage mechanism for restored coverage, not as a uniformly better filter.
 The first trial incorrectly used only entry/exit lows and overstated the benefit; its corrected
 results above replace it. Traces: `04-new-damage-retry/`. Full suite: 289 tests; lint passes.
+
+## 5. Orderly Pullback Confirmation
+
+Before replay: an intact-trend continuation needs both indexes back above MA50 with nonnegative
+5d returns, plus the existing strong independent non-price family and clear funding. Replace
+the panic-specific half-recovery budget with the causal pre-pullback highs as the entry ceiling
+for both indexes. Keep the distinct below-MA50 setup, MA200 structure, 20-session setup lifetime,
+failure rule, and holding cap. No change to washout's half-recovery gate; no fitted bounce cutoff.
+
+Result: seven core/eight reduced confirm entries, but core mean held SPY -0.72%, reduced -0.15%.
+Core net falls +409.85% -> +397.78%; reduced +417.18% -> +414.73%; drawdowns do not improve.
+Core entry execution dates: 2017-08-31, 2018-02-16, 2019-05-17, 2020-10-06, 2023-08-30,
+2025-11-26, 2026-01-27. Three reach the cap, three exit to protection, one fails structurally.
+The 2023 continuation loses 4.21% in SPY; reclaiming MA50 is not enough to establish durable
+recovery. Trial removed, rather than relaxing more gates to force coverage. Confirm remains an
+unresolved path with zero historical entries under current rules. Traces: `05-pullback/`.
