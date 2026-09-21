@@ -51,6 +51,7 @@ class ActionConfig:
     extension_hits: int = 3
     washout_window: int = 5
     washout_hits: int = 2
+    episode_max_entries: int = 2
 
 
 DEFAULT_CONFIG = ActionConfig()
@@ -314,6 +315,8 @@ def update_setup(old, *, day, index, hit, stress, prices, anchors, kind, config)
                 "lows": {s: min(h["prices"][s] for h in establishing) for s in prices},
                 "rule": "strong" if hit >= config.strong_hit else "persistent",
                 "consumed": False,
+                "entry_count": 0,
+                "retry_lows": None,
                 "renewal_ready": False,
             }
         )
@@ -340,6 +343,21 @@ def price_opportunity(episode, prices, fraction):
         if high <= low or price > low + fraction * (high - low):
             return False
     return True
+
+
+def _reopen_after_new_low(episode, prices, *, allowed, day, config):
+    reference = episode.get("retry_lows")
+    if (
+        allowed
+        and episode.get("armed")
+        and episode.get("consumed")
+        and reference
+        and episode.get("entry_count", 0) < config.episode_max_entries
+        and all(prices[s] < reference[s] for s in prices)
+    ):
+        episode["consumed"] = False
+        episode["retry_lows"] = None
+        episode["retry_date"] = day
 
 
 def _above(values, threshold=0.0):
@@ -545,6 +563,23 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         "protect-extension": extension,
         "protect-break": br,
     }
+    prior_direction = previous.get("held", {}).get("posture", "neutral")
+    _reopen_after_new_low(
+        wash,
+        prices,
+        day=day,
+        config=config,
+        allowed=prior_direction != "redeploying"
+        and wash_hit is not None
+        and wash_hit >= config.persistent_hit,
+    )
+    _reopen_after_new_low(
+        br,
+        prices,
+        day=day,
+        config=config,
+        allowed=prior_direction != "protected" and break_streak >= config.persistence,
+    )
     causes = {
         "redeploy-washout": strong[:2],
         "redeploy-confirm": ["trend", *corroborator("stabilization", gate=config.confirmation)],
@@ -564,6 +599,9 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     exit_reason = None
     if direction != "neutral":
         held["age"] = index - held["index"]
+        held["observed_lows"] = {
+            k: min(held.get("observed_lows", held["lows"])[k], prices[k]) for k in prices
+        }
         recovered = (
             _above(returns5)
             and all(repaired(f) for f in held["families"])
@@ -598,11 +636,15 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
                 exit_reason = "thesis_failed"
     previous_holding = copy.deepcopy(held) if exit_reason else None
     if exit_reason:
+        ended = episodes[held["action"]]
+        if ended.get("id") == held["episode"]:
+            ended["retry_lows"] = held["observed_lows"].copy()
         held = {"posture": "neutral"}
     action = "no_change"
     if selected and (direction == "neutral" or exit_reason == "opposite_action"):
         action = selected
         episode = episodes[action]
+        episode["entry_count"] = episode.get("entry_count", 0) + 1
         held = {
             "posture": action_direction(action),
             "action": action,

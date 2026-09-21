@@ -110,9 +110,7 @@ def test_partial_credit_does_not_change_its_declared_average():
 def test_partial_transmission_cannot_manufacture_tvx_release(missing):
     snapshot, _ = inputs()
     config = replace(DEFAULT_CONFIG, stress_geometry="tvx", transmission=True)
-    kwargs = dict(
-        prices={"SPY": 80}, anchors={"SPY": 100}, kind="washout", config=config
-    )
+    kwargs = dict(prices={"SPY": 80}, anchors={"SPY": 100}, kind="washout", config=config)
     stress, hit, _ = setup_readings(snapshot, config)
     state = update_setup(None, day="2026-01-02", index=0, hit=hit, stress=stress, **kwargs)
     peak = state["peak"]
@@ -380,6 +378,7 @@ def test_conflicting_unused_paths_and_consumed_opposite_resolution(monkeypatch):
         "index": 0,
         "families": ["volatility", "breadth"],
         "age": 1,
+        "lows": {"SPY": 80, "QQQ": 80},
     }
     action, _, _ = transition(snapshot=snap, signals=signals, histories=histories, previous=prior)
     assert action.state == "protect-break"
@@ -437,6 +436,7 @@ def test_protection_recovery_needs_exact_causal_evidence():
             "index": 0,
             "families": ["credit"],
             "episode": "test",
+            "lows": {"SPY": 100, "QQQ": 100},
         },
     }
     for i in range(1, 5):
@@ -684,7 +684,13 @@ def test_observations_recompute_setup_entry_and_failure_before_cap(tmp_path):
         for d in result.source_dates
     ]
     entries = [row for row in rows if row.action_state == "redeploy-washout"]
-    failures = [row for row in rows if row.lifecycle["exit_reason"] == "thesis_failed"]
+    failures = [
+        row
+        for row in rows
+        if row.lifecycle.get("closed_holding")
+        and row.lifecycle["closed_holding"]["action"] == "redeploy-washout"
+        and row.lifecycle["exit_reason"] in ("thesis_failed", "opposite_action")
+    ]
     assert entries and failures
     assert failures[0].lifecycle["closed_holding"]["age"] < DEFAULT_CONFIG.redeploy_cap
     resumed = r.compute_regime_snapshot(

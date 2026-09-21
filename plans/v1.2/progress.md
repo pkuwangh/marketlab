@@ -58,3 +58,21 @@ reduced net +393.62%, drawdown -30.34%. Only two core holdings changed: February
 delayed Feb 11 -> Feb 14 (SPY -1.34% -> -3.42%), March 2025 exit delayed Mar 27 -> Mar 31
 (-0.63% -> -3.67%). Post-2020 and 2022 both worsen. The 5d-only hypothesis is not retained;
 production remains topic 2's rules. Detailed replay remains under `03-washout-failure/`.
+
+## 4. New Damage After A Consumed Opportunity
+
+Before replay: allow at most two entries per washout/break setup, only when both indexes make
+new lows below the lows known at the previous holding's exit. Washout also requires a new
+qualifying stress observation; break still needs persistent direct damage. No retry while
+holding the same direction, no daily renewal, and no reset of an active holding's cap. Keep
+setup identity for diagnostics; entry dates already distinguish executed attempts. This is a
+single bounded-retry hypothesis, not a search over retry counts or new price thresholds.
+
+Result: after correcting the trial to retain every intervening holding low, core net +409.85%
+versus +398.04%, drawdown -28.75% versus -29.06%, matched +434.06%. Reduced net +417.18%
+versus +400.28%, drawdown -28.94%. Washout grows from 12 to 18 entries; mean held SPY return
++1.88%, or +1.31% without the March 2020 entry. Break grows from 21 to 26 entries. However,
+core 2022 worsens (-26.15% versus -25.15%) and post-2020 falls slightly (+107.42% versus +108.90%).
+Keep the bounded new-damage mechanism for restored coverage, not as a uniformly better filter.
+The first trial incorrectly used only entry/exit lows and overstated the benefit; its corrected
+results above replace it. Traces: `04-new-damage-retry/`. Full suite: 289 tests; lint passes.
