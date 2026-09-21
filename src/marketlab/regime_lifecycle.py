@@ -113,6 +113,10 @@ def _all_gates(*values):
     return False if any(value is False for value in values) else None if None in values else True
 
 
+def _any_gates(*values):
+    return True if any(value is True for value in values) else None if None in values else False
+
+
 def funding_veto(oas_stressed: bool | None, nfci_tight: bool | None) -> bool | None:
     if oas_stressed is False or nfci_tight is False:
         return False
@@ -562,7 +566,13 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             "divergence": bool(div),
             "uptrend": None if any(value is None for value in ma200) else _above(ma200),
             "volatility": threshold_gate(("volatility",)),
-            "damage": threshold_gate(("trend",))
+            "damage": _any_gates(
+                threshold_gate(("trend",)),
+                _all_gates(
+                    len(div) >= 2,
+                    threshold_gate(("breadth", "credit"), count=2),
+                ),
+            )
             if config.sequence
             else (supports("trend") or len(div) >= 2),
             "strength": not config.decay_gate or extension_strength >= 0.55,
@@ -607,7 +617,11 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     causes = {
         "redeploy-washout": strong[:2],
         "redeploy-confirm": ["trend", *corroborator("stabilization", gate=config.confirmation)],
-        "protect-extension": list(dict.fromkeys(["trend", "volatility", *div[:1]])),
+        "protect-extension": list(
+            dict.fromkeys(
+                ["trend", "volatility", *div[:1]] if supports("trend") else ["volatility", *div]
+            )
+        ),
         "protect-break": ["trend", *corroborator("deterioration")],
     }
     raw = [name for name in ACTIONS if all(v is True for v in gates[name].values())]

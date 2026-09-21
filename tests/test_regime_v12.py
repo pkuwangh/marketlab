@@ -8,12 +8,58 @@ from test_regime_lifecycle import DAY, inputs, price
 from marketlab.regime import _vvix_vs_vix_feature
 from marketlab.regime_lifecycle import (
     DEFAULT_CONFIG,
+    _any_gates,
     _causes_repaired,
     _reopen_after_new_low,
     maximum_evidence,
     transition,
     update_setup,
 )
+
+
+@pytest.mark.parametrize(
+    "values,expected", [((False, None), None), ((True, None), True), ((False, False), False)]
+)
+def test_alternative_confirmation_preserves_unknown(values, expected):
+    assert _any_gates(*values) is expected
+
+
+@pytest.mark.parametrize(
+    "prior_credit,current_credit,expected",
+    [
+        (True, True, "protect-extension"),
+        (False, True, "no_change"),
+        (True, False, "no_change"),
+    ],
+)
+def test_internal_extension_confirmation_needs_two_prior_and_current_families(
+    prior_credit, current_credit, expected
+):
+    state = None
+    histories = {s: [] for s in ("SPY", "QQQ")}
+    for i in range(2):
+        day = DAY + timedelta(days=i)
+        snap, signals = inputs(day, stress=0.1, move=0.01, vol=0.2, ma50=0.02)
+        credit = prior_credit if i == 0 else current_credit
+        signals = tuple(
+            replace(s, details={"rsp_spy_relative_5d": -0.04, "iwm_spy_relative_5d": -0.04})
+            if s.family == "breadth"
+            else replace(s, details={"hyg_tlt_relative_5d": -0.04 if credit else 0.04})
+            if s.name == "price_proxy" and s.family == "credit"
+            else s
+            for s in signals
+        )
+        for symbol in histories:
+            histories[symbol].append(price(day, 100 + i, symbol))
+        action, _, _ = transition(
+            snapshot=snap, signals=signals, histories=histories, previous=state
+        )
+        state = action.lifecycle
+        if i == 0:
+            assert action.state == "no_change"
+    assert action.state == expected
+    if expected != "no_change":
+        assert state["held"]["families"] == ["volatility", "breadth", "credit"]
 
 
 @pytest.mark.parametrize("missing_original", [False, True])

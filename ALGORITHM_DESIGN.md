@@ -132,7 +132,8 @@ setup + confirmation => action
 For protect:
 
 ```text
-protect-extension = remembered extension + prior divergence + current price/volatility damage
+protect-extension = remembered extension + prior divergence + current volatility deterioration
+                    + (price damage OR prior and current breadth AND credit deterioration)
 protect-break     = both indexes below MA50 with negative 20d returns for three sessions
                     + normalized 5d price damage >=0.35 + another deteriorating family
 ```
