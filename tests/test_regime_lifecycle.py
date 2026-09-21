@@ -253,7 +253,7 @@ def inputs(day=DAY, stress=0.8, move=-0.04, vol=0.2, ma50=-0.05, ma200=0.05):
 
 def test_owned_maxima_are_monotone_duplicate_invariant_and_bounded():
     first = maximum_evidence({"vix": (0.8, 0.1), "vvix": None})
-    assert first == Evidence(0.8, 0.1, False, ("vvix",))
+    assert first == Evidence(0.8, 0.1, False, ("vvix",), {"vix": (0.8, 0.1), "vvix": None})
     resolved = maximum_evidence({"vix": (0.8, 0.1), "vvix": (0.2, 0.3), "duplicate": (0.8, 0.1)})
     assert resolved.deterioration == 0.8
     assert second_family({"volatility": first}, "deterioration") == 0
@@ -435,6 +435,7 @@ def test_protection_recovery_needs_exact_causal_evidence():
             "date": str(DAY),
             "index": 0,
             "families": ["credit"],
+            "causal_leaves": {"credit": ["oas"]},
             "episode": "test",
             "lows": {"SPY": 100, "QQQ": 100},
         },

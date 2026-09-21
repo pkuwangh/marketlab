@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import math
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 
 ACTIONS = ("protect-break", "protect-extension", "redeploy-washout", "redeploy-confirm")
 LEGACY_ACTIONS = ("scale_down_protect", "scale_up_redeploy")
@@ -63,6 +63,7 @@ class Evidence:
     stabilization: float | None
     exact: bool
     missing: tuple[str, ...] = ()
+    leaves: dict[str, tuple[float, float] | None] = field(default_factory=dict)
 
 
 def maximum_evidence(leaves: dict[str, tuple[float, float] | None]) -> Evidence:
@@ -73,7 +74,19 @@ def maximum_evidence(leaves: dict[str, tuple[float, float] | None]) -> Evidence:
         max((v[1] for v in observed), default=None),
         not missing,
         missing,
+        leaves,
     )
+
+
+def _causes_repaired(evidence, causes, threshold):
+    for family, names in causes.items():
+        e = evidence[family]
+        if not names:
+            if not e.exact or e.deterioration is None or e.deterioration >= threshold:
+                return False
+        elif any(e.leaves.get(n) is None or e.leaves[n][0] >= threshold for n in names):
+            return False
+    return bool(causes)
 
 
 def second_family(evidence: dict[str, Evidence], side: str) -> float:
@@ -477,6 +490,7 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     if extension.get("id") != previous.get("extension", {}).get("id"):
         divergence = {}
     prior_divergence = []
+    prior_divergence_leaves = {}
     for family in ("breadth", "credit"):
         record = divergence.get(family, {})
         record["repair"] = record.get("repair", 0) + 1 if repaired(family) else 0
@@ -488,9 +502,15 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             and 0 < index - record["index"] <= config.divergence_age
         ):
             prior_divergence.append(family)
+            prior_divergence_leaves[family] = list(record.get("leaves", []))
         if extension.get("armed") and _mean(return20) is not None and _mean(return20) >= 0:
             if supports(family):
                 record["index"] = index
+                record["leaves"] = [
+                    name
+                    for name, value in evidence[family].leaves.items()
+                    if value is not None and value[0] >= config.family_gate
+                ]
         divergence[family] = record
     current_divergence = [
         f
@@ -603,8 +623,10 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             k: min(held.get("observed_lows", held["lows"])[k], prices[k]) for k in prices
         }
         recovered = (
-            _above(returns5)
-            and all(repaired(f) for f in held["families"])
+            direction == "protected"
+            and _above(returns5)
+            and _causes_repaired(evidence, held["causal_leaves"], config.family_gate)
+            and not (supports("trend") and bool(corroborator("deterioration")))
             and (held["action"] != "protect-break" or _above(ma50))
         )
         held["recovery_streak"] = held.get("recovery_streak", 0) + 1 if recovered else 0
@@ -653,6 +675,25 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             "date": day,
             "age": 0,
             "families": causes[action],
+            "causal_leaves": {
+                family: list(
+                    dict.fromkeys(
+                        [
+                            *[
+                                name
+                                for name, value in evidence[family].leaves.items()
+                                if value is not None and value[0] >= config.family_gate
+                            ],
+                            *(
+                                prior_divergence_leaves.get(family, [])
+                                if action == "protect-extension"
+                                else []
+                            ),
+                        ]
+                    )
+                )
+                for family in causes[action]
+            },
             "prices": prices.copy(),
             "lows": episode.get("lows", prices.copy()),
             "recovery_streak": 0,
@@ -684,7 +725,14 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         "break_streak": break_streak,
         "break_repair": repair_streak,
         "divergence": divergence,
-        "evidence": {f: {**asdict(e), "missing": list(e.missing)} for f, e in evidence.items()},
+        "evidence": {
+            f: {
+                **asdict(e),
+                "missing": list(e.missing),
+                "leaves": {n: list(v) if v is not None else None for n, v in e.leaves.items()},
+            }
+            for f, e in evidence.items()
+        },
         "gates": gates,
         "raw_candidates": raw,
         "eligible_candidates": eligible,

@@ -5,7 +5,59 @@ import pytest
 from test_regime_lifecycle import DAY, inputs, price
 
 from marketlab.regime import _vvix_vs_vix_feature
-from marketlab.regime_lifecycle import DEFAULT_CONFIG, _reopen_after_new_low, transition
+from marketlab.regime_lifecycle import (
+    DEFAULT_CONFIG,
+    _causes_repaired,
+    _reopen_after_new_low,
+    maximum_evidence,
+    transition,
+)
+
+
+@pytest.mark.parametrize("original,expected", [(None, False), ((0.4, 0), False), ((0.1, 0), True)])
+def test_causal_repair_requires_original_leaf_not_unused_missing_alternative(original, expected):
+    evidence = {"credit": maximum_evidence({"hyg_tlt": original, "oas": None})}
+    assert _causes_repaired(evidence, {"credit": ["hyg_tlt"]}, 0.35) is expected
+
+
+def test_repair_does_not_follow_a_different_family_maximum():
+    evidence = {"volatility": maximum_evidence({"vix": (0.1, 0), "vvix": (0.8, 0)})}
+    assert _causes_repaired(evidence, {"volatility": ["vix"]}, 0.35)
+    assert not _causes_repaired(evidence, {"volatility": ["vvix"]}, 0.35)
+
+
+def test_new_joint_damage_blocks_otherwise_repaired_protection():
+    state = {
+        "config": asdict(DEFAULT_CONFIG),
+        "index": 0,
+        "held": {
+            "posture": "protected",
+            "action": "protect-extension",
+            "episode": "test",
+            "index": 0,
+            "date": str(DAY),
+            "families": ["credit"],
+            "causal_leaves": {"credit": ["hyg_tlt"]},
+            "lows": {"SPY": 100, "QQQ": 100},
+        },
+    }
+    for i in range(1, 7):
+        day = DAY + timedelta(days=i)
+        snap, signals = inputs(day, stress=0.3, move=0.01, vol=0.2 if i <= 3 else 0, ma50=0.01)
+        snap = replace(snap, spy_return_20d=-0.08, qqq_return_20d=-0.10)
+        signals = tuple(s for s in signals if s.name != "credit_spread")
+        action, _, _ = transition(
+            snapshot=snap,
+            signals=signals,
+            histories={s: [price(day, 100, s)] for s in ("SPY", "QQQ")},
+            previous=state,
+        )
+        state = action.lifecycle
+        assert not state["evidence"]["credit"]["exact"]
+        if i <= 3:
+            assert state["held"]["recovery_streak"] == 0
+    assert state["exit_reason"] == "protection_recovered"
+    assert state["held"]["posture"] == "neutral"
 
 
 def test_retry_remembers_intervening_low_without_moving_entry_thesis():
@@ -21,6 +73,7 @@ def test_retry_remembers_intervening_low_without_moving_entry_thesis():
             "index": 0,
             "date": str(DAY),
             "families": ["trend"],
+            "causal_leaves": {"trend": ["5d"]},
             "lows": {"SPY": 100, "QQQ": 100},
         },
     }

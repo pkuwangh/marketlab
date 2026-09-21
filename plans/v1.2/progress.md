@@ -105,3 +105,20 @@ Result: core net +428.17% versus +409.85%, reduced +424.66% versus +417.18%; dra
 18 washout entries. Mean held SPY during extension falls +2.86% -> +1.79%, still a missed-upside
 cost on average. Keep the freshness/identity separation, not a claim that extension is solved.
 Traces: `06-extension-freshness/`. Full suite: 289 tests; lint passes.
+
+## 7. Protection Repairs Its Original Evidence
+
+Before replay: persist the observed deteriorating leaves behind each protective entry, including
+remembered divergence. Require those leaves to be observed and below the existing damage gate
+for repair; an unused, missing alternative must not permanently block restoration. Retain positive
+5d momentum, three-session persistence, break's MA50 repair, and fixed caps. Current corroborated
+trend-plus-nonprice damage blocks restoration even if original leaves repaired. Missing original
+evidence still blocks repair. No change to entry predicates or family aggregation.
+
+Result: core net +438.78% versus +428.17%; matched +453.64%. Drawdown worsens -28.75% ->
+-28.94%; core 2022 worsens slightly (-26.15% -> -26.21%). Post-2020 improves +113.36% ->
++117.13%. Reduced net +425.60% versus +424.66%. Core now has 30 break / 9 extension / 18
+washout entries. All protection holdings end by repair/opposite action, none by the 65-session
+cap. Washout holdings unchanged. Retain causal repair with coverage and new-damage safeguards;
+this narrows the core/reduced coverage artifact but does not eliminate protection's upside cost.
+Traces: `07-causal-repair/`. Full suite: 294 tests; lint passes.
