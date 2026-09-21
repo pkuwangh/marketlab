@@ -291,7 +291,7 @@ def update_setup(old, *, day, index, hit, stress, prices, anchors, kind, config)
             {"index": index, "date": day, "score": hit, "prices": prices, "anchors": anchors}
         )
     state["hits"] = hits
-    clock = state.get("index") if kind == "extension" else state.get("last_hit")
+    clock = state.get("last_hit")
     active = clock is not None and index - clock <= limit
     qualifying = hit is not None and (
         hit >= config.strong_hit or (hit >= config.persistent_hit and len(hits) >= count)
@@ -514,7 +514,7 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         current_w is not None and current_w >= 0.35 and math.sqrt(current_w * s) >= 0.55
     )
     extension_strength = math.sqrt(
-        max(0.0, 1 - (extension.get("age") or 0) / config.extension_age)
+        max(0.0, 1 - (index - extension.get("last_hit", index)) / config.extension_age)
         * extension.get("peak", 0.0)
         * d
     )
@@ -703,11 +703,7 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     ):
         age = setup.get("age")
         freshness_age = index - setup["last_hit"] if "last_hit" in setup else 0
-        decay = (
-            max(0.0, 1 - (age if kind == "extension" else freshness_age) / limit)
-            if age is not None
-            else None
-        )
+        decay = max(0.0, 1 - freshness_age / limit) if age is not None else None
         action_kwargs.update(
             {
                 f"{kind}_memory_status": "armed"

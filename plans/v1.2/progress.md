@@ -92,3 +92,16 @@ Core entry execution dates: 2017-08-31, 2018-02-16, 2019-05-17, 2020-10-06, 2023
 The 2023 continuation loses 4.21% in SPY; reclaiming MA50 is not enough to establish durable
 recovery. Trial removed, rather than relaxing more gates to force coverage. Confirm remains an
 unresolved path with zero historical entries under current rules. Traces: `05-pullback/`.
+
+## 6. Extension Evidence Freshness
+
+Before replay: measure extension expiry/decay from its last qualifying observation, not initial
+arming. Keep identity, consumption, divergence ordering, and the fixed holding cap unchanged.
+Freshness can extend an unused setup but cannot reset an already-used opportunity or holding.
+No new lifetime parameter: keep the existing 40-session window.
+
+Result: core net +428.17% versus +409.85%, reduced +424.66% versus +417.18%; drawdown and
+2022 unchanged. Core post-2020 +113.36% versus +107.42%. Core 25 break / 8 extension /
+18 washout entries. Mean held SPY during extension falls +2.86% -> +1.79%, still a missed-upside
+cost on average. Keep the freshness/identity separation, not a claim that extension is solved.
+Traces: `06-extension-freshness/`. Full suite: 289 tests; lint passes.

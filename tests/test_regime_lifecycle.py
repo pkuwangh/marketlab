@@ -46,7 +46,7 @@ def test_extension_rearm_discards_hits_before_cooling():
         prices={"SPY": 100}, anchors={"SPY": 100}, kind="extension", config=DEFAULT_CONFIG
     )
     state = update_setup(None, day="initial", index=0, hit=0.8, stress=0.8, **kwargs)
-    for index, hit in ((39, 0.65), (40, 0.65), (41, 0), (42, 0.65)):
+    for index, hit in ((39, 0.65), (40, 0.65), (81, 0), (82, 0.65)):
         state = update_setup(state, day=str(index), index=index, hit=hit, stress=hit, **kwargs)
     assert not state["armed"]
     assert state["hit_count"] == 1
@@ -585,7 +585,7 @@ def test_cap_does_not_allow_consumed_setup_to_reenter():
             assert action.state == "no_change"
 
 
-def test_extension_does_not_rearm_a_continuous_run_after_fixed_expiry():
+def test_extension_freshness_keeps_identity_without_rearming_consumption():
     state = None
     for i in range(44):
         state = update_setup(
@@ -599,8 +599,23 @@ def test_extension_does_not_rearm_a_continuous_run_after_fixed_expiry():
             kind="extension",
             config=DEFAULT_CONFIG,
         )
-    assert not state["armed"]
+        state["consumed"] = True
+    assert state["armed"]
+    assert state["consumed"]
     assert state["index"] == 0
+    assert state["last_hit"] == 43
+    state = update_setup(
+        state,
+        day="expired",
+        index=84,
+        hit=0,
+        stress=0,
+        prices={"SPY": 100},
+        anchors={"SPY": 100},
+        kind="extension",
+        config=DEFAULT_CONFIG,
+    )
+    assert not state["armed"]
 
 
 def test_costs_financing_and_missing_execution_are_not_hidden():
