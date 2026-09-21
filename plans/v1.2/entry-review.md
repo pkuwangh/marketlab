@@ -77,3 +77,33 @@ This restores an ordinary-correction warning but is not broad validation: only t
 entry dates drive the incremental result. July 2025 is still a false alarm followed by
 gains, January 2024 is retained, and there are no extension entries during 2022.
 The 40d non-pandemic return remains positive. Keep these limitations visible.
+
+## B1: Fresh Breakdown With Internal Corroboration
+
+Before replay: preserve the existing persistent MA50/20d damage setup and 5d damage
+threshold. Entry additionally needs both indexes below their prior five closing prices
+and breadth OR credit deterioration at the existing family gate. Volatility responding
+to falling prices alone does not establish transmission. This tests fresh continuation
+of selling, not just elapsed time below moving averages. Missing prior prices are unknown.
+Keep retry limits, washout, and exits unchanged; use the actual internal entry cause.
+
+Result: do not keep the combined B1 rule. Core breaks shrink 28 -> 18; SPY
+20/40/65d +0.6/+3.0/+6.1%, QQQ +0.5/+4.0/+7.5%, SPY DD -4.9/-6.7/-7.2%.
+The 40/65d averages worsen despite removing several recovery-day alerts. January and
+September 2022 warnings are delayed by requiring weak breadth/credit proxies; price
+weakness can be broad without relative breadth weakness, and HYG/TLT also embeds rates.
+Reduced produces only 15 entries and different results, reinforcing input sensitivity.
+
+## B2: Isolate Fresh Price Follow-Through
+
+Before replay: remove B1's new breadth/credit-only restriction and causal-family change.
+Keep only the new five-session joint closing low. This is a direct ablation of the failed
+combined hypothesis, not a threshold search. All original non-price families can corroborate.
+
+Result: also discard B2. Core/reduced break entries are identical: 23 events, SPY
++1.8/+3.7/+7.1%, QQQ +1.6/+4.5/+8.3%, SPY DD -4.0/-5.6/-6.1%.
+Fresh lows remove some bounce-day false alarms but do not identify whether selling will
+continue. Requiring simultaneous new lows delays useful warnings and can concentrate
+entries near exhaustion. Neither trial fixes break entry selection. Production break
+rules are unchanged, not silently tightened. All trial date changes, labels, and gate
+reasons remain in the entry replay artifacts; report this topic as unresolved.
