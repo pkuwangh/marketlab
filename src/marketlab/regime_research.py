@@ -1,4 +1,4 @@
-"""Fixed v1.1 comparisons over canonical observations, outside the daily command surface."""
+"""Local comparisons over canonical observations, outside the daily command surface."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from marketlab import regime as r
 from marketlab.regime_exposure import holding_outcomes, replay_exposure, summarize_exposure
 from marketlab.regime_lifecycle import ACTIONS, DEFAULT_CONFIG, ActionConfig, transition
+from marketlab.versions import REGIME_VERSION
 
 
 def comparison_configs(input_profile="reduced"):
@@ -50,8 +51,9 @@ def compare(
     *,
     start_date: date,
     end_date: date,
-    output_root=Path("data/research/regime/v1.1"),
+    output_root=Path("data/research/regime") / REGIME_VERSION,
     input_profile="reduced",
+    configs: tuple[ActionConfig, ...] | None = None,
 ):
     """Run predeclared comparisons; every variant owns its complete state trajectory."""
     if output_root.resolve().is_relative_to(Path("data/snapshots").resolve()):
@@ -69,7 +71,7 @@ def compare(
     dates = r._regime_backfill_source_dates(
         start_date=start_date, end_date=end_date, histories=histories
     )
-    configs = comparison_configs(input_profile)
+    configs = configs if configs is not None else comparison_configs(input_profile)
     variants = {c.name: [] for c in configs}
     baseline = []
     for index, day in enumerate(dates):

@@ -185,7 +185,7 @@ Date-level EOD snapshot computation requires exact SPY/QQQ observations for the 
 date. It fails instead of silently anchoring a new snapshot to the prior trading day; callers must
 refresh source observations or request a date present in local SPY history.
 
-`regime_lifecycle.py` owns the v1.1 daily transition. Snapshots persist setup IDs, qualifying hits,
+`regime_lifecycle.py` owns the v1.2 daily transition. Snapshots persist setup IDs, qualifying hits,
 continuous-stress peaks, causal price anchors/lows, divergence memory, consumed opportunities,
 coverage, four path gate traces, and the held posture with fixed entry/exit attribution. Single-date
 and daily runs require prior history; backfill deliberately initializes the chain. A missing
@@ -196,7 +196,7 @@ Descriptive pressure remains separate from action eligibility. Fixed input profi
 missing leaves from silently changing numerical meaning. Stale daily-price inputs cannot vote;
 unknown funding is not clear funding. Same-version iteration is replaceable; v1.0 artifacts remain
 readable without rerunning their algorithm. Internal experiments use independent state/configuration
-under `data/research/regime/v1.1`, never canonical snapshot paths or workbook inputs.
+under `data/research/regime/v1.2`, never canonical snapshot paths or workbook inputs.
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action: the
@@ -207,7 +207,7 @@ and redeploy modes
 diagnose their setup/confirmation gates, protect also groups repeated action days into alert
 clusters, posture evaluates the held state, and episode evaluates correction coverage. Additional
 `--by` options cover regime, pressure, signal, and policy. `regime export`
-writes saved regime snapshots into versioned `workbooks/regime-v1.1.xlsx` and `workbooks/regime-v1.1.csv` files
+writes saved regime snapshots into versioned `workbooks/regime-v1.2.xlsx` and `workbooks/regime-v1.2.csv` files
 so Excel charts can be maintained manually and refreshed in place.
 
 V1.1 redeploy diagnostics read each path's saved gates and resolver metadata, without rerunning

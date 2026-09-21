@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-REGIME_VERSION = "v1.1"
+REGIME_VERSION = "v1.2"
 BULLTARD_VERSION = "v0.0"
 POLICY_VERSION = "v0.1"
 DEFAULT_WORKING_VERSION = REGIME_VERSION

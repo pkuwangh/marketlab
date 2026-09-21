@@ -103,13 +103,13 @@ that date. Otherwise the command fails with the latest available SPY date and a 
 key-signals table: headline regime, setup/evidence, and action. Use `regime report`
 to inspect the recent multi-day regime trend, or add `--detail` when debugging the heavier
 evidence tables from the snapshot command itself.
-The v1.1 action-evidence table marks family votes, their numerical inputs, and non-voting
+The v1.2 action-evidence table marks family votes, their numerical inputs, and non-voting
 context separately. The recent report distinguishes today's new action from the held posture.
 
 Regime and market-signal snapshots are replaceable calculated outputs under `data/snapshots/`;
 source observations remain under `data/observations/`.
 
-The v1.1 action model uses saved same-version regime snapshots as its setup-memory
+The v1.2 action model uses saved same-version regime snapshots as its setup-memory
 chain. In practice, run `regime backfill` once before relying on a single-date
 `regime snapshot` or `daily` run. A fresh single-date snapshot fails with a clear
 message when this prior chain is missing. Start the backfill far enough before the
@@ -204,7 +204,7 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 ```
 
 Add `--save` to write the same report to a versioned canonical text file such as
-`workbooks/outcomes-action-v1.1.txt`.
+`workbooks/outcomes-action-v1.2.txt`.
 
 The default action outcome table uses every saved date only for the `baseline:all_days` row. Protect
 and redeploy rows use the first action day from each distinct armed-setup lifecycle, so gaps between
@@ -254,8 +254,8 @@ Export saved regime snapshots for Excel and CSV analysis:
 ./bin/marketlab regime export --start 2020-01-01 --end 2026-09-04
 ```
 
-The export refreshes the current versioned workbook, such as `workbooks/regime-v1.1.xlsx`,
-and writes the same rows to `workbooks/regime-v1.1.csv`. Use `--snapshot-version v1.0`
+The export refreshes the current versioned workbook, such as `workbooks/regime-v1.2.xlsx`,
+and writes the same rows to `workbooks/regime-v1.2.csv`. Use `--snapshot-version v1.0`
 to regenerate older-version files such as `workbooks/regime-v0.0.xlsx`. The XLSX output refreshes the `regime_data` worksheet and
 `RegimeData` table in place. Other workbook sheets are preserved, so you can create charts
 once in Excel and refresh the same workbook after each new backfill or daily run. Both

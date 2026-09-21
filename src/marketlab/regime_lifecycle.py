@@ -1,4 +1,4 @@
-"""Causal v1.1 action evidence and one persisted daily lifecycle transition."""
+"""Causal action evidence and one persisted daily lifecycle transition."""
 
 from __future__ import annotations
 
@@ -296,9 +296,10 @@ def update_setup(old, *, day, index, hit, stress, prices, anchors, kind, config)
         hit >= config.strong_hit or (hit >= config.persistent_hit and len(hits) >= count)
     )
     if kind == "extension" and not active and state.get("id"):
-        if hit is not None and hit < config.persistent_hit:
+        if not state.get("renewal_ready") and hit is not None and hit < config.persistent_hit:
             state["renewal_ready"] = True
-            state["hits"] = []
+            hits = []
+            state["hits"] = hits
         qualifying = qualifying and state.get("renewal_ready", False)
     if not active and qualifying:
         establishing = [hits[-1]] if hit >= config.strong_hit else hits[-count:]

@@ -93,7 +93,7 @@ history length, and licensing are clear enough for replay.
 
 ## Current Market-Regime Model
 
-The current v1.1 implementation computes:
+The current v1.2 implementation computes:
 
 - Directional regime score from family-level market signals.
 - Stretch/washout pressure from rolling percentile-normalized features.
@@ -402,7 +402,7 @@ The action output controls only the tactical sleeve:
 | `redeploy-washout` | Remembered stress releases with current confirmation and price opportunity. | Add tactical exposure. |
 | `redeploy-confirm` | An intact-trend pullback confirms recovery. | Add tactical exposure. |
 
-Held posture is persistent in v1.1 and shared by policy and executable exposure replay. Returning
+Held posture is persistent in v1.2 and shared by policy and executable exposure replay. Returning
 to normal after protection is not an above-normal redeploy. Policy v0.1 owns the fixed research
 weights: 80% permanent core plus 0/20/40% tactical, or 80/100/120% total exposure. The account
 borrows for exposure above 100%. Options suitability, sizing, and execution remain outside this

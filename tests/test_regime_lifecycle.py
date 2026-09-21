@@ -27,6 +27,31 @@ from marketlab.regime_lifecycle import (
 DAY = date(2026, 1, 2)
 
 
+def test_extension_rearm_keeps_interrupted_hits_after_first_cooling():
+    kwargs = dict(
+        prices={"SPY": 100}, anchors={"SPY": 100}, kind="extension", config=DEFAULT_CONFIG
+    )
+    state = update_setup(None, day="initial", index=0, hit=0.8, stress=0.8, **kwargs)
+    for index, hit in ((41, 0), (42, 0.65), (43, 0), (44, 0.65), (45, 0), (46, 0.65)):
+        state = update_setup(state, day=str(index), index=index, hit=hit, stress=hit, **kwargs)
+        assert state["hit_count"] == len(state["hits"])
+    assert state["armed"]
+    assert state["id"] == "extension:46"
+    assert state["rule"] == "persistent"
+    assert [h["index"] for h in state["hits"]] == [42, 44, 46]
+
+
+def test_extension_rearm_discards_hits_before_cooling():
+    kwargs = dict(
+        prices={"SPY": 100}, anchors={"SPY": 100}, kind="extension", config=DEFAULT_CONFIG
+    )
+    state = update_setup(None, day="initial", index=0, hit=0.8, stress=0.8, **kwargs)
+    for index, hit in ((39, 0.65), (40, 0.65), (41, 0), (42, 0.65)):
+        state = update_setup(state, day=str(index), index=index, hit=hit, stress=hit, **kwargs)
+    assert not state["armed"]
+    assert state["hit_count"] == 1
+
+
 @pytest.mark.parametrize(
     "breadth,credit,expected_hit",
     [
@@ -711,7 +736,7 @@ def test_policy_uses_independent_pillar_versions_and_held_posture(tmp_path):
     from marketlab.policy import PortfolioPolicyError, compute_portfolio_policy_snapshot
     from marketlab.regime import write_regime_snapshot
 
-    for version, posture in (("v1.0", "neutral"), ("v1.1", "protected")):
+    for version, posture in (("v1.0", "neutral"), ("v1.2", "protected")):
         write_regime_snapshot(
             replace(
                 _regime_snapshot(source_date=DAY, snapshot_version=version),
@@ -740,7 +765,7 @@ def test_policy_uses_independent_pillar_versions_and_held_posture(tmp_path):
     assert default.policy_state == "protect"  # no_change does not mean reset to neutral.
     assert default.marginal_beta_target == 0.8
     assert explicit.policy_state == "maintain"
-    assert default.regime_snapshot_version == "v1.1"
+    assert default.regime_snapshot_version == "v1.2"
     assert explicit.regime_snapshot_version == "v1.0"
     assert explicit.candidate_snapshot_version == "v0.0"
     assert explicit.snapshot_version == "v0.1"

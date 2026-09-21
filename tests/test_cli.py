@@ -1300,8 +1300,8 @@ def test_regime_export_outputs_export_metadata(
     ) -> RegimeExportResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 9, 4)
-        assert workbook_path == Path("workbooks/regime-v1.1.xlsx")
-        assert csv_path == Path("workbooks/regime-v1.1.csv")
+        assert workbook_path == Path("workbooks/regime-v1.2.xlsx")
+        assert csv_path == Path("workbooks/regime-v1.2.csv")
         assert snapshot_root == snapshot_root_arg
         assert price_root == price_root_arg
         assert signal_time == "eod"
@@ -1336,8 +1336,8 @@ def test_regime_export_outputs_export_metadata(
     )
 
     assert result.exit_code == 0
-    assert "xlsx_path=workbooks/regime-v1.1.xlsx" in result.output
-    assert "csv_path=workbooks/regime-v1.1.csv" in result.output
+    assert "xlsx_path=workbooks/regime-v1.2.xlsx" in result.output
+    assert "csv_path=workbooks/regime-v1.2.csv" in result.output
     assert "export_start=2026-01-01" in result.output
     assert "export_end=2026-09-04" in result.output
     assert "export_row_count=120" in result.output
@@ -3186,13 +3186,13 @@ def test_regime_outcomes_save_writes_versioned_report(
         ],
     )
 
-    output_path = tmp_path / "workbooks" / "outcomes-action-v1.1.txt"
+    output_path = tmp_path / "workbooks" / "outcomes-action-v1.2.txt"
     assert result.exit_code == 0
-    assert "outcome_report_path=workbooks/outcomes-action-v1.1.txt" in result.output
+    assert "outcome_report_path=workbooks/outcomes-action-v1.2.txt" in result.output
     assert output_path.is_file()
     report = output_path.read_text(encoding="utf-8")
     assert "outcome_group=action" in report
-    assert "artifact_version=v1.1" in report
+    assert "artifact_version=v1.2" in report
     assert "outcome_start=2026-01-01" in report
     assert "outcome_horizons=20" in report
     assert "frequency_table:" in report
