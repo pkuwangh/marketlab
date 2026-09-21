@@ -41,6 +41,7 @@ from marketlab.regime import (
     format_regime_key_signals,
     load_regime_snapshot,
 )
+from marketlab.regime_lifecycle import action_direction
 from marketlab.snapshots.models import (
     SignalTime,
     current_code_revision,
@@ -59,6 +60,7 @@ PORTFOLIO_POLICY_VERSION = versioned_label("portfolio_policy", POLICY_VERSION)
 POLICY_SNAPSHOT_FILENAME = "portfolio-policy.json"
 PORTFOLIO_POLICY_STATES = ("maintain", "protect", "redeploy")
 POLICY_BENCHMARK_PROXY = "50/50 SPY/QQQ beta-scaled proxy; option overlays excluded"
+POLICY_POSTURE_EXPOSURES = {"protected": 0.8, "neutral": 1.0, "redeploying": 1.2}
 
 
 class PortfolioPolicyError(ValueError):
@@ -302,21 +304,29 @@ def compute_portfolio_policy_snapshot(
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
+    regime_snapshot_version: str | None = None,
+    candidate_snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> PortfolioPolicySnapshotResult:
     """Compute one portfolio policy snapshot from saved regime and candidate snapshots."""
 
+    if snapshot_version not in (None, POLICY_SNAPSHOT_VERSION):
+        raise PortfolioPolicyError(
+            f"Policy computation writes current policy version {POLICY_SNAPSHOT_VERSION}; "
+            f"got {snapshot_version}. Select older regime/candidate inputs independently, "
+            "or use outcome replay to read older policy artifacts."
+        )
     regime_snapshot = _load_required_regime_snapshot(
         source_date=source_date,
         snapshot_root=regime_snapshot_root,
         signal_time=signal_time,
-        snapshot_version=snapshot_version,
+        snapshot_version=regime_snapshot_version,
     )
     candidate_snapshots = _load_candidate_snapshots(
         source_date=source_date,
         snapshot_root=candidate_snapshot_root,
         signal_time=signal_time,
-        snapshot_version=snapshot_version,
+        snapshot_version=candidate_snapshot_version,
     )
     snapshot = derive_portfolio_policy_snapshot(
         regime_snapshot=regime_snapshot,
@@ -356,6 +366,8 @@ def compute_portfolio_policy_backfill(
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
+    regime_snapshot_version: str | None = None,
+    candidate_snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> PortfolioPolicyBackfillResult:
     """Compute policy snapshots for every saved regime snapshot in a date range."""
@@ -376,6 +388,8 @@ def compute_portfolio_policy_backfill(
     snapshot_paths: list[Path] = []
     for source_date in source_dates:
         result = compute_portfolio_policy_snapshot(
+            regime_snapshot_version=regime_snapshot_version,
+            candidate_snapshot_version=candidate_snapshot_version,
             source_date=source_date,
             regime_snapshot_root=regime_snapshot_root,
             market_signal_snapshot_root=market_signal_snapshot_root,
@@ -411,11 +425,15 @@ def compute_daily_policy_report(
     policy_snapshot_root: Path = DEFAULT_POLICY_SNAPSHOT_ROOT,
     signal_time: SignalTime | str = SignalTime.EOD,
     snapshot_version: str | None = None,
+    regime_snapshot_version: str | None = None,
+    candidate_snapshot_version: str | None = None,
     write_snapshot: bool = True,
 ) -> DailyPolicyReportResult:
     """Build a concise daily report from saved regime, signal, and candidate snapshots."""
 
     policy_result = compute_portfolio_policy_snapshot(
+        regime_snapshot_version=regime_snapshot_version,
+        candidate_snapshot_version=candidate_snapshot_version,
         source_date=source_date,
         regime_snapshot_root=regime_snapshot_root,
         market_signal_snapshot_root=market_signal_snapshot_root,
@@ -429,12 +447,13 @@ def compute_daily_policy_report(
         source_date=source_date,
         snapshot_root=policy_snapshot_root,
         signal_time=signal_time,
+        snapshot_version=policy_result.snapshot.snapshot_version,
     )
     signals = _load_market_signals(
         source_date=source_date,
         snapshot_root=market_signal_snapshot_root,
         signal_time=signal_time,
-        snapshot_version=snapshot_version,
+        snapshot_version=policy_result.snapshot.market_signal_snapshot_version,
     )
     report = format_daily_policy_report(
         policy=policy_result.snapshot,
@@ -460,6 +479,11 @@ def derive_portfolio_policy_snapshot(
     """Map regime action evidence into a bounded marginal portfolio policy."""
 
     policy_state = _policy_state_from_action(regime_snapshot.action_state)
+    if regime_snapshot.lifecycle:
+        posture = regime_snapshot.lifecycle["held"]["posture"]
+        policy_state = {"neutral": "maintain", "protected": "protect", "redeploying": "redeploy"}[
+            posture
+        ]
     settings = _policy_settings(policy_state)
     confirm_count = sum(
         1 for candidate in candidate_snapshots if candidate.validation_status == "confirm"
@@ -945,18 +969,16 @@ def _load_market_signals(
 
 
 def _policy_state_from_action(action_state: str) -> str:
-    if action_state == "scale_down_protect":
-        return "protect"
-    if action_state == "scale_up_redeploy":
-        return "redeploy"
-    return "maintain"
+    return {"protected": "protect", "redeploying": "redeploy", "neutral": "maintain"}[
+        action_direction(action_state)
+    ]
 
 
 def _policy_settings(policy_state: str) -> dict[str, Any]:
     if policy_state == "protect":
         return {
-            "marginal_beta_target": 0.90,
-            "marginal_beta_range": "0.85-0.95 tactical beta",
+            "marginal_beta_target": POLICY_POSTURE_EXPOSURES["protected"],
+            "marginal_beta_range": "80% core; no tactical sleeve",
             "cash_posture": "raise or preserve cash; do not spend dry powder casually",
             "long_delta_stance": "avoid fresh long calls unless setup is exceptional",
             "overlay_stance": "consider covered calls against part of existing exposure",
@@ -964,16 +986,16 @@ def _policy_settings(policy_state: str) -> dict[str, Any]:
         }
     if policy_state == "redeploy":
         return {
-            "marginal_beta_target": 1.15,
-            "marginal_beta_range": "1.05-1.20 tactical beta",
-            "cash_posture": "deploy dry powder in tranches after washout confirmation",
+            "marginal_beta_target": POLICY_POSTURE_EXPOSURES["redeploying"],
+            "marginal_beta_range": "80% core; 40% tactical sleeve",
+            "cash_posture": "increase tactical exposure after confirmed recovery",
             "long_delta_stance": "consider 60-90 DTE calls or call spreads",
             "overlay_stance": "avoid capping too much rebound upside",
             "put_underwriting_stance": "consider cash-secured puts or defined-risk put spreads",
         }
     return {
-        "marginal_beta_target": 1.00,
-        "marginal_beta_range": "0.95-1.05 tactical beta",
+        "marginal_beta_target": POLICY_POSTURE_EXPOSURES["neutral"],
+        "marginal_beta_range": "80% core; 20% tactical sleeve",
         "cash_posture": "maintain current cash reserve",
         "long_delta_stance": "normal selectivity for new long-delta risk",
         "overlay_stance": "selective overlays only",
@@ -1024,9 +1046,11 @@ def _policy_rationale(
     if policy_state == "protect":
         rationale.append("Policy preserves the core and reduces only marginal tactical risk.")
     elif policy_state == "redeploy":
-        rationale.append("Policy adds exposure in tranches; it is not an all-in market call.")
+        rationale.append(
+            "Policy holds a bounded increased tactical sleeve, not an all-in position."
+        )
     else:
-        rationale.append("No rare-action threshold crossed, so the default is no portfolio move.")
+        rationale.append("Policy holds normal exposure, including after a completed tactical exit.")
 
     if candidate_count:
         rationale.append(
@@ -1158,6 +1182,7 @@ def _latest_policy_snapshot_before(
     source_date: date,
     snapshot_root: Path,
     signal_time: SignalTime | str = SignalTime.EOD,
+    snapshot_version: str | None = None,
 ) -> PortfolioPolicySnapshot | None:
     prior_dates = tuple(
         candidate_date
@@ -1172,11 +1197,16 @@ def _latest_policy_snapshot_before(
     )
     if not prior_dates:
         return None
-    return load_portfolio_policy_snapshot(
-        source_date=prior_dates[-1],
-        snapshot_root=snapshot_root,
-        signal_time=signal_time,
-    )
+    for previous_date in reversed(prior_dates):
+        snapshot = load_portfolio_policy_snapshot(
+            source_date=previous_date,
+            snapshot_root=snapshot_root,
+            signal_time=signal_time,
+            snapshot_version=snapshot_version,
+        )
+        if snapshot is not None:
+            return snapshot
+    return None
 
 
 def _load_price_histories(
@@ -1531,8 +1561,6 @@ def _format_grouped_table(rows: list[list[str]], *, group_column: int) -> str:
         current_group = row[group_column]
         if previous_group is not None and current_group != previous_group:
             lines.append(group_separator)
-        lines.append(
-            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
-        )
+        lines.append("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
         previous_group = current_group
     return "\n".join(lines)

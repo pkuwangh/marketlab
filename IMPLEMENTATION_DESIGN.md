@@ -181,20 +181,22 @@ key-signals table. `--detail` adds:
 - market signals;
 - pressure features.
 
-Date-level EOD snapshot computation requires an exact SPY observation for the requested source
+Date-level EOD snapshot computation requires exact SPY/QQQ observations for the requested source
 date. It fails instead of silently anchoring a new snapshot to the prior trading day; callers must
 refresh source observations or request a date present in local SPY history.
 
-Regime actions use the ordered same-version snapshot chain for bounded extension and washout setup
-memory. Single-date snapshot and daily workflows require prior history; backfill establishes and
-recomputes that chain in date order. Extension setup is a gated combination of trend extension and
-volatility complacency. Washout setup is a gated combination of trend damage, volatility stress,
-and acute breadth or credit transmission. Qualifying washout observations refresh memory, so its
-bounded grace period starts after the latest qualifying stress row. Protect requires an armed
-extension plus lifecycle confirmation. Redeploy separately requires armed prior washout, residual
-current broad washout, release from the remembered setup peak, and strong stabilization across at
-least two action families. Washout phase blocks late protect action, and eligible redeploy is not
-arbitrated against an ineligible raw protect-strength score.
+`regime_lifecycle.py` owns the v1.1 daily transition. Snapshots persist setup IDs, qualifying hits,
+continuous-stress peaks, causal price anchors/lows, divergence memory, consumed opportunities,
+coverage, four path gate traces, and the held posture with fixed entry/exit attribution. Single-date
+and daily runs require prior history; backfill deliberately initializes the chain. A missing
+intermediate SPY session is an error, not a new bootstrap. Resumed runs use the previous saved
+state rather than reconstructing memory from a report window. CSV/XLSX display canonical fields.
+
+Descriptive pressure remains separate from action eligibility. Fixed input profiles prevent
+missing leaves from silently changing numerical meaning. Stale daily-price inputs cannot vote;
+unknown funding is not clear funding. Same-version iteration is replaceable; v1.0 artifacts remain
+readable without rerunning their algorithm. Internal experiments use independent state/configuration
+under `data/research/regime/v1.1`, never canonical snapshot paths or workbook inputs.
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action: the
@@ -205,12 +207,27 @@ and redeploy modes
 diagnose their setup/confirmation gates, protect also groups repeated action days into alert
 clusters, posture evaluates the held state, and episode evaluates correction coverage. Additional
 `--by` options cover regime, pressure, signal, and policy. `regime export`
-writes saved regime snapshots into stable `workbooks/regime.xlsx` and `workbooks/regime.csv` files
+writes saved regime snapshots into versioned `workbooks/regime-v1.1.xlsx` and `workbooks/regime-v1.1.csv` files
 so Excel charts can be maintained manually and refreshed in place.
+
+V1.1 redeploy diagnostics read each path's saved gates and resolver metadata, without rerunning
+the algorithm. They emit a path/date/horizon row for each redeploy path, deduplicate the shared
+all-days baseline, retain zero-action rows, and separate unknown from failed predicates. Sole-
+blocker counts include episode consumption and competing-candidate checks. A selected entry's
+post-transition consumed flag is not misreported as a pre-entry block. Gate counts overlap;
+per-path status buckets are mutually exclusive. No snapshot backfill is required for report edits.
+
+V1.1 action outcomes also show executed holding windows and next-open exposure accounting.
+`regime_exposure.py` preserves overnight ownership, charges turnover/borrowing, compares untimed
+and matched-exposure controls, and carries warm state through report boundaries. Missing execution
+prices fail clearly. Fixed-horizon labels are not presented as realized holdings; final open
+episodes remain open. All four action rows appear even with zero events.
+Exposure weights come from `POLICY_POSTURE_EXPOSURES` in `policy.py`, also used by policy v0.1;
+the report does not maintain a competing allocation mapper.
 
 ## Portfolio Policy Outputs
 
-The v0.0 policy maps market-regime action states into provisional marginal posture:
+The v0.1 policy maps the saved held market-regime posture into provisional marginal posture:
 
 - `maintain`;
 - `protect`;
@@ -218,6 +235,10 @@ The v0.0 policy maps market-regime action states into provisional marginal postu
 
 It does not replace real portfolio accounting and does not execute trades. It is a research proxy
 for outcome replay and report generation.
+Regime input, Bulltard input, and policy output versions have independent internal selectors;
+ordinary workflows use their pillar defaults. Unknown action names are errors, not `maintain`.
+Policy computation refuses an old output version; older input versions remain independently
+selectable. Saved old policy artifacts are read by outcome replay, not rewritten with new rules.
 
 ## Bulltard Outputs
 

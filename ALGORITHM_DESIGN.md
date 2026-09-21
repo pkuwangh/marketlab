@@ -93,7 +93,7 @@ history length, and licensing are clear enough for replay.
 
 ## Current Market-Regime Model
 
-The current v1.0 implementation computes:
+The current v1.1 implementation computes:
 
 - Directional regime score from family-level market signals.
 - Stretch/washout pressure from rolling percentile-normalized features.
@@ -101,14 +101,22 @@ The current v1.0 implementation computes:
   another.
 - Deterioration/stabilization action evidence from bounded modules across trend, volatility,
   breadth, credit, and liquidity.
-- Rare action states: `no_change`, `scale_down_protect`, `scale_up_redeploy`.
-- A provisional portfolio policy mapping from action state to marginal beta/cash/overlay posture.
+- Four action identities: `protect-extension`, `protect-break`, `redeploy-washout`, and
+  `redeploy-confirm`; `no_change` means no new entry.
+- Persisted held posture and a separate provisional policy mapping; recovery to normal exposure
+  does not require a new tactical redeploy thesis.
 
-This is useful research scaffolding, not a finished model. The current implementation is v1.0
-research code. It separates extension setup, fragility setup, deterioration confirmation,
-and stabilization confirmation, and it uses saved same-version regime snapshots as the
-extension and washout action-memory chain. Thresholds and decay windows are still research
-assumptions, not calibrated production policy.
+This is a research candidate, not validated alpha. Source-owned family maxima and second-family
+confirmation replace averaging active features. Coverage records distinguish exact scores from
+partial lower bounds: strong observed support can prove a positive threshold, but missing evidence
+cannot prove recovery below one. Descriptive fragility does not gate actions or exits.
+
+In transmission-gated research controls, `X = max(breadth, credit)` is an alternative pool:
+either observed component can prove `X >= 0.35`. A low partial reading leaves that gate unknown,
+not failed. Each component still requires its declared pressure inputs; missing OAS does not
+turn the core credit mean into HYG/TLT alone. TV stress does not depend on X, but TVX stress and
+release require both components resolved. Compare TVX versus TV geometry on the explicit reduced
+profile or complete-coverage history; incomplete core history also changes arithmetic coverage.
 
 ## Setup, Confirmation, Action
 
@@ -122,27 +130,45 @@ setup + confirmation => action
 For protect:
 
 ```text
-extension_setup   = price extension / volatility complacency
-fragility_context = breadth, credit, liquidity, volatility, or trend weakness
-protect_confirm   = broad deterioration; volatility-only is not enough by itself
-protect_action    = armed extension setup + volatility turn + internal divergence
-                    + (price rollover or breadth-and-credit divergence)
+protect-extension = remembered extension + prior divergence + current price/volatility damage
+protect-break     = both indexes below MA50 with negative 20d returns for three sessions
+                    + trend deterioration + another owned deteriorating family
 ```
 
 For redeploy:
 
 ```text
-redeploy_setup   = washed-out / stressed tape
-redeploy_confirm = volatility cools, breadth stabilizes, credit stops worsening
-redeploy_action  = setup was armed and confirmation appears
+redeploy-washout = remembered trend/volatility stress + continuous release
+                  + two strong current families + remaining price opportunity + funding clear
+redeploy-confirm = prior established trend + distinct below-MA50 pullback above MA200
+                  + strong current trend and another family + opportunity + funding clear
 ```
 
 Stretch alone is not bearish. It often means strong risk-on momentum. Washout alone is not
-automatically bullish. It becomes actionable only when stabilization appears. Protect and
-redeploy are phase-exclusive: once washout is armed, late protect evidence cannot override a
-valid redeploy transition.
+automatically bullish. It becomes actionable only when stabilization appears. Arming needs either
+one >=0.75 hit or >=0.60 on 3/10 extension or 2/5 washout sessions. Extension lasts 40 sessions;
+washout lasts 15 from its last qualifying hit. Stress remains continuous across eligibility gates.
+Both redeploy paths require prices no more than halfway from causal episode lows to pre-damage
+20-session highs. This replaces current-fear eligibility, not current confirmation.
+
+Evaluate all paths independently. Remove consumed opportunities before resolving conflicts;
+opposing unused directions suppress new entries, not exits. Same-direction priority is break
+before extension and washout before confirm. No repeated or overlapping action resets entry age.
+Protection repairs after three sessions of positive short momentum and recovered causal evidence;
+break additionally requires MA50 repair. Washout failure needs trend/volatility deterioration and
+rising comparable stress; pullback failure needs broken structure and corroboration. Caps remain
+65 protected / 20 increased sessions. No automatic profit-target or opportunity-completion exit.
+
+The executable rules and constants live in `regime_lifecycle.py`. Historical comparisons use
+next adjusted open, equal SPY/QQQ, 80% core plus 0/20/40% tactical exposure, 5bp one-way costs,
+zero cash yield, and 5% annual borrowing cost. Same-average-exposure controls distinguish timing
+from risk allocation. The initial four-path candidate underperforms these controls; new-path
+coverage and protection's missed upside remain research problems, not reasons to fit cutoffs.
 
 ## Research Observations and Proposals
+
+The following observations preserve the historical v1.0 research context. Statements labeled
+"Implemented v1.0" describe that version, not the current action contract above.
 
 This section is a working research notebook for model problems and possible fixes. It should give
 future reviewers, collaborators, and coding agents enough context to challenge the assumptions
@@ -370,13 +396,17 @@ The action output controls only the tactical sleeve:
 
 | State | Intent | Typical bounded response |
 | --- | --- | --- |
-| `no_change` | Evidence is too balanced or incomplete. | Maintain current posture. |
-| `scale_down_protect` | Armed extension has confirmed a volatility turn plus price/internal deterioration. | Reduce marginal beta, rebuild cash, sell covered calls, avoid fresh long calls. |
-| `scale_up_redeploy` | Washout setup has confirmed stabilization. | Deploy cash in tranches, consider 60-90 DTE calls/call spreads, underwrite lower entries with defined risk. |
+| `no_change` | No new unused opportunity. | Retain held exposure unless a separate exit fires. |
+| `protect-extension` | Extended tape develops confirmed deterioration. | Reduce marginal exposure. |
+| `protect-break` | Persistent direct trend damage has corroboration. | Reduce marginal exposure. |
+| `redeploy-washout` | Remembered stress releases with current confirmation and price opportunity. | Add tactical exposure. |
+| `redeploy-confirm` | An intact-trend pullback confirms recovery. | Add tactical exposure. |
 
-Future posture replay must make state persistent. After protect activates, later `no_change` dates
-should remain protected until redeploy or an explicit reset. The current action-event table is not
-that backtest.
+Held posture is persistent in v1.1 and shared by policy and executable exposure replay. Returning
+to normal after protection is not an above-normal redeploy. Policy v0.1 owns the fixed research
+weights: 80% permanent core plus 0/20/40% tactical, or 80/100/120% total exposure. The account
+borrows for exposure above 100%. Options suitability, sizing, and execution remain outside this
+ETF research account.
 
 ## Bulltard and Single-Name Research
 

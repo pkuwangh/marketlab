@@ -88,34 +88,21 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert first_row["protect_path"] == "extension_unwind"
     assert first_row["posture_age"] == 0
     assert first_row["max_drawdown_since_posture"] == 0.0
-    assert _as_date(first_row["extension_elevated_since"]) == first_date
-    assert first_row["extension_elevated_age"] == 0
-    assert first_row["extension_armed"] is True
-    assert _as_date(first_row["extension_armed_since"]) == first_date
-    assert first_row["extension_armed_age"] == 0
-    assert first_row["extension_armed_decay"] == 1.0
-    assert first_row["extension_armed_source_strength"] == 0.76
-    assert first_row["extension_arm_rule"] == "strong"
-    assert first_row["extension_arm_hit_count"] == 1
-    assert first_row["extension_arm_window"] == 1
-    assert first_row["washout_armed"] is True
-    assert _as_date(first_row["washout_armed_since"]) == first_date
-    assert first_row["washout_armed_age"] == 0
-    assert first_row["washout_armed_decay"] == 1.0
-    assert first_row["washout_armed_source_strength"] == 0.80
-    assert first_row["washout_arm_rule"] == "strong"
-    assert first_row["washout_memory_score"] == 0.80
+    # These fixtures saved no armed state. Export must not infer it from setup pressure.
+    assert first_row["extension_elevated_since"] is None
+    assert first_row["extension_armed"] is False
+    assert first_row["extension_armed_since"] is None
+    assert first_row["washout_armed"] is False
+    assert first_row["washout_armed_since"] is None
+    assert first_row["washout_memory_score"] == 0.0
     second_row = dict(zip(headers, (cell.value for cell in worksheet[3]), strict=True))
     assert second_row["extension_elevated_since"] is None
     assert second_row["extension_elevated_age"] is None
-    assert second_row["extension_armed"] is True
-    assert _as_date(second_row["extension_armed_since"]) == first_date
-    assert second_row["extension_armed_age"] == 1
-    assert second_row["extension_arm_rule"] == "strong"
-    assert second_row["washout_armed"] is True
-    assert _as_date(second_row["washout_armed_since"]) == first_date
-    assert second_row["washout_armed_age"] == 1
-    assert second_row["washout_memory_score"] > 0.40
+    assert second_row["extension_armed"] is False
+    assert second_row["extension_armed_since"] is None
+    assert second_row["washout_armed"] is False
+    assert second_row["washout_armed_since"] is None
+    assert second_row["washout_memory_score"] == 0.0
     last_column = worksheet.cell(row=1, column=len(headers)).column_letter
     assert worksheet.tables["RegimeData"].ref == f"A1:{last_column}3"
     with csv_path.open(encoding="utf-8", newline="") as handle:
@@ -126,11 +113,11 @@ def test_export_regime_workbook_writes_refreshable_data_sheet_and_csv(
     assert csv_rows[0]["posture_state"] == "protected"
     assert csv_rows[0]["protect_path"] == "extension_unwind"
     assert csv_rows[0]["action_path"] == "extension_unwind"
-    assert csv_rows[0]["extension_elevated_age"] == "0"
+    assert csv_rows[0]["extension_elevated_age"] == ""
     assert csv_rows[1]["extension_elevated_age"] == ""
-    assert csv_rows[0]["extension_armed"] == "True"
-    assert csv_rows[1]["extension_armed_age"] == "1"
-    assert csv_rows[0]["extension_arm_rule"] == "strong"
+    assert csv_rows[0]["extension_armed"] == "False"
+    assert csv_rows[1]["extension_armed_age"] == ""
+    assert csv_rows[0]["extension_arm_rule"] == ""
     assert csv_rows[0]["pressure__vix_close__pctile"] == "0.2"
 
 
@@ -175,13 +162,13 @@ def test_export_regime_workbook_does_not_rearm_continuous_extension_run(
     worksheet = workbook["regime_data"]
     headers = [cell.value for cell in worksheet[1]]
     last_row = dict(zip(headers, (cell.value for cell in worksheet[row_count + 1]), strict=True))
-    assert _as_date(last_row["extension_elevated_since"]) == first_date
-    assert last_row["extension_elevated_age"] == row_count - 1
+    assert last_row["extension_elevated_since"] is None
+    assert last_row["extension_elevated_age"] is None
     assert last_row["extension_armed"] is False
-    assert _as_date(last_row["extension_armed_since"]) == dates[2]
-    assert last_row["extension_armed_age"] == row_count - 3
+    assert last_row["extension_armed_since"] is None
+    assert last_row["extension_armed_age"] is None
     assert last_row["extension_armed_decay"] is None
-    assert last_row["extension_arm_rule"] == "persistent"
+    assert last_row["extension_arm_rule"] is None
 
 
 def test_export_regime_workbook_preserves_other_sheets_and_clears_stale_rows(

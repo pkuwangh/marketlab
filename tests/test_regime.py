@@ -4,6 +4,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from legacy_regime_actions import derive_regime_action_state
 
 from marketlab.market_series import MarketSeriesObservation, write_market_series_observations
 from marketlab.market_signals import (
@@ -39,7 +40,6 @@ from marketlab.regime import (
     compute_regime_recent_report,
     compute_regime_redeploy_outcomes,
     compute_regime_snapshot,
-    derive_regime_action_state,
     derive_regime_postures,
     extension_memory_rows_from_snapshots,
     format_regime_key_signals,
@@ -307,7 +307,7 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert result.pressure.extension_setup_score == result.snapshot.extension_setup_score
     assert result.pressure.fragility_context_score == result.snapshot.fragility_context_score
     assert result.snapshot.stretch_score == int(round(result.snapshot.stretch_pressure_score * 5))
-    assert result.snapshot.washout_score == int(round(result.snapshot.washout_setup_score * 5))
+    assert result.snapshot.washout_score == int(round(result.snapshot.washout_pressure_score * 5))
     assert result.snapshot.protect_strength < 0.55
     assert result.snapshot.redeploy_strength < 0.55
     assert len(result.pressure.features) == 18
@@ -384,8 +384,10 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert "credit_spread" in result.signal_table
     assert "financial_conditions" in result.signal_table
     assert "yield_curve" in result.signal_table
-    assert "protect" in result.action_table
-    assert "redeploy" in result.action_table
+    assert "deteriorate" in result.action_table
+    assert "stabilize" in result.action_table
+    assert "family_max" in result.action_table
+    assert "context" in result.action_table
     assert "signal" in result.action_table
     assert "signal_pair" not in result.action_table
     assert "vvix_vs_vix" in result.action_table
@@ -407,8 +409,8 @@ def test_compute_regime_snapshot_scores_constructive_market(tmp_path: Path) -> N
     assert "redeploy" in summary_table
     assert "contradictions" not in summary_table
     assert "action          no_change;" not in summary_table
-    assert "lean below action threshold" in summary_table
-    assert "maintain" in summary_table
+    assert "second owned family" in summary_table
+    assert "held_posture" in summary_table
     assert "No actionable setup; maintain current posture" not in summary_table
     assert "no_change (stretch 1 / washout 0)" not in summary_table
     assert "input_gaps" in summary_table
@@ -549,6 +551,12 @@ def test_compute_regime_snapshot_rejects_stale_vix_term_structure(tmp_path: Path
     price_root = tmp_path / "prices"
     _write_price_history(
         price_root,
+        symbol="QQQ",
+        start=source_date - timedelta(days=29),
+        closes=[100.0 + index for index in range(30)],
+    )
+    _write_price_history(
+        price_root,
         symbol="SPY",
         start=source_date - timedelta(days=29),
         closes=[100.0 + index for index in range(30)],
@@ -589,16 +597,16 @@ def test_compute_regime_snapshot_rejects_stale_vix_term_structure(tmp_path: Path
     assert term_signal.status == "missing"
     assert term_signal.reason == "VIX9D/VIX/VIX3M term structure is unavailable on aligned dates"
     assert term_signal.details["vix_observed_date"] == source_date.isoformat()
-    assert term_signal.details["vix9d_observed_date"] == (
-        source_date - timedelta(days=20)
-    ).isoformat()
+    assert (
+        term_signal.details["vix9d_observed_date"] == (source_date - timedelta(days=20)).isoformat()
+    )
     assert term_signal.details["stale_pairs"] == ["VIX9D/VIX", "VIX/VIX3M"]
     assert result.snapshot.vix9d_vix_ratio is None
     assert result.snapshot.vix_vix3m_ratio is None
     assert "volatility/term_structure" in format_regime_key_signals(result)
 
 
-def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path) -> None:
+def test_compute_regime_snapshot_requires_qqq_for_causal_price_state(tmp_path: Path) -> None:
     source_date = date(2026, 8, 15)
     price_root = tmp_path / "prices"
     _write_price_history(
@@ -608,19 +616,13 @@ def test_compute_regime_snapshot_keeps_missing_components_neutral(tmp_path: Path
         closes=[100.0 + index for index in range(30)],
     )
 
-    result = compute_regime_snapshot(
-        source_date=source_date,
-        price_root=price_root,
-        snapshot_root=tmp_path / "snapshots",
-        write_snapshot=False,
-    )
-
-    assert result.snapshot.regime == "neutral"
-    assert result.snapshot.confidence == "low"
-    assert "QQQ" in result.snapshot.missing_symbols
-    assert "^VVIX" in result.snapshot.missing_symbols
-    assert "vol_of_vol" in result.signal_table
-    assert "missing" in result.table
+    with pytest.raises(RegimeError, match="Missing QQQ EOD observation"):
+        compute_regime_snapshot(
+            source_date=source_date,
+            price_root=price_root,
+            snapshot_root=tmp_path / "snapshots",
+            write_snapshot=False,
+        )
 
 
 def test_compute_regime_snapshot_includes_fred_change_details(tmp_path: Path) -> None:
@@ -2342,10 +2344,7 @@ def test_refresh_regime_prices_fetches_default_proxies(tmp_path: Path) -> None:
         cboe_urls.append(str(request.url))
         return httpx.Response(
             200,
-            text=(
-                "DATE,OPEN,HIGH,LOW,CLOSE\n"
-                "08/14/2026,15.0,16.0,14.0,15.5\n"
-            ),
+            text=("DATE,OPEN,HIGH,LOW,CLOSE\n08/14/2026,15.0,16.0,14.0,15.5\n"),
         )
 
     def eoddata_handler(request: httpx.Request) -> httpx.Response:
@@ -2660,17 +2659,13 @@ def test_compute_regime_action_outcomes_summarizes_action_states(tmp_path: Path)
     assert frequency["no_change"].action_count == 2
     assert frequency["scale_down_protect"].action_count == 1
     assert frequency["scale_up_redeploy"].action_count == 2
-    action_row = next(
-        row for row in result.summary_rows if row.bucket == "event:scale_up_redeploy"
-    )
+    action_row = next(row for row in result.summary_rows if row.bucket == "event:scale_up_redeploy")
     assert action_row.action_count == 1
     assert action_row.available_count == 1
     assert round(action_row.avg_spy_return or 0.0, 4) == round(20.0 / 102.0, 4)
     assert "scale_down_protect" in result.frequency_table
     assert "====" not in result.frequency_table
-    baseline_row = next(
-        row for row in result.summary_rows if row.bucket == "baseline:all_days"
-    )
+    baseline_row = next(row for row in result.summary_rows if row.bucket == "baseline:all_days")
     assert baseline_row.action_count == 5
     assert "event:scale_up_redeploy" in result.table
     assert "====" in result.table.splitlines()[1]
@@ -3402,6 +3397,7 @@ def _snapshot(
     return RegimeSnapshot(
         source_date=source_date,
         feature_version="fixture_features",
+        action_version="regime_action_v1.0",
         model_version=model_version,
         price_date=source_date,
         regime=regime,
@@ -3483,23 +3479,13 @@ def _pressure_module(
 
 def _regime_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
     source_date_value = source_date.isoformat()
-    return (
-        snapshot_root
-        / source_date_value
-        / "eod"
-        / REGIME_SNAPSHOT_VERSION
-        / "regime.json"
-    )
+    return snapshot_root / source_date_value / "eod" / REGIME_SNAPSHOT_VERSION / "regime.json"
 
 
 def _market_signal_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
     source_date_value = source_date.isoformat()
     return (
-        snapshot_root
-        / source_date_value
-        / "eod"
-        / REGIME_SNAPSHOT_VERSION
-        / "market-signals.jsonl"
+        snapshot_root / source_date_value / "eod" / REGIME_SNAPSHOT_VERSION / "market-signals.jsonl"
     )
 
 

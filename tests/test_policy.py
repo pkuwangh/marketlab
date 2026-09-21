@@ -59,9 +59,9 @@ def test_compute_policy_snapshot_maps_protective_regime_to_bounded_posture(
 
     assert result.snapshot_path == _policy_snapshot_path(policy_root, source_date)
     assert result.snapshot_path.is_file()
-    assert result.snapshot.snapshot_version == "v0.0"
+    assert result.snapshot.snapshot_version == "v0.1"
     assert result.snapshot.policy_state == "protect"
-    assert result.snapshot.marginal_beta_target == 0.90
+    assert result.snapshot.marginal_beta_target == 0.80
     assert result.snapshot.candidate_count == 3
     assert result.snapshot.confirm_candidate_count == 1
     assert result.snapshot.candidate_highlights[0].symbol == "META"
@@ -161,7 +161,7 @@ def test_daily_policy_report_shows_policy_change_and_signal_context(tmp_path: Pa
     assert "maintain on 2026-01-01 to redeploy" in result.report
     assert "Portfolio posture" in result.report
     assert "vol_of_vol" in result.report
-    assert "deploy dry powder in tranches" in result.report
+    assert "increase tactical exposure after confirmed recovery" in result.report
 
 
 def test_compute_policy_snapshot_uses_saved_regime_action_without_signal_override(
@@ -466,10 +466,4 @@ def _write_price_history(
 
 def _policy_snapshot_path(snapshot_root: Path, source_date: date) -> Path:
     source_date_value = source_date.isoformat()
-    return (
-        snapshot_root
-        / source_date_value
-        / "eod"
-        / "v0.0"
-        / "portfolio-policy.json"
-    )
+    return snapshot_root / source_date_value / "eod" / "v0.1" / "portfolio-policy.json"

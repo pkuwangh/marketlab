@@ -3194,8 +3194,17 @@ def _regime_posture_outcome_report_text(result: RegimePostureOutcomeResult) -> s
 
 
 def _regime_redeploy_outcome_report_text(result: RegimeRedeployOutcomeResult) -> str:
+    path_fields = (
+        (
+            ("regime_redeploy_day_count", len({row.source_date for row in result.outcomes})),
+            ("regime_redeploy_path_count", len({row.path for row in result.outcomes if row.path})),
+        )
+        if any(row.path for row in result.outcomes)
+        else ()
+    )
     return _format_outcome_tables(
         (
+            *path_fields,
             ("regime_redeploy_outcome_count", len(result.outcomes)),
             (
                 "available_regime_redeploy_outcome_count",

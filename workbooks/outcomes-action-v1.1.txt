@@ -1,0 +1,61 @@
+outcome_group=action
+artifact_version=v1.1
+snapshot_version=v1.1
+outcome_start=2016-01-04
+outcome_end=2026-06-01
+outcome_horizons=20,40,65
+generated_at=2026-09-21T08:25:08+00:00
+command=marketlab regime outcomes --by action --start 2016-01-04 --end 2026-06-01 --horizons 20,40,65
+
+regime_action_day_count=2617
+regime_action_event_count=38
+regime_action_event_outcome_count=114
+available_regime_action_event_outcome_count=114
+
+frequency_table:
+action_state       count  share
+-----------------  -----  -----
+no_change          2579   98.5%
+protect-break      21     0.8%
+protect-extension  5      0.2%
+redeploy-washout   12     0.5%
+redeploy-confirm   0      0.0%
+
+summary_table:
+bucket                   horizon  samples  available  avg_spy  avg_qqq  spy_dd  qqq_dd
+=======================  =======  =======  =========  =======  =======  ======  ======
+baseline:all_days        20d      2617     2617       +1.3%    +1.7%    -2.5%   -3.1%
+baseline:all_days        40d      2617     2617       +2.5%    +3.4%    -3.5%   -4.4%
+baseline:all_days        65d      2617     2617       +4.1%    +5.5%    -4.4%   -5.5%
+-----------------------  -------  -------  ---------  -------  -------  ------  ------
+event:protect-break      20d      21       21         +1.6%    +1.7%    -2.6%   -3.5%
+event:protect-break      40d      21       21         +1.9%    +2.1%    -4.3%   -5.7%
+event:protect-break      65d      21       21         +4.5%    +6.1%    -5.3%   -6.7%
+-----------------------  -------  -------  ---------  -------  -------  ------  ------
+event:protect-extension  20d      5        5          +4.2%    +5.2%    -0.2%   -0.1%
+event:protect-extension  40d      5        5          +4.7%    +7.2%    -0.2%   -0.1%
+event:protect-extension  65d      5        5          +2.8%    +6.0%    -2.5%   -1.0%
+-----------------------  -------  -------  ---------  -------  -------  ------  ------
+event:redeploy-confirm   20d      0        0          -        -        -       -
+event:redeploy-confirm   40d      0        0          -        -        -       -
+event:redeploy-confirm   65d      0        0          -        -        -       -
+-----------------------  -------  -------  ---------  -------  -------  ------  ------
+event:redeploy-washout   20d      12       12         +2.5%    +1.8%    -3.6%   -5.0%
+event:redeploy-washout   40d      12       12         +5.0%    +5.6%    -5.0%   -6.5%
+event:redeploy-washout   65d      12       12         +7.3%    +7.7%    -5.1%   -6.6%
+
+Executed holding windows: underlying ETF returns, not portfolio P/L; averages use closed episodes only
+action             entries  closed  open  avg_held_SPY  avg_held_QQQ  SPY_entry_loss  SPY_running_dd
+-----------------  -------  ------  ----  ------------  ------------  --------------  --------------
+protect-break      21       21      0     +1.94%        +3.02%        -2.98%          -4.67%
+protect-extension  5        5       0     +3.43%        +6.57%        -2.41%          -5.03%
+redeploy-washout   12       12      0     +0.90%        +0.76%        -1.67%          -2.96%
+redeploy-confirm   0        0       0     -             -             -               -
+
+Executable exposure: next adjusted open; 80% core, 0/20/40% tactical; 50/50 SPY/QQQ; cash 0%, borrowing 5%, one-way costs 5bp
+Cost/financing columns sum daily equity charges; reduced/increased count sessions.
+account           sessions  net       gross     portfolio_dd  avg_exposure  turnover  cost   financing  reduced  increased
+----------------  --------  --------  --------  ------------  ------------  --------  -----  ---------  -------  ---------
+timed             2616      +402.43%  +409.29%  -29.81%       0.944         20.451    1.02%  0.34%      820      87
+untimed           2616      +474.41%  +475.91%  -30.86%       1.000         5.213     0.26%  0.00%      0        0
+matched_exposure  2616      +426.15%  +427.48%  -29.35%       0.944         5.067     0.25%  0.00%      2616     0

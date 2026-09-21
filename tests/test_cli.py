@@ -1300,8 +1300,8 @@ def test_regime_export_outputs_export_metadata(
     ) -> RegimeExportResult:
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 9, 4)
-        assert workbook_path == Path("workbooks/regime-v1.0.xlsx")
-        assert csv_path == Path("workbooks/regime-v1.0.csv")
+        assert workbook_path == Path("workbooks/regime-v1.1.xlsx")
+        assert csv_path == Path("workbooks/regime-v1.1.csv")
         assert snapshot_root == snapshot_root_arg
         assert price_root == price_root_arg
         assert signal_time == "eod"
@@ -1336,8 +1336,8 @@ def test_regime_export_outputs_export_metadata(
     )
 
     assert result.exit_code == 0
-    assert "xlsx_path=workbooks/regime-v1.0.xlsx" in result.output
-    assert "csv_path=workbooks/regime-v1.0.csv" in result.output
+    assert "xlsx_path=workbooks/regime-v1.1.xlsx" in result.output
+    assert "csv_path=workbooks/regime-v1.1.csv" in result.output
     assert "export_start=2026-01-01" in result.output
     assert "export_end=2026-09-04" in result.output
     assert "export_row_count=120" in result.output
@@ -2243,8 +2243,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "market_series_success_count=1" in result.output
     assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
     assert (
-        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}"
-        in result.output
+        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}" in result.output
     )
     assert "market_signal_count=1" in result.output
     assert "trend   price_proxy  +2" in result.output
@@ -2255,10 +2254,7 @@ def test_regime_snapshot_fetches_prices_and_outputs_table(
     assert "regime_action_state=no_change" in result.output
     assert "regime_action_confidence=low" in result.output
     assert "market_signal_contradiction_count=1" in result.output
-    assert (
-        "overall: headline regime, setup/evidence, and final action"
-        in result.output
-    )
+    assert "overall: headline regime, setup/evidence, and final action" in result.output
     assert "signal" in result.output
     assert "value" in result.output
     assert "risk_on (+5)" in result.output
@@ -2396,17 +2392,13 @@ def test_regime_snapshot_outputs_metadata_and_overall_table_by_default(
     assert result.exit_code == 0
     assert f"regime_snapshot_path={snapshot_root / '2026-08-28.json'}" in result.output
     assert (
-        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}"
-        in result.output
+        f"market_signal_snapshot_path={signal_snapshot_root / '2026-08-28.jsonl'}" in result.output
     )
     assert "regime=risk_on" in result.output
     assert "regime_score=5" in result.output
     assert "regime_action_state=no_change" in result.output
     assert "market_signal_contradiction_count=1" in result.output
-    assert (
-        "overall: headline regime, setup/evidence, and final action"
-        in result.output
-    )
+    assert "overall: headline regime, setup/evidence, and final action" in result.output
     assert "risk_on (+5)" in result.output
     assert "stretch 0.42 / washout 0.08" in result.output
     assert "maintain" in result.output
@@ -3194,13 +3186,13 @@ def test_regime_outcomes_save_writes_versioned_report(
         ],
     )
 
-    output_path = tmp_path / "workbooks" / "outcomes-action-v1.0.txt"
+    output_path = tmp_path / "workbooks" / "outcomes-action-v1.1.txt"
     assert result.exit_code == 0
-    assert "outcome_report_path=workbooks/outcomes-action-v1.0.txt" in result.output
+    assert "outcome_report_path=workbooks/outcomes-action-v1.1.txt" in result.output
     assert output_path.is_file()
     report = output_path.read_text(encoding="utf-8")
     assert "outcome_group=action" in report
-    assert "artifact_version=v1.0" in report
+    assert "artifact_version=v1.1" in report
     assert "outcome_start=2026-01-01" in report
     assert "outcome_horizons=20" in report
     assert "frequency_table:" in report
@@ -3349,8 +3341,7 @@ def test_regime_outcomes_protect_outputs_gate_and_cluster_diagnostics(
                     avg_qqq_max_drawdown=-0.02,
                 ),
             ),
-            table="bucket                           horizon\n"
-            "protect:action:extension_unwind  20d",
+            table="bucket                           horizon\nprotect:action:extension_unwind  20d",
         )
 
     def fake_compute_regime_protect_clusters(

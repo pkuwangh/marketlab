@@ -85,6 +85,16 @@ _BASE_COLUMNS = (
     "posture_age",
     "max_drawdown_since_posture",
     "posture_reset_reason",
+    "input_profile",
+    "held_action",
+    "held_episode",
+    "washout_peak_stress",
+    "washout_last_hit_session",
+    "washout_release",
+    "washout_opportunity",
+    "raw_candidates",
+    "candidate_gates",
+    "evidence_coverage",
     "stretch_pressure",
     "washout_pressure",
     "extension_setup",
@@ -239,7 +249,7 @@ def export_regime_workbook(
         raise RegimeExportError(
             "No market regime snapshots found for "
             f"{start_date.isoformat()} through {end_date.isoformat()}"
-    )
+        )
 
     headers = _headers_for_snapshots(snapshots)
     rows = _rows_for_snapshots(snapshots, price_root=price_root, headers=headers)
@@ -315,34 +325,20 @@ def _headers_for_snapshots(snapshots: tuple[RegimeSnapshot, ...]) -> tuple[str, 
     pressure_feature_names = _ordered_names(
         known_names=tuple(spec.name for spec in PRESSURE_FEATURE_SPECS),
         seen_names=(
-            feature.name
-            for snapshot in snapshots
-            for feature in snapshot.pressure_features
+            feature.name for snapshot in snapshots for feature in snapshot.pressure_features
         ),
     )
     pressure_module_names = _ordered_names(
         known_names=tuple(spec.name for spec in PRESSURE_MODULE_SPECS),
-        seen_names=(
-            module.name
-            for snapshot in snapshots
-            for module in snapshot.pressure_modules
-        ),
+        seen_names=(module.name for snapshot in snapshots for module in snapshot.pressure_modules),
     )
     action_feature_names = _ordered_names(
         known_names=_ACTION_FEATURE_ORDER,
-        seen_names=(
-            feature.name
-            for snapshot in snapshots
-            for feature in snapshot.action_features
-        ),
+        seen_names=(feature.name for snapshot in snapshots for feature in snapshot.action_features),
     )
     action_module_names = _ordered_names(
         known_names=_ACTION_MODULE_ORDER,
-        seen_names=(
-            module.name
-            for snapshot in snapshots
-            for module in snapshot.action_modules
-        ),
+        seen_names=(module.name for snapshot in snapshots for module in snapshot.action_modules),
     )
 
     headers: list[str] = [*_BASE_COLUMNS, *_MARKET_INPUT_COLUMNS]
@@ -407,8 +403,6 @@ def _rows_for_snapshots(
             spy_history=tuple(load_price_history(symbol="SPY", price_root=price_root)),
         )
     }
-    extension_memory_rows = _armed_extension_memory_rows(snapshots)
-    washout_memory_rows = _armed_washout_memory_rows(snapshots)
 
     rows: list[dict[str, Any]] = []
     for snapshot in snapshots:
@@ -420,8 +414,39 @@ def _rows_for_snapshots(
             qqq_base=qqq_base,
         )
         _add_posture(row, postures.get(snapshot.source_date))
-        row.update(extension_memory_rows.get(snapshot.source_date, {}))
-        row.update(washout_memory_rows.get(snapshot.source_date, {}))
+        if snapshot.lifecycle:
+            import json
+
+            state = snapshot.lifecycle
+            row.update(
+                {
+                    "input_profile": state["config"]["input_profile"],
+                    "held_action": state["held"].get("action"),
+                    "held_episode": state["held"].get("episode"),
+                    "washout_peak_stress": state["washout"].get("peak"),
+                    "washout_last_hit_session": state["washout"].get("last_hit"),
+                    "washout_release": state["washout"].get("release"),
+                    "washout_opportunity": state["washout_opportunity"],
+                    "raw_candidates": ",".join(state["raw_candidates"]),
+                    "candidate_gates": json.dumps(state["gates"], sort_keys=True),
+                    "evidence_coverage": json.dumps(state["evidence"], sort_keys=True),
+                }
+            )
+        # Canonical fields must not be overwritten by an export-window reconstruction.
+        for kind in ("extension", "washout"):
+            for suffix in (
+                "armed",
+                "armed_since",
+                "armed_age",
+                "armed_decay",
+                "armed_source_strength",
+                "arm_rule",
+                "arm_hit_count",
+                "arm_window",
+                "memory_score",
+            ):
+                key = f"{kind}_{suffix}"
+                row[key] = getattr(snapshot, key)
         _add_pressure_features(row, snapshot)
         _add_pressure_modules(row, snapshot)
         _add_action_features(row, snapshot)

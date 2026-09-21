@@ -34,7 +34,7 @@ generation, then independently validate and measure it.
 
 - Market regime and portfolio posture, primary pillar:
   - Refreshes SPY/QQQ, VIX/VVIX, VIX term-structure, breadth, HYG/TLT, and FRED credit/liquidity/rates observations.
-  - Computes daily directional regime, stretch/washout setup pressure, family-bounded deterioration/stabilization action evidence, and rare action states: `no_change`, `scale_down_protect`, or `scale_up_redeploy`.
+  - Computes directional regime, stretch/washout pressure, source-owned confirmation, and four distinct actions: `protect-extension`, `protect-break`, `redeploy-washout`, and `redeploy-confirm`. `no_change` retains the saved posture unless its exit rule fires.
   - Reports named turn, divergence, confirmation, and contradiction evidence across trend, volatility, breadth, credit, and liquidity modules.
   - Maps regime action states into provisional marginal beta, cash, overlay, and single-name risk posture.
   - Replays regime, market-signal, pressure, and policy states against forward SPY/QQQ returns and drawdowns.
@@ -103,40 +103,49 @@ that date. Otherwise the command fails with the latest available SPY date and a 
 key-signals table: headline regime, setup/evidence, and action. Use `regime report`
 to inspect the recent multi-day regime trend, or add `--detail` when debugging the heavier
 evidence tables from the snapshot command itself.
+The v1.1 action-evidence table marks family votes, their numerical inputs, and non-voting
+context separately. The recent report distinguishes today's new action from the held posture.
 
-Regime and market-signal snapshots are replaceable calculated under `data/snapshots/`;
+Regime and market-signal snapshots are replaceable calculated outputs under `data/snapshots/`;
 source observations remain under `data/observations/`.
 
-The v1.0 action model uses saved same-version regime snapshots as its setup-memory
+The v1.1 action model uses saved same-version regime snapshots as its setup-memory
 chain. In practice, run `regime backfill` once before relying on a single-date
 `regime snapshot` or `daily` run. A fresh single-date snapshot fails with a clear
 message when this prior chain is missing. Start the backfill far enough before the
-period you care about; extension-unwind memory can look back up to 40 saved trading
-snapshots and washout memory up to 15.
+period you care about; extension memory lasts 40 trading sessions from arming, and washout
+memory lasts 15 sessions after the last qualifying stress observation. Saved state carries
+earlier episode history without rereading every prior snapshot on each daily run.
 
 Extension memory does not arm from every one-day setup blip. The current defaults arm on
 either one strong setup snapshot (`extension_setup >= 0.75`) or persistent setup
 (`extension_setup >= 0.60` on at least 3 of the last 10 saved trading snapshots). These tuning
-parameters live together near the top of `src/marketlab/regime.py`. The setup itself requires
+parameters and lifecycle rules live in `src/marketlab/regime_lifecycle.py`. The setup itself requires
 both trend extension and volatility complacency to be at least `0.50`; one extreme leg cannot
-compensate for a missing one. Protect then requires a volatility turn, breadth/credit divergence,
-and either short-term SPY/QQQ rollover or divergence across both breadth and credit while the
-indexes remain above their 200-day trends.
+compensate for a missing one. `protect-extension` requires remembered internal divergence followed
+by price and volatility deterioration. `protect-break` independently recognizes persistent damage
+below the intermediate trend with another confirming family; prior extension is not required.
 
 Washout memory is intentionally faster. It arms from either one strong snapshot
 (`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
-the last 5 saved trading snapshots). Washout setup requires trend damage, volatility stress, and
-acute transmission through breadth or credit; slower NFCI liquidity data remains context and a
+the last 5 saved trading snapshots). Washout setup requires both trend damage and volatility stress;
+breadth/credit deterioration is not mandatory. NFCI liquidity data remains context and a
 funding-stress veto, but cannot establish tactical washout by itself. Qualifying stress refreshes
 the memory, so its 15-snapshot grace period starts after the last qualifying stress snapshot, not
 the first setup date.
 
-Redeploy then requires four distinct gates: armed prior washout, current broad washout of at least
-`0.35`, at least a `0.05` release from the remembered structured-washout peak, and stabilization of
-at least `0.75` across at least two independent families. A family counts as confirming at `0.35`.
-Redeploy strength uses current broad washout and stabilization; remembered setup establishes phase
-eligibility but cannot substitute for a current opportunity. Late protect evidence cannot block a
-valid redeploy.
+`redeploy-washout` requires armed stress, continuous-stress release of at least `0.05`, current
+stabilization of at least `0.75` in two distinct owned families, and remaining price opportunity.
+Both indexes must have recovered no more than half their episode's observed high-to-low damage.
+`redeploy-confirm` is a separate orderly-pullback recovery path within an intact longer-term trend.
+Both need a resolved funding veto. Missing inputs are not calm readings.
+
+The action is a new entry, not the held posture. Entries consume setup episodes; repeated signals
+do not renew the holding clock. Protection ends when its causes repair; increased exposure ends
+on thesis failure or timeout. Ordinary restoration to normal exposure needs no redeploy action.
+The four-path model is a research candidate, not validated market-beating timing. Initial isolated
+comparisons show material missed-upside costs and no `redeploy-confirm` entries; thresholds have
+not been adjusted to improve those historical results.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
@@ -195,13 +204,18 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 ```
 
 Add `--save` to write the same report to a versioned canonical text file such as
-`workbooks/outcomes-action-v1.0.txt`.
+`workbooks/outcomes-action-v1.1.txt`.
 
 The default action outcome table uses every saved date only for the `baseline:all_days` row. Protect
 and redeploy rows use the first action day from each distinct armed-setup lifecycle, so gaps between
 confirmations do not count the same market episode repeatedly. Older snapshots without lifecycle
 fields fall back to grouping same-action rows separated by no more than five saved snapshots. The
 separate frequency table still reports daily action-state counts.
+
+V1.1 also reports actual entry/exit-open holding windows and a simulated ETF account against untimed
+and exposure-matched controls. This assumes equal SPY/QQQ weights, 80% core plus 0/20/40% tactical
+exposure, 5bp one-way costs, zero cash yield, and 5% borrowing cost. These are research assumptions,
+not orders or broker execution. Older versions retain their original fixed-horizon reports.
 
 Replay headline regime labels, held posture, protect/redeploy diagnostics, normalized pressure
 buckets, SPY correction episodes, market-signal rows, or policy states:
@@ -217,9 +231,19 @@ buckets, SPY correction episodes, market-signal rows, or policy states:
 ./bin/marketlab regime outcomes --by policy   --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 ```
 
-`--by protect` first compares extension, fragility, and deterioration gate combinations, then
-groups consecutive `scale_down_protect` days so false alerts are counted by signal event instead
-of repeated daily rows. `--by redeploy` compares washout setup and stabilization combinations.
+`--by protect` compares the two protective paths' eligibility diagnostics, then
+groups consecutive protect-action days so false alerts are counted by signal event instead
+of repeated daily rows. V1.1 `--by redeploy` diagnoses `redeploy-washout` and `redeploy-confirm`
+separately, including zero-entry paths. Each path gets one status per day; `all` counts market
+dates only once. Returns are daily forward labels, not independent trade returns; the episode
+column counts distinct setup IDs, which can appear in several status buckets.
+
+The gate table separates failed checks from unknown inputs. Setup checks cover all days; other
+checks cover active setup days. Its `only_fail`/`only_unknown` counts require every other entry
+requirement to pass, including an unused episode and action selection. Thus `funding_unknown_only`
+does not include already-used setups or days also failing confirmation. `consumed` and
+`already_held` are lifecycle statuses, not claims that all other checks passed; the gate table
+still shows their missing or failed checks. Earlier versions retain their original diagnostics.
 `--by episode` labels corrections as `ordinary`, `scheduled_event_proxy`, or `shock`; fast deep
 shocks are tracked separately because the protect model is not expected to predict every
 exogenous crash.
@@ -230,8 +254,8 @@ Export saved regime snapshots for Excel and CSV analysis:
 ./bin/marketlab regime export --start 2020-01-01 --end 2026-09-04
 ```
 
-The export refreshes the current versioned workbook, such as `workbooks/regime-v1.0.xlsx`,
-and writes the same rows to `workbooks/regime-v1.0.csv`. Use `--snapshot-version v0.0`
+The export refreshes the current versioned workbook, such as `workbooks/regime-v1.1.xlsx`,
+and writes the same rows to `workbooks/regime-v1.1.csv`. Use `--snapshot-version v1.0`
 to regenerate older-version files such as `workbooks/regime-v0.0.xlsx`. The XLSX output refreshes the `regime_data` worksheet and
 `RegimeData` table in place. Other workbook sheets are preserved, so you can create charts
 once in Excel and refresh the same workbook after each new backfill or daily run. Both
@@ -268,11 +292,14 @@ Backfill and replay policy snapshots:
 ./bin/marketlab regime outcomes --by policy --start 2025-01-02 --end 2026-05-22 --horizons 20,40,65
 ```
 
-The v0.0 policy keeps the permanent SPY/QQQ core conceptually unchanged. It only maps the marginal tactical sleeve:
+The v0.1 research policy keeps an 80% permanent SPY/QQQ core and maps the saved held posture:
 
-- `maintain`: target roughly neutral tactical beta and make no forced change.
-- `protect`: reduce marginal beta, preserve or raise cash, and consider covered calls.
-- `redeploy`: add exposure in tranches after washout conditions, including possible 60-90 DTE calls/call spreads or bounded put underwriting.
+- `maintain`: 20% tactical exposure, 100% total.
+- `protect`: no tactical exposure, 80% total.
+- `redeploy`: 40% tactical exposure, 120% total, including borrowing in the research account.
+
+These fixed ETF weights are shared with the executable exposure report, not trading instructions.
+Options hints remain unvalidated context and are excluded from the measured returns.
 
 
 ## Bulltard Pillar
