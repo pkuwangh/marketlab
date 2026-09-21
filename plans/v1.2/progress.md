@@ -42,3 +42,19 @@ improves to -25.15% and post-2020 to +108.90%; reduced 2022 is slightly worse at
 Washout's mean held return does not improve (+0.81%, -0.16% excluding the March 2020 entry);
 the aggregate benefit includes changed protection and restoration. Retain the directional
 correction without claiming it fixes washout performance. Traces: `02-volatility/`.
+
+## 3. Renewed Washout Damage
+
+Before replay: use the existing normalized five-session price damage, not max(5d,20d) residual
+damage, in washout thesis failure. Keep the 0.35 damage threshold, volatility threshold, rising
+stress conjunction, entries, holding caps, and all other exits unchanged. Save the short damage
+reading in lifecycle state so the exit is auditable. Test a strong recovery still carrying old
+20-day losses, followed by actual renewed selling; do not introduce a delayed-exit parameter.
+
+Tested rule: replace the trend-family failure check with
+`mean(clip(-SPY_5d/0.03), clip(-QQQ_5d/0.04)) >= 0.35`, requiring both inputs. Synthetic
+recovery/new-selling regression passed. Replay core net fell to +391.41%, drawdown -29.47%;
+reduced net +393.62%, drawdown -30.34%. Only two core holdings changed: February 2022 exit
+delayed Feb 11 -> Feb 14 (SPY -1.34% -> -3.42%), March 2025 exit delayed Mar 27 -> Mar 31
+(-0.63% -> -3.67%). Post-2020 and 2022 both worsen. The 5d-only hypothesis is not retained;
+production remains topic 2's rules. Detailed replay remains under `03-washout-failure/`.
