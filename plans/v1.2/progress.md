@@ -122,3 +122,17 @@ washout entries. All protection holdings end by repair/opposite action, none by 
 cap. Washout holdings unchanged. Retain causal repair with coverage and new-damage safeguards;
 this narrows the core/reduced coverage artifact but does not eliminate protection's upside cost.
 Traces: `07-causal-repair/`. Full suite: 294 tests; lint passes.
+
+## 8. Break Entry Requires Recent Selling
+
+Before replay: replace break's max(5d,20d) trend-damage gate with its existing normalized 5d
+price-damage reading at the same 0.35 threshold. Keep three-session below-MA50/negative-20d
+persistence, independent corroboration, retries, and exits unchanged. This tests fresh damage
+versus residual loss, not a faster persistence threshold or a prediction of shock announcements.
+
+Result: core net +442.04% versus +438.78%, reduced +428.77% versus +425.60%; drawdowns,
+2022, and post-2020 unchanged. One core/reduced break entry removed; remaining holdings unchanged.
+Keep the direct-recent-selling requirement as a clearer break definition, with very limited
+historical evidence of improvement. This is not proof that non-price corroboration adds alpha
+over an equally delayed price-only strategy. Traces: `08-break-damage/`.
+The removed signal is 2016-05-19. Full suite: 296 tests; lint passes.

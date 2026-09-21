@@ -572,7 +572,11 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             "enabled": config.break_path,
             "setup": br.get("armed", False),
             "persistent_damage": break_streak >= config.persistence,
-            "trend": threshold_gate(("trend",)),
+            "fresh_damage": confirmation_gate(
+                [maximum_evidence({"5d": evidence["trend"].leaves.get("5d")})],
+                "deterioration",
+                config.family_gate,
+            ),
             "corroboration": threshold_gate(FAMILIES[1:]),
             "phase": not config.phase_veto or not wash["armed"],
         },

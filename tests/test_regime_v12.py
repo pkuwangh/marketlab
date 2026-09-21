@@ -60,6 +60,23 @@ def test_new_joint_damage_blocks_otherwise_repaired_protection():
     assert state["held"]["posture"] == "neutral"
 
 
+@pytest.mark.parametrize("move,expected", [(0.01, "no_change"), (-0.04, "protect-break")])
+def test_break_needs_recent_selling_not_only_old_medium_term_losses(move, expected):
+    state = None
+    for i in range(3):
+        day = DAY + timedelta(days=i)
+        snap, signals = inputs(day, stress=0.3, move=move, vol=0.2)
+        snap = replace(snap, spy_return_20d=-0.08, qqq_return_20d=-0.10)
+        action, _, _ = transition(
+            snapshot=snap,
+            signals=signals,
+            histories={s: [price(day, 90, s)] for s in ("SPY", "QQQ")},
+            previous=state,
+        )
+        state = action.lifecycle
+    assert action.state == expected
+
+
 def test_retry_remembers_intervening_low_without_moving_entry_thesis():
     config = replace(DEFAULT_CONFIG, protect_cap=3)
     state = {
