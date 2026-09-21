@@ -16,6 +16,36 @@ from marketlab.regime_lifecycle import (
 )
 
 
+@pytest.mark.parametrize("missing_original", [False, True])
+def test_extension_divergence_repairs_original_credit_without_unrelated_oas(missing_original):
+    state = None
+    histories = {s: [] for s in ("SPY", "QQQ")}
+    for i in range(5):
+        day = DAY + timedelta(days=i)
+        snap, signals = inputs(
+            day,
+            stress=0.1 if i < 4 else 0.5,
+            move=0.04 if i < 4 else -0.04,
+            vol=0 if i < 4 else 0.2,
+        )
+        signals = tuple(
+            replace(s, details={"hyg_tlt_relative_5d": -0.04 if i == 0 else 0.04})
+            if s.family == "credit"
+            else s
+            for s in signals
+            if s.name != "credit_spread"
+            and not (missing_original and 1 <= i <= 3 and s.family == "credit")
+        )
+        for symbol in histories:
+            histories[symbol].append(price(day, 100 + i if i < 4 else 99, symbol))
+        action, _, _ = transition(
+            snapshot=snap, signals=signals, histories=histories, previous=state
+        )
+        state = action.lifecycle
+    assert state["gates"]["protect-extension"]["divergence"] is missing_original
+    assert ("index" in state["divergence"]["credit"]) is missing_original
+
+
 def test_new_washout_episode_clears_old_retry_metadata():
     kwargs = dict(prices={"SPY": 80}, anchors={"SPY": 100}, kind="washout", config=DEFAULT_CONFIG)
     old = update_setup(None, day="old", index=0, hit=0.9, stress=0.9, **kwargs)

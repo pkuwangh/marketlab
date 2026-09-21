@@ -444,10 +444,6 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             count,
         )
 
-    def repaired(family):
-        e = evidence[family]
-        return e.exact and e.deterioration is not None and e.deterioration < config.family_gate
-
     def corroborator(side, exclude=("trend",), gate=None):
         families = [f for f in FAMILIES if f not in exclude and supports(f, side, gate)]
         return sorted(families, key=lambda f: (-score(f, side), f))[:1]
@@ -494,7 +490,10 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     prior_divergence_leaves = {}
     for family in ("breadth", "credit"):
         record = divergence.get(family, {})
-        record["repair"] = record.get("repair", 0) + 1 if repaired(family) else 0
+        original_repaired = _causes_repaired(
+            evidence, {family: record.get("leaves", [])}, config.family_gate
+        )
+        record["repair"] = record.get("repair", 0) + 1 if original_repaired else 0
         if record.get("repair", 0) >= config.persistence:
             record.pop("index", None)
         if (
