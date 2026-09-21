@@ -4756,7 +4756,10 @@ def _vvix_vs_vix_feature(
     relative_change = None
     if vix_return_5d is not None:
         relative_change = vvix_return_5d - vix_return_5d
-        relative_score = _positive_change_score(relative_change, full_at=0.12)
+        # Two cooling indexes are normalization, not fresh deterioration from a slower VVIX fall.
+        relative_score = (
+            _positive_change_score(relative_change, full_at=0.12) if vvix_return_5d > 0 else 0.0
+        )
     deterioration = _max_scores((low_vix_score, relative_score)) or 0.0
     high_vix_score = _high_vix_context_score(snapshot.vix_close)
     vvix_cooling_score = _negative_change_score(vvix_return_5d, full_at=0.12)

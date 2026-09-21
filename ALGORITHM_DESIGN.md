@@ -110,6 +110,8 @@ This is a research candidate, not validated alpha. Source-owned family maxima an
 confirmation replace averaging active features. Coverage records distinguish exact scores from
 partial lower bounds: strong observed support can prove a positive threshold, but missing evidence
 cannot prove recovery below one. Descriptive fragility does not gate actions or exits.
+Relative VVIX/VIX deterioration requires VVIX actually rising; two falling indexes are not fresh
+stress merely because VIX falls faster. High-VIX/cooling-VVIX stabilization remains separate.
 
 In transmission-gated research controls, `X = max(breadth, credit)` is an alternative pool:
 either observed component can prove `X >= 0.35`. A low partial reading leaves that gate unknown,

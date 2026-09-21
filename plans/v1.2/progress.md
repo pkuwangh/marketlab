@@ -28,3 +28,17 @@ Result: core net +390.63% (down 11.80 percentage points), drawdown -29.81%, matc
 
 All ten existing variants were rerun in both profiles under
 `data/research/regime/v1.2/01-persistence/`. Full suite: 280 tests; lint passes.
+
+## 2. Relative Volatility Direction
+
+Before replay: require an actual VVIX rise for the relative-lead deterioration reading. Preserve
+low-VIX/rising-VVIX warning and high-VIX/cooling-VVIX recovery, scales, ownership, and all exits.
+Two falling indexes must not count as fresh stress solely because VIX falls faster. Measure
+holding/exit changes and both profiles; do not add an exit-delay parameter.
+
+Result: core net +398.04% versus +390.63%, drawdown -29.06% versus -29.81%, matched +431.12%.
+Reduced net +400.28% versus +389.68%, but drawdown worsens slightly to -29.94%. Core 2022
+improves to -25.15% and post-2020 to +108.90%; reduced 2022 is slightly worse at -25.94%.
+Washout's mean held return does not improve (+0.81%, -0.16% excluding the March 2020 entry);
+the aggregate benefit includes changed protection and restoration. Retain the directional
+correction without claiming it fixes washout performance. Traces: `02-volatility/`.
