@@ -515,11 +515,15 @@ def test_orderly_pullback_is_a_real_second_path_and_overlap_is_consumed():
             [
                 (100, 0.04, 0, 0.02),
                 (80, -0.04, 0.2, -0.04),
+                (82, 0, 0, -0.03),
+                (83, 0, 0, -0.03),
+                (82, 0, 0, -0.03),
+                (83, 0, 0, -0.02),
                 (84, 0.04, -0.2, -0.01),
             ]
         ):
             day = DAY + timedelta(days=i)
-            stress = 0.9 if panic and i == 1 else 0.3
+            stress = 0.9 if panic and 1 <= i <= 5 else 0.3
             snap, signals = inputs(day, stress=stress, move=move, vol=vol, ma50=ma50)
             for symbol in histories:
                 histories[symbol].append(price(day, level, symbol))

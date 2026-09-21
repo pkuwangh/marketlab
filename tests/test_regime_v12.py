@@ -18,6 +18,59 @@ from marketlab.regime_lifecycle import (
 
 
 @pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "new_low",
+        "no_breakout",
+        "no_joint_damage",
+        "broken_ma200",
+        "no_room",
+        "no_corroboration",
+    ],
+)
+def test_confirm_tracks_sequential_pullback_and_requires_a_causal_base(failure):
+    state = None
+    histories = {s: [] for s in ("SPY", "QQQ")}
+    for i, level in enumerate((100, 80, 82, 81, 82, 83, 84)):
+        day = DAY + timedelta(days=i)
+        if failure == "new_low" and i == 5:
+            level = 79
+        if i == 6:
+            level = 82 if failure == "no_breakout" else 100 if failure == "no_room" else level
+        snap, signals = inputs(
+            day,
+            stress=0.4,
+            move=0.04 if i == 0 else 0.01 if i == 6 else 0,
+            vol=-0.1 if i == 6 else 0,
+            ma50=0.02 if i == 0 else -0.02,
+        )
+        if i == 1 or (failure == "no_joint_damage" and i > 0):
+            snap = replace(snap, qqq_ma50_distance=0.02)
+        if failure == "broken_ma200" and i == 6:
+            snap = replace(snap, spy_ma200_distance=-0.01)
+        if failure == "no_corroboration" and i == 6:
+            signals = tuple(s for s in signals if s.family == "trend")
+        for symbol in histories:
+            histories[symbol].append(price(day, level, symbol))
+        action, _, _ = transition(
+            snapshot=snap, signals=signals, histories=histories, previous=state
+        )
+        state = json.loads(json.dumps(action.lifecycle))
+        if i == 1:
+            assert state["pullback"]["armed"]
+            assert not state["gates"]["redeploy-confirm"]["setup"]
+        if i > 1:
+            assert state["pullback"]["index"] == 1
+            assert state["pullback"]["anchors"] == {"SPY": 100, "QQQ": 100}
+        if i < 6:
+            assert action.state == "no_change"
+    assert action.state == ("redeploy-confirm" if failure is None else "no_change")
+    if failure is None:
+        assert state["evidence"]["trend"]["stabilization"] < DEFAULT_CONFIG.confirmation
+
+
+@pytest.mark.parametrize(
     "values,expected", [((False, None), None), ((True, None), True), ((False, False), False)]
 )
 def test_alternative_confirmation_preserves_unknown(values, expected):

@@ -4,6 +4,7 @@ Run from the repository root with a trial name. baseline.jsonl is the frozen
 pre-entry-review v1.2 snapshot set under data/research/regime/v1.2/entries.
 """
 
+import csv
 import json
 import sys
 from dataclasses import replace
@@ -16,6 +17,14 @@ from marketlab.regime_lifecycle import ACTIONS, DEFAULT_CONFIG, transition
 
 ROOT = Path("data/research/regime/v1.2/entries")
 HORIZONS = (20, 40, 65)
+REFERENCES = {
+    "E1-divergence-repair": "baseline",
+    "E2-internals": "E1-divergence-repair",
+    "B1-fresh-internal-break": "E2-internals",
+    "B2-fresh-break": "E2-internals",
+    "C1-base-recovery": "E2-internals",
+    "C2-sequential-pullback": "C1-base-recovery",
+}
 
 
 def labels(rows, histories):
@@ -58,7 +67,7 @@ def summary(outcomes):
     return r.format_regime_action_outcome_summary(r.summarize_regime_action_outcomes(outcomes))
 
 
-def write_results(root, rows, baseline, histories):
+def write_results(root, rows, baseline, histories, *, write_snapshots=True):
     root.mkdir(parents=True, exist_ok=True)
     outcomes = labels(rows, histories)
     events = event_records(outcomes, histories)
@@ -99,9 +108,12 @@ def write_results(root, rows, baseline, histories):
     (root / "table.txt").write_text(text + "\n")
     (root / "events.json").write_text(json.dumps(events, indent=2) + "\n")
     (root / "changes.json").write_text(json.dumps(differences, indent=2) + "\n")
-    with (root / "snapshots.jsonl").open("w") as handle:
-        for row in rows:
-            handle.write(json.dumps(row.to_dict(), default=str) + "\n")
+    if write_snapshots:
+        temporary = root / "snapshots.jsonl.tmp"
+        with temporary.open("w") as handle:
+            for row in rows:
+                handle.write(json.dumps(row.to_dict(), default=str) + "\n")
+        temporary.replace(root / "snapshots.jsonl")
     cohorts = {}
     for name, keep in (
         ("pre2020", lambda e: e["date"] < "2020"),
@@ -177,17 +189,68 @@ def main(name):
                 for a, b in zip(rows, baseline, strict=True)
             )
         reference = baseline
-        if profile == "reduced":
+        if profile == "reduced" or name in REFERENCES:
             reference = (
                 rows
                 if name == "baseline"
                 else [
                     r._snapshot_from_dict(json.loads(line))
-                    for line in (ROOT / "baseline/reduced/snapshots.jsonl").read_text().splitlines()
+                    for line in (
+                        ROOT / REFERENCES.get(name, "baseline") / profile / "snapshots.jsonl"
+                    )
+                    .read_text()
+                    .splitlines()
                 ]
             )
         write_results(ROOT / name / profile, rows, reference, histories)
 
 
+def audit():
+    """Re-label frozen trial rows, retaining rejected experiments and exact event changes."""
+    histories = r._load_histories(
+        symbols=r.DEFAULT_REGIME_PRICE_SYMBOLS, price_root=r.DEFAULT_PRICE_OBSERVATIONS_ROOT
+    )
+    records = []
+    for name, reference in {"baseline": "baseline", **REFERENCES}.items():
+        for profile in ("core", "reduced"):
+
+            def read(trial):
+                return [
+                    r._snapshot_from_dict(json.loads(line))
+                    for line in (ROOT / trial / profile / "snapshots.jsonl")
+                    .read_text()
+                    .splitlines()
+                ]
+
+            root = ROOT / name / profile
+            write_results(root, read(name), read(reference), histories, write_snapshots=False)
+            for change in json.loads((root / "changes.json").read_text()):
+                for label in change["labels"]:
+                    records.append(
+                        {
+                            "trial": name,
+                            "reference": reference,
+                            "profile": profile,
+                            "change": change["change"],
+                            **label,
+                            **{
+                                key: json.dumps(change[key], sort_keys=True)
+                                for key in (
+                                    "before_gates",
+                                    "after_gates",
+                                    "before_consumed",
+                                    "after_consumed",
+                                )
+                            },
+                            "before_action": change["before_action"],
+                            "after_action": change["after_action"],
+                        }
+                    )
+    with (Path(__file__).parent / "entry-event-changes.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(records[0]))
+        writer.writeheader()
+        writer.writerows(records)
+
+
 if __name__ == "__main__":
-    main(sys.argv[1])
+    audit() if sys.argv[1] == "audit" else main(sys.argv[1])

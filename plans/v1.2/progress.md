@@ -1,5 +1,9 @@
 # V1.2 Work Log
 
+The later [entry-focused review](entry-review.md) supersedes the performance conclusions
+below. It measures the action-entry table directly, records all changed events, retains
+extension/continuation changes, and explicitly leaves break selection unresolved.
+
 One topic at a time: change, tests, same-window replay, results, commit. V1.2 data is replaceable;
 v1.1 snapshots and exports stay unchanged. No new CLI paths or model-management workflow.
 

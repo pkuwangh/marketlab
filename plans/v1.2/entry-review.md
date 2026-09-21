@@ -107,3 +107,82 @@ continue. Requiring simultaneous new lows delays useful warnings and can concent
 entries near exhaustion. Neither trial fixes break entry selection. Production break
 rules are unchanged, not silently tightened. All trial date changes, labels, and gate
 reasons remain in the entry replay artifacts; report this topic as unresolved.
+
+## C1: Continuation From A Price Base
+
+Before replay: retain distinct below-MA50 pullback after an established uptrend, intact
+MA200 structure, and the 20-session setup lifetime. Replace panic-style trend strength
+and half-recovery requirements with: each index has avoided a new/equal episode low for
+the existing three-session persistence, both close above their preceding five closes,
+both have nonnegative 5d returns, and both remain below their pre-pullback anchors.
+Require an independent non-price stabilization family at the existing ordinary 0.35
+family gate, not panic-strength 0.75. Funding remains required. This is a small base
+breakout with remaining continuation room, not just an MA50 reclaim or a forced V bounce.
+Washout and exit rules are unchanged. No fit to specific near-miss percentages.
+
+Result: seven core/eight reduced confirm events. Core SPY +1.6/+1.0/+4.9%, QQQ
++1.8/+1.0/+5.4%, SPY DD -1.6/-3.0/-3.7%. No pandemic events; pre-2020
+SPY +2.14/+1.58/+4.54%, post-2020 +1.43/+0.75/+5.02%. This removes zero
+coverage, but 40d performance is weak. August 2023 and January 2026 are false starts.
+October 2023 confirm also leads to a later break retry on October 27, an adverse
+cross-path effect; washout entries and extension entries are unchanged from E2.
+
+## C2: Track Sequential MA50 Crossings
+
+Before replay: C1 still inherits an accidental synchronized-crossing requirement: the
+immediately preceding day must have both indexes above MA50, then both must be below.
+Start tracking at the first index's loss of MA50 after established trend. Require a
+recorded day with both below MA50 before confirm eligibility. Do not reset the anchor,
+clock, or lows when the second index crosses. Preserve the same lifetime and MA200 rule.
+This models a joint pullback developing over days rather than requiring simultaneous crosses.
+
+Result: retain C1+C2 as the continuation definition, with coverage restored but alpha
+unproven. Core confirm grows 7 -> 13: SPY +1.3/+2.0/+5.4%, QQQ +1.9/+2.4/+7.4%,
+SPY DD -1.5/-3.2/-4.3%, QQQ DD -2.1/-3.7/-5.0%. Reduced has 14 entries:
+SPY +1.5/+2.4/+5.7%, with SPY DD -1.5/-3.1/-4.1%. None overlaps the pandemic
+window. Pre-2020 SPY means are +1.85/+3.03/+6.37%; post-2020 +1.03/+0.93/+4.16%.
+Recent-period weakness and small samples prevent a claim of reliable continuation alpha.
+
+C2 adds April 5 2018, October 11 2019, September 28 2020, September 11 2024,
+January 17 2025, and February 20 2026 to C1, with no removed confirm dates. All six
+previously lacked setup/opportunity despite valid recovery evidence. Reduced additionally
+has April 26 2024, which is a washout entry in core. The new February 2026 confirm leads
+to a March 12 break retry after failure; this and the October 2023 retry worsen break's
+entry averages despite unchanged break predicates. Do not hide this cross-path consequence.
+
+## What Actually Changed
+
+Same 2,617 dates; each return triplet is SPY 20/40/65d. This is the user's action-entry
+summary, not account performance. Unchanged washout predicates also yield identical
+washout event dates and labels in each profile. Exits are unchanged.
+
+| Action | Starting v1.2 events / returns | Current v1.2 events / returns |
+| --- | --- | --- |
+| protect-extension | 9 / +1.2%, +3.8%, +2.2% | 10 / -0.6%, +0.1%, +2.2% |
+| protect-break | 29 / +1.3%, +2.7%, +5.7% | 30 / +1.5%, +3.2%, +6.2% |
+| redeploy-confirm | 0 / unavailable | 13 / +1.3%, +2.0%, +5.4% |
+| redeploy-washout | 18 / +3.5%, +5.4%, +7.1% | Identical |
+| all days | 2,617 / +1.3%, +2.5%, +4.1% | Identical |
+
+Extension improves, although the evidence is sparse. Confirm works as a separate
+continuation path, but 40d returns remain below all days. Break remains unresolved and
+the combined model makes its table worse. This is not a completed performance fix.
+Next research on break needs a mechanism distinguishing persistent selling from exhausted
+selling; neither an additional fresh-low filter nor relative breadth/credit alone did that.
+Do not keep testing nearby thresholds against these same dates until the averages look good.
+
+### Audit And Verification
+
+- `entry-event-changes.csv` contains EVERY added/removed event, all horizons, both input
+  profiles, gate values, consumption state, and selected action before/after each trial.
+  Returns/drawdowns there are decimal fractions. Failed B1/B2 trials are included.
+- `entry_research.py audit` regenerates that comparison from frozen trial snapshots;
+  replays use canonical Python calculations, never manually edited scores or labels.
+- Production backfill recomputed 2,693 v1.2 dates through September 18 without fetching.
+  All 2,617 comparison-date lifecycles, actions, and pressure features match the final
+  research replay exactly. The complete CLI action summary also matches exactly.
+- The 5,386 v1.1 regime/signal artifacts retain their pre-change combined path/content
+  SHA-256: `dc19b94dd5b756bd48192c899fcce7e10380ea763f90fddf4a3999fccf86e152`.
+- Full suite: 313 tests pass. Tests cover original-evidence repair, sequenced internal
+  extension confirmation, sequential pullbacks, renewed lows, false breakouts, missing
+  confirmation, structural invalidation, and washout/confirm overlap.

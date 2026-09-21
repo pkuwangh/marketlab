@@ -8369,6 +8369,7 @@ def _format_redeploy_path_gates(snapshots: tuple[RegimeSnapshot, ...]) -> str:
                 "unused_episode",
                 "release",
                 "price_recovery",
+                "base",
                 "confirmation",
                 "opportunity",
                 "funding_clear",

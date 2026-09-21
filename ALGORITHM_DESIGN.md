@@ -144,7 +144,8 @@ For redeploy:
 redeploy-washout = remembered trend/volatility stress + continuous release
                   + two strong current families + remaining price opportunity + funding clear
 redeploy-confirm = prior established trend + distinct below-MA50 pullback above MA200
-                  + strong current trend and another family + opportunity + funding clear
+                  + three-session base + five-session closing breakout + non-price support
+                  + remaining room below pre-pullback highs + funding clear
 ```
 
 Stretch alone is not bearish. It often means strong risk-on momentum. Washout alone is not
@@ -152,8 +153,14 @@ automatically bullish. It becomes actionable only when stabilization appears. Ar
 one >=0.75 hit or >=0.60 on 3/10 extension or 2/5 washout sessions. Extension lasts 40 sessions
 and washout lasts 15 from their respective last qualifying hits. Fresh evidence retains the
 original identity and consumption state. Stress remains continuous across eligibility gates.
-Both redeploy paths require prices no more than halfway from causal episode lows to pre-damage
-20-session highs. This replaces current-fear eligibility, not current confirmation.
+Washout requires prices no more than halfway from causal episode lows to pre-damage
+20-session highs. Confirm instead requires both prices below their pre-pullback highs,
+nonnegative 5d returns, and a non-price stabilization family >=0.35. Its base requires
+neither index to touch/make a new episode low for three sessions, followed by both closing
+above their preceding five closes. Tracking starts when the first index loses MA50 after
+established trend; both must subsequently be below MA50 before entry eligibility. The
+20-session clock and anchors do not reset on the second crossing. Losing MA200 invalidates
+the setup. These are distinct mean-reversion and continuation definitions of opportunity.
 
 Evaluate all paths independently. Remove consumed opportunities before resolving conflicts;
 opposing unused directions suppress new entries, not exits. Same-direction priority is break
@@ -174,10 +181,12 @@ rising comparable stress; pullback failure needs broken structure and corroborat
 The executable rules and constants live in `regime_lifecycle.py`. Historical comparisons use
 next adjusted open, equal SPY/QQQ, 80% core plus 0/20/40% tactical exposure, 5bp one-way costs,
 zero cash yield, and 5% annual borrowing cost. Same-average-exposure controls distinguish timing
-from risk allocation. V1.2's development-history account still underperforms the untimed control;
-confirm coverage and protection's missed upside remain research problems. Trials replacing washout
-failure with only 5d damage, or confirm with an MA50 reclaim below pre-pullback highs, worsened
-results and are not included. This history has been used repeatedly for development, not held out.
+from risk allocation. Earlier v1.2 account comparisons underperformed the untimed control;
+protection entry quality remains a research problem. The subsequent entry-focused revision
+restores internal extension warnings and adds base-breakout confirm entries, but does not
+establish a robust edge: confirm's 40d returns lag all days, and break remains weak. Failed
+fresh-low/internal-only break trials were not retained. Washout and exits are unchanged.
+This history has been used repeatedly for development, not held out.
 
 ## Research Observations and Proposals
 

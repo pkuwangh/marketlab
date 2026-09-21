@@ -395,7 +395,7 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         raise ValueError("Action configuration changed inside a snapshot chain; backfill it again")
     index = previous.get("index", -1) + 1
     day = snapshot.source_date.isoformat()
-    prices, anchors = {}, {}
+    prices, anchors, recovery_breakouts = {}, {}, {}
     for symbol in ("SPY", "QQQ"):
         rows = [
             p
@@ -407,6 +407,9 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             raise ValueError(f"Missing {symbol} EOD observation for {day}; refresh sources")
         prices[symbol] = rows[-1].return_close
         anchors[symbol] = max(p.return_close for p in rows[-20:])
+        recovery_breakouts[symbol] = (
+            prices[symbol] > max(p.return_close for p in rows[-6:-1]) if len(rows) >= 6 else None
+        )
     evidence, features, modules, returns5 = owned_evidence(snapshot, signals, config)
     d, s = second_family(evidence, "deterioration"), second_family(evidence, "stabilization")
     stress, wash_hit, extension_hit = setup_readings(snapshot, config)
@@ -459,7 +462,11 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     return60 = [snapshot.spy_return_60d, r._signal_detail_float(trend_signal, "qqq_return_60d")]
     established = _above(ma50) and _above(ma200) and _above(return60)
     pullback = copy.deepcopy(previous.get("pullback", {}))
-    onset = previous.get("established", False) and _below(ma50) and _above(ma200)
+    onset = (
+        previous.get("established", False)
+        and any(v is not None and v < 0 for v in ma50)
+        and _above(ma200)
+    )
     if onset and not pullback.get("armed"):
         pullback = {
             "id": f"pullback:{day}",
@@ -468,9 +475,15 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             "armed": True,
             "anchors": anchors,
             "lows": prices.copy(),
+            "last_low": {k: index for k in prices},
             "consumed": False,
+            "joint_damage": False,
         }
     if pullback.get("armed"):
+        pullback["joint_damage"] = pullback.get("joint_damage", False) or _below(ma50)
+        for symbol, value in prices.items():
+            if value <= pullback["lows"][symbol]:
+                pullback.setdefault("last_low", {})[symbol] = index
         pullback["lows"] = {k: min(v, prices[k]) for k, v in pullback["lows"].items()}
         if (
             index - pullback["index"] > config.pullback_age
@@ -552,13 +565,18 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         },
         "redeploy-confirm": {
             "enabled": config.confirm_path,
-            "setup": pullback.get("armed", False),
+            "setup": pullback.get("armed", False) and pullback.get("joint_damage", False),
             "price_recovery": _all_gates(
                 None if any(value is None for value in returns5) else _above(returns5),
-                threshold_gate(("trend",), "stabilization", config.confirmation),
+                *recovery_breakouts.values(),
             ),
-            "confirmation": threshold_gate(FAMILIES[1:], "stabilization", config.confirmation),
-            "opportunity": price_opportunity(pullback, prices, config.recovery_fraction),
+            "base": all(
+                index - pullback.get("last_low", {}).get(k, index) >= config.persistence
+                for k in prices
+            ),
+            "confirmation": threshold_gate(FAMILIES[1:], "stabilization"),
+            "opportunity": bool(pullback.get("armed"))
+            and all(prices[k] < pullback["anchors"][k] for k in prices),
             "funding_clear": None if veto is None else not veto,
         },
         "protect-extension": {
@@ -616,7 +634,7 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
     )
     causes = {
         "redeploy-washout": strong[:2],
-        "redeploy-confirm": ["trend", *corroborator("stabilization", gate=config.confirmation)],
+        "redeploy-confirm": ["trend", *corroborator("stabilization")],
         "protect-extension": list(
             dict.fromkeys(
                 ["trend", "volatility", *div[:1]] if supports("trend") else ["volatility", *div]
