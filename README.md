@@ -113,8 +113,9 @@ The v1.2 action model uses saved same-version regime snapshots as its setup-memo
 chain. In practice, run `regime backfill` once before relying on a single-date
 `regime snapshot` or `daily` run. A fresh single-date snapshot fails with a clear
 message when this prior chain is missing. Start the backfill far enough before the
-period you care about; extension memory lasts 40 trading sessions from arming, and washout
-memory lasts 15 sessions after the last qualifying stress observation. Saved state carries
+period you care about; extension memory lasts 40 trading sessions after its last qualifying
+extension observation, and washout memory lasts 15 sessions after its last qualifying stress
+observation. Refreshing evidence does not reset episode identity or consumption. Saved state carries
 earlier episode history without rereading every prior snapshot on each daily run.
 
 Extension memory does not arm from every one-day setup blip. The current defaults arm on
@@ -124,7 +125,8 @@ parameters and lifecycle rules live in `src/marketlab/regime_lifecycle.py`. The 
 both trend extension and volatility complacency to be at least `0.50`; one extreme leg cannot
 compensate for a missing one. `protect-extension` requires remembered internal divergence followed
 by price and volatility deterioration. `protect-break` independently recognizes persistent damage
-below the intermediate trend with another confirming family; prior extension is not required.
+below the intermediate trend, current 5d selling, and another confirming family; prior extension
+is not required.
 
 Washout memory is intentionally faster. It arms from either one strong snapshot
 (`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
@@ -141,11 +143,14 @@ Both indexes must have recovered no more than half their episode's observed high
 Both need a resolved funding veto. Missing inputs are not calm readings.
 
 The action is a new entry, not the held posture. Entries consume setup episodes; repeated signals
-do not renew the holding clock. Protection ends when its causes repair; increased exposure ends
-on thesis failure or timeout. Ordinary restoration to normal exposure needs no redeploy action.
-The four-path model is a research candidate, not validated market-beating timing. Initial isolated
-comparisons show material missed-upside costs and no `redeploy-confirm` entries; thresholds have
-not been adjusted to improve those historical results.
+do not renew the holding clock. A washout or break episode permits at most two entries: a retry
+needs both indexes below the lows known at the prior holding's exit, plus qualifying stress or
+persistent break damage. Protection ends when its original deteriorating inputs repair and no
+current corroborated damage remains; missing original inputs cannot count as repair. Increased
+exposure ends on thesis failure or timeout. Ordinary restoration needs no redeploy action.
+The four-path model remains research, not validated market-beating timing. V1.2 improves the
+development replay but still has missed-upside costs and no `redeploy-confirm` entries. Tested
+broader confirm and slower washout-failure rules did not improve the account and are not included.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.
@@ -206,11 +211,11 @@ Replay saved regime actions against forward SPY/QQQ returns and drawdowns:
 Add `--save` to write the same report to a versioned canonical text file such as
 `workbooks/outcomes-action-v1.2.txt`.
 
-The default action outcome table uses every saved date only for the `baseline:all_days` row. Protect
-and redeploy rows use the first action day from each distinct armed-setup lifecycle, so gaps between
-confirmations do not count the same market episode repeatedly. Older snapshots without lifecycle
-fields fall back to grouping same-action rows separated by no more than five saved snapshots. The
-separate frequency table still reports daily action-state counts.
+The default action outcome table uses every saved date for `baseline:all_days`. Protect and redeploy
+rows count new entries, not repeated confirmation days. A bounded retry is another executed attempt
+within the same setup, not an independent market episode. Older snapshots without lifecycle fields
+fall back to grouping same-action rows separated by no more than five saved snapshots. The separate
+frequency table still reports daily action-state counts.
 
 V1.1 also reports actual entry/exit-open holding windows and a simulated ETF account against untimed
 and exposure-matched controls. This assumes equal SPY/QQQ weights, 80% core plus 0/20/40% tactical

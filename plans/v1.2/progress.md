@@ -136,3 +136,57 @@ Keep the direct-recent-selling requirement as a clearer break definition, with v
 historical evidence of improvement. This is not proof that non-price corroboration adds alpha
 over an equally delayed price-only strategy. Traces: `08-break-damage/`.
 The removed signal is 2016-05-19. Full suite: 296 tests; lint passes.
+
+## Final Comparison And Outputs
+
+Same 2016-01-04 through 2026-06-01 window; next-open net account, costs and borrowing included:
+
+| Measurement | V1.1 | V1.2 |
+| --- | ---: | ---: |
+| Core net return | +402.43% | +442.04% |
+| Core portfolio drawdown | -29.81% | -28.94% |
+| Core matched-exposure control return | +426.15% | +453.97% |
+| Untimed control return | +474.41% | +474.41% |
+| Average total exposure | 94.4% | 97.7% |
+| Protected / increased sessions | 820 / 87 | 513 / 209 |
+| Core post-2020 net | +109.36% | +117.13% |
+| Core 2022 net | -25.94% | -26.21% |
+| Break / extension / washout / confirm entries | 21 / 5 / 12 / 0 | 29 / 9 / 18 / 0 |
+| Mean held washout SPY return | +0.90% | +1.88% |
+| Mean held washout SPY excluding March 2020 entry | -0.07% | +1.31% |
+| Reduced-profile net return | +389.62% | +428.77% |
+
+The extra washout entries are retries, not six independent new market episodes. Account results
+improve but remain below both controls. Protection still gives up upside, 2022 is slightly worse,
+and confirm remains unresolved. Historical comparisons informed these choices; none of this is
+out-of-sample evidence. Do not extend this loop into a cutoff search to close the remaining gap.
+Higher average exposure explains part of the gain; the shortfall to matched exposure narrows
+from 23.72 to 11.93 percentage points over the whole period, but remains a shortfall.
+
+Final audit also clears the previous episode's retry date when a new washout episode arms. This
+is attribution-only, not a new eligibility rule. A JSON-resumed two-attempt regression verifies
+shared setup identity, separate entry clocks, and refusal of a third attempt.
+
+Rebuilt 2,693 same-version daily regime and market-signal snapshots through 2026-09-18 from local
+observations, without fetching or changing source data. All 2,617 comparison-period lifecycle
+states/actions exactly match `final/core/combined/daily.jsonl`. The 5,386 v1.1 snapshot
+files retain their pre-work SHA256 aggregate:
+`dc19b94dd5b756bd48192c899fcce7e10380ea763f90fddf4a3999fccf86e152`.
+
+Updated exports: [XLSX](../../workbooks/regime-v1.2.xlsx), [CSV](../../workbooks/regime-v1.2.csv),
+[action](../../workbooks/outcomes-action-v1.2.txt),
+[redeploy](../../workbooks/outcomes-redeploy-v1.2.txt),
+[protect](../../workbooks/outcomes-protect-v1.2.txt), and
+[posture](../../workbooks/outcomes-posture-v1.2.txt). Outcome reports use the shared comparison
+window, while the workbook includes all rebuilt dates. No extra CLI commands or workflow stages.
+
+Final verification: 298 tests pass; lint and diff checks pass. All 2,693 x 268 CSV/XLSX cells
+agree after accounting for Excel date/numeric types. A repeated latest-date snapshot is idempotent.
+
+Reproduce with existing commands:
+
+```bash
+./bin/marketlab regime backfill --start 2016-01-04 --end 2026-09-18
+./bin/marketlab regime export --start 2016-01-04 --end 2026-09-18 --snapshot-version v1.2
+./bin/marketlab regime outcomes --start 2016-01-04 --end 2026-06-01 --snapshot-version v1.2 --horizons 20,40,65 --by action --save
+```

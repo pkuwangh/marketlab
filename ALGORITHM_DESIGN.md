@@ -134,7 +134,7 @@ For protect:
 ```text
 protect-extension = remembered extension + prior divergence + current price/volatility damage
 protect-break     = both indexes below MA50 with negative 20d returns for three sessions
-                    + trend deterioration + another owned deteriorating family
+                    + normalized 5d price damage >=0.35 + another deteriorating family
 ```
 
 For redeploy:
@@ -148,24 +148,35 @@ redeploy-confirm = prior established trend + distinct below-MA50 pullback above 
 
 Stretch alone is not bearish. It often means strong risk-on momentum. Washout alone is not
 automatically bullish. It becomes actionable only when stabilization appears. Arming needs either
-one >=0.75 hit or >=0.60 on 3/10 extension or 2/5 washout sessions. Extension lasts 40 sessions;
-washout lasts 15 from its last qualifying hit. Stress remains continuous across eligibility gates.
+one >=0.75 hit or >=0.60 on 3/10 extension or 2/5 washout sessions. Extension lasts 40 sessions
+and washout lasts 15 from their respective last qualifying hits. Fresh evidence retains the
+original identity and consumption state. Stress remains continuous across eligibility gates.
 Both redeploy paths require prices no more than halfway from causal episode lows to pre-damage
 20-session highs. This replaces current-fear eligibility, not current confirmation.
 
 Evaluate all paths independently. Remove consumed opportunities before resolving conflicts;
 opposing unused directions suppress new entries, not exits. Same-direction priority is break
 before extension and washout before confirm. No repeated or overlapping action resets entry age.
-Protection repairs after three sessions of positive short momentum and recovered causal evidence;
-break additionally requires MA50 repair. Washout failure needs trend/volatility deterioration and
+Washout and break permit at most two entries per episode. After a holding ends, both indexes must
+make new lows below all lows known at its exit before a retry becomes available. Washout also
+needs qualifying stress, and break persistent damage. Active same-direction exposure never retries.
+The setup ID remains stable; entry dates distinguish the two executed attempts.
+
+Protection repairs after three sessions of nonnegative 5d returns and repaired original causal
+leaves (including remembered divergence), with no current corroborated trend-plus-other-family
+damage. Original leaves must be observed below 0.35; missing unused alternatives do not assert
+ongoing damage, while missing original inputs still block repair. Break also requires MA50 repair.
+Washout failure needs trend/volatility deterioration and
 rising comparable stress; pullback failure needs broken structure and corroboration. Caps remain
 65 protected / 20 increased sessions. No automatic profit-target or opportunity-completion exit.
 
 The executable rules and constants live in `regime_lifecycle.py`. Historical comparisons use
 next adjusted open, equal SPY/QQQ, 80% core plus 0/20/40% tactical exposure, 5bp one-way costs,
 zero cash yield, and 5% annual borrowing cost. Same-average-exposure controls distinguish timing
-from risk allocation. The initial four-path candidate underperforms these controls; new-path
-coverage and protection's missed upside remain research problems, not reasons to fit cutoffs.
+from risk allocation. V1.2's development-history account still underperforms the untimed control;
+confirm coverage and protection's missed upside remain research problems. Trials replacing washout
+failure with only 5d damage, or confirm with an MA50 reclaim below pre-pullback highs, worsened
+results and are not included. This history has been used repeatedly for development, not held out.
 
 ## Research Observations and Proposals
 
@@ -377,8 +388,9 @@ Forward replay should evaluate each layer separately:
 
 Use episode-level diagnostics for corrections and actions. Daily overlapping forward windows are
 useful for posture and background distributions, but they overcount one multi-day call. The default
-action report therefore keeps an all-days baseline while measuring protect/redeploy from the first
-action day of each armed-setup lifecycle. A correction episode report should show:
+action report keeps an all-days baseline while measuring each new protective/redeploy entry.
+Retries are separate attempts within the same market episode, not independent samples.
+A correction episode report should show:
 
 - correction threshold, such as 5% or 8%;
 - whether warning arrived before the first -3% or -5% drawdown crossing;

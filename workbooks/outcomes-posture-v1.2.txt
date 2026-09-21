@@ -1,0 +1,54 @@
+outcome_group=posture
+artifact_version=v1.2
+snapshot_version=v1.2
+outcome_start=2016-01-04
+outcome_end=2026-06-01
+outcome_horizons=20,40,65
+generated_at=2026-09-21T18:27:55+00:00
+command=marketlab regime outcomes --by posture --start 2016-01-04 --end 2026-06-01 --horizons 20,40,65
+
+regime_posture_count=2617
+regime_posture_outcome_count=7851
+available_regime_posture_outcome_count=7851
+
+frequency_table:
+posture_state  count  share
+-------------  -----  -----
+neutral        1895   72.4%
+protected      513    19.6%
+redeploying    209    8.0%
+
+summary_table:
+bucket                          horizon  postures  available  age   posture_dd  avg_spy  avg_qqq  spy_dd  qqq_dd
+==============================  =======  ========  =========  ====  ==========  =======  =======  ======  ======
+all                             20d      2617      2617       8.7   -1.8%       +1.3%    +1.7%    -2.5%   -3.1%
+all                             40d      2617      2617       8.7   -1.8%       +2.5%    +3.4%    -3.5%   -4.4%
+all                             65d      2617      2617       8.7   -1.8%       +4.1%    +5.5%    -4.4%   -5.5%
+------------------------------  -------  --------  ---------  ----  ----------  -------  -------  ------  ------
+posture:neutral                 20d      1895      1895       -     -           +0.9%    +1.3%    -2.2%   -2.8%
+posture:neutral                 40d      1895      1895       -     -           +1.8%    +2.5%    -3.3%   -4.2%
+posture:neutral                 65d      1895      1895       -     -           +3.3%    +4.5%    -4.3%   -5.3%
+------------------------------  -------  --------  ---------  ----  ----------  -------  -------  ------  ------
+posture:protected               20d      513       513        9.3   -2.3%       +1.8%    +2.4%    -3.4%   -4.0%
+posture:protected               40d      513       513        9.3   -2.3%       +4.3%    +5.7%    -4.2%   -4.9%
+posture:protected               65d      513       513        9.3   -2.3%       +5.9%    +8.4%    -5.1%   -5.9%
+------------------------------  -------  --------  ---------  ----  ----------  -------  -------  ------  ------
+posture:redeploying             20d      209       209        7.3   -0.7%       +2.9%    +3.3%    -2.6%   -3.7%
+posture:redeploying             40d      209       209        7.3   -0.7%       +5.1%    +5.8%    -3.7%   -5.0%
+posture:redeploying             65d      209       209        7.3   -0.7%       +6.7%    +7.8%    -4.3%   -5.7%
+------------------------------  -------  --------  ---------  ----  ----------  -------  -------  ------  ------
+protect_path:protect-break      20d      367       367        8.4   -2.7%       +1.5%    +1.9%    -4.1%   -4.7%
+protect_path:protect-break      40d      367       367        8.4   -2.7%       +4.2%    +5.6%    -5.1%   -5.9%
+protect_path:protect-break      65d      367       367        8.4   -2.7%       +7.2%    +9.3%    -5.7%   -6.6%
+------------------------------  -------  --------  ---------  ----  ----------  -------  -------  ------  ------
+protect_path:protect-extension  20d      146       146        11.4  -1.3%       +2.7%    +3.7%    -1.7%   -2.2%
+protect_path:protect-extension  40d      146       146        11.4  -1.3%       +4.5%    +6.2%    -1.8%   -2.4%
+protect_path:protect-extension  65d      146       146        11.4  -1.3%       +2.9%    +6.1%    -3.5%   -3.9%
+
+Executable exposure: next adjusted open; 80% core, 0/20/40% tactical; 50/50 SPY/QQQ; cash 0%, borrowing 5%, one-way costs 5bp
+Cost/financing columns sum daily equity charges; reduced/increased count sessions.
+account           sessions  net       gross     portfolio_dd  avg_exposure  turnover  cost   financing  reduced  increased
+----------------  --------  --------  --------  ------------  ------------  --------  -----  ---------  -------  ---------
+timed             2616      +442.04%  +454.10%  -28.94%       0.977         27.803    1.39%  0.81%      513      209
+untimed           2616      +474.41%  +475.91%  -30.86%       1.000         5.213     0.26%  0.00%      0        0
+matched_exposure  2616      +453.97%  +455.39%  -30.24%       0.977         5.132     0.26%  0.00%      2616     0

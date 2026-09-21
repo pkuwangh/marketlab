@@ -1,0 +1,194 @@
+outcome_group=protect
+artifact_version=v1.2
+snapshot_version=v1.2
+outcome_start=2016-01-04
+outcome_end=2026-06-01
+outcome_horizons=20,40,65
+generated_at=2026-09-21T18:27:43+00:00
+command=marketlab regime outcomes --by protect --start 2016-01-04 --end 2026-06-01 --horizons 20,40,65
+
+regime_protect_outcome_count=7851
+available_regime_protect_outcome_count=7851
+regime_protect_cluster_count=38
+regime_protect_cluster_outcome_count=114
+false_alert_cluster_outcome_count=76
+
+
+protect_gate_summary:
+bucket                                  horizon  signals  available  extension  fragility  deteriorate  families  nonvol  strength  avg_spy  avg_qqq  spy_dd  qqq_dd
+======================================  =======  =======  =========  =========  =========  ===========  ========  ======  ========  =======  =======  ======  ======
+all                                     20d      2617     2617       0.15       0.33       0.32         1.3       0.8     0.32      +1.3%    +1.7%    -2.5%   -3.1%
+all                                     40d      2617     2617       0.15       0.33       0.32         1.3       0.8     0.32      +2.5%    +3.4%    -3.5%   -4.4%
+all                                     65d      2617     2617       0.15       0.33       0.32         1.3       0.8     0.32      +4.1%    +5.5%    -4.4%   -5.5%
+--------------------------------------  -------  -------  ---------  ---------  ---------  -----------  --------  ------  --------  -------  -------  ------  ------
+protect:action:protect-break            20d      29       29         0.06       0.30       0.82         2.9       1.9     0.82      +1.3%    +1.5%    -3.7%   -4.1%
+protect:action:protect-break            40d      29       29         0.06       0.30       0.82         2.9       1.9     0.82      +2.7%    +3.3%    -5.1%   -5.9%
+protect:action:protect-break            65d      29       29         0.06       0.30       0.82         2.9       1.9     0.82      +5.7%    +7.2%    -6.1%   -7.0%
+--------------------------------------  -------  -------  ---------  ---------  ---------  -----------  --------  ------  --------  -------  -------  ------  ------
+protect:action:protect-extension        20d      9        9          0.64       0.37       0.68         3.0       2.0     0.68      +1.2%    +1.4%    -2.4%   -2.9%
+protect:action:protect-extension        40d      9        9          0.64       0.37       0.68         3.0       2.0     0.68      +3.8%    +5.5%    -2.4%   -2.9%
+protect:action:protect-extension        65d      9        9          0.64       0.37       0.68         3.0       2.0     0.68      +2.2%    +4.5%    -4.1%   -4.4%
+--------------------------------------  -------  -------  ---------  ---------  ---------  -----------  --------  ------  --------  -------  -------  ------  ------
+protect:no_confirmed_path               20d      2368     2368       0.15       0.33       0.27         1.1       0.6     0.27      +1.2%    +1.7%    -2.3%   -2.9%
+protect:no_confirmed_path               40d      2368     2368       0.15       0.33       0.27         1.1       0.6     0.27      +2.4%    +3.2%    -3.2%   -4.1%
+protect:no_confirmed_path               65d      2368     2368       0.15       0.33       0.27         1.1       0.6     0.27      +3.9%    +5.3%    -4.2%   -5.2%
+--------------------------------------  -------  -------  ---------  ---------  ---------  -----------  --------  ------  --------  -------  -------  ------  ------
+protect:qualified_consumed_or_conflict  20d      211      211        0.11       0.36       0.84         3.3       2.4     0.84      +1.8%    +2.1%    -4.5%   -5.1%
+protect:qualified_consumed_or_conflict  40d      211      211        0.11       0.36       0.84         3.3       2.4     0.84      +4.4%    +5.8%    -6.2%   -7.0%
+protect:qualified_consumed_or_conflict  65d      211      211        0.11       0.36       0.84         3.3       2.4     0.84      +6.2%    +8.0%    -7.0%   -8.0%
+
+
+protect_cluster_summary:
+cluster_start  cluster_end  path               days  horizon  late  vol_only  pre_dd  spy_ret  spy_dd  5pct_dd  families
+=============  ===========  =================  ====  =======  ====  ========  ======  =======  ======  =======  =================================
+2016-01-06     2016-01-06   protect-break      1     20d      yes   no        -5.4%   -3.6%    -6.6%   yes      trend,volatility,credit,liquidity
+2016-01-06     2016-01-06   protect-break      1     40d      yes   no        -5.4%   +0.8%    -8.0%   yes      trend,volatility,credit,liquidity
+2016-01-06     2016-01-06   protect-break      1     65d      yes   no        -5.4%   +3.1%    -8.0%   yes      trend,volatility,credit,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2016-02-08     2016-02-08   protect-break      1     20d      yes   no        -11.8%  +7.0%    -1.4%   no       trend,volatility,credit
+2016-02-08     2016-02-08   protect-break      1     40d      yes   no        -11.8%  +11.9%   -1.4%   no       trend,volatility,credit
+2016-02-08     2016-02-08   protect-break      1     65d      yes   no        -11.8%  +11.9%   -1.4%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2016-06-13     2016-06-13   protect-extension  1     20d      no    no        -1.8%   +3.7%    -3.7%   no       trend,volatility,credit
+2016-06-13     2016-06-13   protect-extension  1     40d      no    no        -1.8%   +5.2%    -3.7%   no       trend,volatility,credit
+2016-06-13     2016-06-13   protect-extension  1     65d      no    no        -1.8%   +2.8%    -3.7%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2016-11-01     2016-11-01   protect-break      1     20d      no    no        -3.2%   +4.4%    -1.2%   no       trend,volatility
+2016-11-01     2016-11-01   protect-break      1     40d      no    no        -3.2%   +6.9%    -1.2%   no       trend,volatility
+2016-11-01     2016-11-01   protect-break      1     65d      no    no        -3.2%   +9.1%    -1.2%   no       trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2017-03-22     2017-03-22   protect-extension  1     20d      no    no        -1.9%   +0.5%    -0.8%   no       trend,volatility,credit
+2017-03-22     2017-03-22   protect-extension  1     40d      no    no        -1.9%   +1.1%    -0.8%   no       trend,volatility,credit
+2017-03-22     2017-03-22   protect-extension  1     65d      no    no        -1.9%   +4.3%    -0.8%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2017-08-21     2017-08-21   protect-break      1     20d      no    no        -2.0%   +3.4%    0.0%    no       trend,volatility,credit
+2017-08-21     2017-08-21   protect-break      1     40d      no    no        -2.0%   +5.7%    0.0%    no       trend,volatility,credit
+2017-08-21     2017-08-21   protect-break      1     65d      no    no        -2.0%   +7.6%    0.0%    no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2018-02-09     2018-02-09   protect-break      1     20d      yes   no        -8.8%   +6.5%    0.0%    no       trend,volatility
+2018-02-09     2018-02-09   protect-break      1     40d      yes   no        -8.8%   +1.8%    -1.1%   no       trend,volatility
+2018-02-09     2018-02-09   protect-break      1     65d      yes   no        -8.8%   +4.1%    -1.1%   no       trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2018-03-26     2018-03-26   protect-break      1     20d      yes   no        -7.1%   -0.8%    -2.9%   no       trend,volatility,liquidity
+2018-03-26     2018-03-26   protect-break      1     40d      yes   no        -7.1%   +2.8%    -2.9%   no       trend,volatility,liquidity
+2018-03-26     2018-03-26   protect-break      1     65d      yes   no        -7.1%   +2.1%    -2.9%   no       trend,volatility,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2018-10-12     2018-10-12   protect-break      1     20d      yes   no        -5.6%   +0.7%    -4.4%   no       trend,volatility,credit
+2018-10-12     2018-10-12   protect-break      1     40d      yes   no        -5.6%   -4.3%    -4.6%   no       trend,volatility,credit
+2018-10-12     2018-10-12   protect-break      1     65d      yes   no        -5.6%   -4.2%    -14.6%  yes      trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2018-11-23     2018-11-23   protect-break      1     20d      yes   no        -9.9%   -10.5%   -10.5%  yes      trend,volatility,credit,liquidity
+2018-11-23     2018-11-23   protect-break      1     40d      yes   no        -9.9%   +0.7%    -10.5%  yes      trend,volatility,credit,liquidity
+2018-11-23     2018-11-23   protect-break      1     65d      yes   no        -9.9%   +7.1%    -10.5%  yes      trend,volatility,credit,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2019-05-07     2019-05-07   protect-extension  1     20d      no    no        -2.1%   -1.7%    -4.6%   no       trend,volatility,credit
+2019-05-07     2019-05-07   protect-extension  1     40d      no    no        -2.1%   +4.3%    -4.6%   no       trend,volatility,credit
+2019-05-07     2019-05-07   protect-extension  1     65d      no    no        -2.1%   +2.5%    -4.6%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2019-07-19     2019-07-19   protect-extension  1     20d      no    no        -1.2%   -2.8%    -4.5%   no       trend,volatility,credit
+2019-07-19     2019-07-19   protect-extension  1     40d      no    no        -1.2%   +1.0%    -4.5%   no       trend,volatility,credit
+2019-07-19     2019-07-19   protect-extension  1     65d      no    no        -1.2%   +1.4%    -4.5%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2019-08-07     2019-08-07   protect-break      1     20d      no    no        -4.6%   +3.4%    -1.4%   no       trend,volatility,credit
+2019-08-07     2019-08-07   protect-break      1     40d      no    no        -4.6%   +1.3%    -1.4%   no       trend,volatility,credit
+2019-08-07     2019-08-07   protect-break      1     65d      no    no        -4.6%   +7.5%    -1.4%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2019-12-03     2019-12-03   protect-extension  1     20d      no    no        -1.9%   +5.5%    0.0%    no       trend,volatility
+2019-12-03     2019-12-03   protect-extension  1     40d      no    no        -1.9%   +4.4%    0.0%    no       trend,volatility
+2019-12-03     2019-12-03   protect-extension  1     65d      no    no        -1.9%   -11.0%   -11.0%  yes      trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2020-02-27     2020-02-27   protect-break      1     20d      yes   no        -12.1%  -11.7%   -24.6%  yes      trend,volatility,credit,liquidity
+2020-02-27     2020-02-27   protect-break      1     40d      yes   no        -12.1%  -4.3%    -24.6%  yes      trend,volatility,credit,liquidity
+2020-02-27     2020-02-27   protect-break      1     65d      yes   no        -12.1%  +3.3%    -24.6%  yes      trend,volatility,credit,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2020-09-23     2020-09-23   protect-break      1     20d      yes   no        -9.4%   +6.2%    0.0%    no       trend,volatility,breadth,credit
+2020-09-23     2020-09-23   protect-break      1     40d      yes   no        -9.4%   +10.4%   0.0%    no       trend,volatility,breadth,credit
+2020-09-23     2020-09-23   protect-break      1     65d      yes   no        -9.4%   +14.9%   0.0%    no       trend,volatility,breadth,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2020-10-30     2020-10-30   protect-break      1     20d      yes   no        -8.3%   +10.9%   0.0%    no       trend,volatility
+2020-10-30     2020-10-30   protect-break      1     40d      yes   no        -8.3%   +14.2%   0.0%    no       trend,volatility
+2020-10-30     2020-10-30   protect-break      1     65d      yes   no        -8.3%   +18.8%   0.0%    no       trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2021-09-30     2021-09-30   protect-break      1     20d      yes   no        -5.0%   +6.8%    -0.1%   no       trend,volatility
+2021-09-30     2021-09-30   protect-break      1     40d      yes   no        -5.0%   +7.0%    -0.1%   no       trend,volatility
+2021-09-30     2021-09-30   protect-break      1     65d      yes   no        -5.0%   +11.7%   -0.1%   no       trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2021-11-11     2021-11-11   protect-extension  1     20d      no    no        -1.1%   +1.5%    -2.9%   no       trend,volatility
+2021-11-11     2021-11-11   protect-extension  1     40d      no    no        -1.1%   +0.7%    -2.9%   no       trend,volatility
+2021-11-11     2021-11-11   protect-extension  1     65d      no    no        -1.1%   -3.5%    -6.7%   yes      trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-01-18     2022-01-18   protect-break      1     20d      no    no        -4.4%   -2.3%    -5.5%   yes      trend,volatility
+2022-01-18     2022-01-18   protect-break      1     40d      no    no        -4.4%   -4.6%    -8.8%   yes      trend,volatility
+2022-01-18     2022-01-18   protect-break      1     65d      no    no        -4.4%   -3.7%    -8.8%   yes      trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-02-22     2022-02-22   protect-break      1     20d      yes   no        -10.1%  +5.0%    -3.1%   no       trend,credit,liquidity
+2022-02-22     2022-02-22   protect-break      1     40d      yes   no        -10.1%  +3.8%    -3.1%   no       trend,credit,liquidity
+2022-02-22     2022-02-22   protect-break      1     65d      yes   no        -10.1%  -7.2%    -9.1%   yes      trend,credit,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-04-25     2022-04-25   protect-break      1     20d      yes   no        -10.0%  -7.4%    -9.1%   yes      trend,volatility,credit
+2022-04-25     2022-04-25   protect-break      1     40d      yes   no        -10.0%  -12.3%   -14.4%  yes      trend,volatility,credit
+2022-04-25     2022-04-25   protect-break      1     65d      yes   no        -10.0%  -4.8%    -14.4%  yes      trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-05-09     2022-05-09   protect-break      1     20d      yes   no        -16.4%  +4.4%    -2.2%   no       trend,volatility,breadth
+2022-05-09     2022-05-09   protect-break      1     40d      yes   no        -16.4%  -1.9%    -7.9%   yes      trend,volatility,breadth
+2022-05-09     2022-05-09   protect-break      1     65d      yes   no        -16.4%  +5.9%    -7.9%   yes      trend,volatility,breadth
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-09-01     2022-09-01   protect-break      1     20d      yes   no        -16.4%  -9.5%    -9.5%   yes      trend,volatility
+2022-09-01     2022-09-01   protect-break      1     40d      yes   no        -16.4%  -1.5%    -9.7%   yes      trend,volatility
+2022-09-01     2022-09-01   protect-break      1     65d      yes   no        -16.4%  +1.2%    -9.7%   yes      trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-10-12     2022-10-12   protect-break      1     20d      yes   no        -24.5%  +4.9%    0.0%    no       trend,volatility,liquidity
+2022-10-12     2022-10-12   protect-break      1     40d      yes   no        -24.5%  +11.1%   0.0%    no       trend,volatility,liquidity
+2022-10-12     2022-10-12   protect-break      1     65d      yes   no        -24.5%  +12.1%   0.0%    no       trend,volatility,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2022-12-29     2022-12-29   protect-break      1     20d      yes   no        -18.4%  +4.5%    -1.1%   no       trend,volatility
+2022-12-29     2022-12-29   protect-break      1     40d      yes   no        -18.4%  +3.3%    -1.1%   no       trend,volatility
+2022-12-29     2022-12-29   protect-break      1     65d      yes   no        -18.4%  +7.0%    -1.1%   no       trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2023-02-09     2023-02-09   protect-extension  1     20d      yes   no        -10.6%  -5.2%    -5.2%   yes      trend,volatility,breadth
+2023-02-09     2023-02-09   protect-extension  1     40d      yes   no        -10.6%  +1.0%    -5.3%   yes      trend,volatility,breadth
+2023-02-09     2023-02-09   protect-extension  1     65d      yes   no        -10.6%  +1.8%    -5.3%   yes      trend,volatility,breadth
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2023-08-17     2023-08-17   protect-break      1     20d      no    no        -4.7%   +2.0%    0.0%    no       trend,volatility
+2023-08-17     2023-08-17   protect-break      1     40d      no    no        -4.7%   -0.7%    -3.0%   no       trend,volatility
+2023-08-17     2023-08-17   protect-break      1     65d      no    no        -4.7%   +3.7%    -5.5%   yes      trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2023-09-25     2023-09-25   protect-break      1     20d      yes   no        -5.3%   -2.7%    -2.7%   no       trend,volatility,credit
+2023-09-25     2023-09-25   protect-break      1     40d      yes   no        -5.3%   +5.1%    -5.0%   no       trend,volatility,credit
+2023-09-25     2023-09-25   protect-break      1     65d      yes   no        -5.3%   +10.7%   -5.0%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2024-01-04     2024-01-04   protect-extension  1     20d      no    no        -2.0%   +5.8%    0.0%    no       trend,volatility,breadth,credit
+2024-01-04     2024-01-04   protect-extension  1     40d      no    no        -2.0%   +9.6%    0.0%    no       trend,volatility,breadth,credit
+2024-01-04     2024-01-04   protect-extension  1     65d      no    no        -2.0%   +11.5%   0.0%    no       trend,volatility,breadth,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2024-04-17     2024-04-17   protect-break      1     20d      no    no        -4.3%   +5.8%    -1.1%   no       trend,volatility,credit
+2024-04-17     2024-04-17   protect-break      1     40d      no    no        -4.3%   +8.4%    -1.1%   no       trend,volatility,credit
+2024-04-17     2024-04-17   protect-break      1     65d      no    no        -4.3%   +11.2%   -1.1%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2024-08-06     2024-08-06   protect-break      1     20d      yes   no        -7.6%   +5.5%    -0.7%   no       trend,volatility,breadth,credit
+2024-08-06     2024-08-06   protect-break      1     40d      yes   no        -7.6%   +9.3%    -0.7%   no       trend,volatility,breadth,credit
+2024-08-06     2024-08-06   protect-break      1     65d      yes   no        -7.6%   +13.5%   -0.7%   no       trend,volatility,breadth,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2025-01-14     2025-01-14   protect-break      1     20d      no    no        -3.9%   +3.6%    0.0%    no       trend,volatility
+2025-01-14     2025-01-14   protect-break      1     40d      no    no        -3.9%   -5.3%    -5.3%   yes      trend,volatility
+2025-01-14     2025-01-14   protect-break      1     65d      no    no        -3.9%   -9.5%    -14.7%  yes      trend,volatility
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2025-02-26     2025-02-26   protect-break      1     20d      no    no        -3.0%   -4.3%    -7.3%   yes      trend,volatility,credit
+2025-02-26     2025-02-26   protect-break      1     40d      no    no        -3.0%   -8.0%    -16.4%  yes      trend,volatility,credit
+2025-02-26     2025-02-26   protect-break      1     65d      no    no        -3.0%   -0.8%    -16.4%  yes      trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2025-04-03     2025-04-03   protect-break      1     20d      yes   no        -12.4%  +5.6%    -7.5%   yes      trend,volatility,credit,liquidity
+2025-04-03     2025-04-03   protect-break      1     40d      yes   no        -12.4%  +10.4%   -7.5%   yes      trend,volatility,credit,liquidity
+2025-04-03     2025-04-03   protect-break      1     65d      yes   no        -12.4%  +16.6%   -7.5%   yes      trend,volatility,credit,liquidity
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2025-08-01     2025-08-01   protect-extension  1     20d      no    no        -2.4%   +3.8%    0.0%    no       trend,volatility,breadth,credit
+2025-08-01     2025-08-01   protect-extension  1     40d      no    no        -2.4%   +7.0%    0.0%    no       trend,volatility,breadth,credit
+2025-08-01     2025-08-01   protect-extension  1     65d      no    no        -2.4%   +10.2%   0.0%    no       trend,volatility,breadth,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2025-11-19     2025-11-19   protect-break      1     20d      no    no        -3.6%   +2.1%    -1.5%   no       trend,volatility,credit
+2025-11-19     2025-11-19   protect-break      1     40d      no    no        -3.6%   +2.6%    -1.5%   no       trend,volatility,credit
+2025-11-19     2025-11-19   protect-break      1     65d      no    no        -3.6%   +4.9%    -1.5%   no       trend,volatility,credit
+-------------  -----------  -----------------  ----  -------  ----  --------  ------  -------  ------  -------  ---------------------------------
+2026-02-17     2026-02-17   protect-break      1     20d      no    no        -1.8%   -1.8%    -3.0%   no       trend,volatility,credit
+2026-02-17     2026-02-17   protect-break      1     40d      no    no        -1.8%   +2.8%    -7.2%   yes      trend,volatility,credit
+2026-02-17     2026-02-17   protect-break      1     65d      no    no        -1.8%   +8.8%    -7.2%   yes      trend,volatility,credit

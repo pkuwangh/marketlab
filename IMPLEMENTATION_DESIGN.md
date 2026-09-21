@@ -187,7 +187,8 @@ refresh source observations or request a date present in local SPY history.
 
 `regime_lifecycle.py` owns the v1.2 daily transition. Snapshots persist setup IDs, qualifying hits,
 continuous-stress peaks, causal price anchors/lows, divergence memory, consumed opportunities,
-coverage, four path gate traces, and the held posture with fixed entry/exit attribution. Single-date
+bounded entry counts and retry lows, owned numerical leaves, and original protective causes.
+Coverage, four path gate traces, and held posture retain fixed entry/exit attribution. Single-date
 and daily runs require prior history; backfill deliberately initializes the chain. A missing
 intermediate SPY session is an error, not a new bootstrap. Resumed runs use the previous saved
 state rather than reconstructing memory from a report window. CSV/XLSX display canonical fields.
@@ -200,8 +201,9 @@ under `data/research/regime/v1.2`, never canonical snapshot paths or workbook in
 
 `regime report` is a recent multi-day trend view over saved snapshots. `regime outcomes` replays
 saved snapshots against forward SPY/QQQ returns and drawdowns. Its default grouping is action: the
-baseline uses all dates, while protect/redeploy outcome rows use only the first action date from
-each distinct armed-setup lifecycle; older snapshots without lifecycle fields group same-action
+baseline uses all dates, while protect/redeploy outcome rows use each executed entry, distinguished
+by action, setup identity, and entry date. A permitted retry is a separate attempt, not an
+independent market episode. Older snapshots without lifecycle fields group same-action
 rows separated by no more than five saved snapshots. The frequency table remains daily. Protect
 and redeploy modes
 diagnose their setup/confirmation gates, protect also groups repeated action days into alert
