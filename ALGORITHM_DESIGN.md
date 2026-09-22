@@ -134,8 +134,8 @@ For protect:
 ```text
 protect-extension = remembered extension + prior divergence + current volatility deterioration
                     + (price damage OR prior and current breadth AND credit deterioration)
-protect-break     = both indexes below MA50 with negative 20d returns for three sessions
-                    + normalized 5d price damage >=0.35 + another deteriorating family
+protect-break     = fresh loss of repaired MA50 support, within a five-session watch
+                    + both below MA50 + 5d price damage >=0.35 + another deteriorating family
 ```
 
 For redeploy:
@@ -165,10 +165,17 @@ the setup. These are distinct mean-reversion and continuation definitions of opp
 Evaluate all paths independently. Remove consumed opportunities before resolving conflicts;
 opposing unused directions suppress new entries, not exits. Same-direction priority is break
 before extension and washout before confirm. No repeated or overlapping action resets entry age.
-Washout and break permit at most two entries per episode. After a holding ends, both indexes must
-make new lows below all lows known at its exit before a retry becomes available. Washout also
-needs qualifying stress, and break persistent damage. Active same-direction exposure never retries.
-The setup ID remains stable; entry dates distinguish the two executed attempts.
+Washout permits at most two entries per episode. After a holding ends, both indexes must make
+new lows below all lows known at its exit, with qualifying stress, before a retry is available.
+Active same-direction exposure never retries. The setup ID remains stable; entry dates distinguish
+the two executed attempts.
+
+Break is a support transition, not accumulated damage. Three sessions with both indexes above
+MA50 establish repaired support. The first subsequent loss by either index starts a five-session
+watch, including that session. Both must be below MA50 to confirm, but no negative 20d return or
+mechanical three-day wait is required. Continuing damage cannot extend the watch or authorize a
+new-low retry. A new episode requires repaired support again. Expiring the watch does not end an
+existing protected holding. Starting a replay already below MA50 does not invent an earlier repair.
 
 Protection repairs after three sessions of nonnegative 5d returns and repaired original causal
 leaves (including remembered divergence), with no current corroborated trend-plus-other-family
@@ -182,10 +189,11 @@ The executable rules and constants live in `regime_lifecycle.py`. Historical com
 next adjusted open, equal SPY/QQQ, 80% core plus 0/20/40% tactical exposure, 5bp one-way costs,
 zero cash yield, and 5% annual borrowing cost. Same-average-exposure controls distinguish timing
 from risk allocation. Earlier v1.2 account comparisons underperformed the untimed control;
-protection entry quality remains a research problem. The subsequent entry-focused revision
-restores internal extension warnings and adds base-breakout confirm entries, but does not
-establish a robust edge: confirm's 40d returns lag all days, and break remains weak. Failed
-fresh-low/internal-only break trials were not retained. Washout and exits are unchanged.
+protection entry quality remains a research problem. Subsequent entry-focused changes restore
+internal extension warnings, add base-breakout confirm entries, and distinguish fresh support
+loss from late new-low break retries. They do not establish a robust edge: confirm's 40d returns
+lag all days, break still has false alarms, and its 65d results remain weak. Failed fresh-low/
+internal-only break filters were not retained. Washout and exits are unchanged.
 This history has been used repeatedly for development, not held out.
 
 ## Research Observations and Proposals
@@ -422,7 +430,7 @@ The action output controls only the tactical sleeve:
 | --- | --- | --- |
 | `no_change` | No new unused opportunity. | Retain held exposure unless a separate exit fires. |
 | `protect-extension` | Extended tape develops confirmed deterioration. | Reduce marginal exposure. |
-| `protect-break` | Persistent direct trend damage has corroboration. | Reduce marginal exposure. |
+| `protect-break` | Fresh loss of repaired support has current selling and corroboration. | Reduce marginal exposure. |
 | `redeploy-washout` | Remembered stress releases with current confirmation and price opportunity. | Add tactical exposure. |
 | `redeploy-confirm` | An intact-trend pullback confirms recovery. | Add tactical exposure. |
 

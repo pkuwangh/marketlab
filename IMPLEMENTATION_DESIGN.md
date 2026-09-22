@@ -188,6 +188,8 @@ refresh source observations or request a date present in local SPY history.
 `regime_lifecycle.py` owns the v1.2 daily transition. Snapshots persist setup IDs, qualifying hits,
 continuous-stress peaks, causal price anchors/lows, divergence memory, consumed opportunities,
 bounded entry counts and retry lows, owned numerical leaves, and original protective causes.
+Break watches persist support-repair readiness and an unrefreshed five-session onset clock;
+only washout retains the new-low retry workflow. Watch expiry changes entry eligibility, not exits.
 Coverage, four path gate traces, and held posture retain fixed entry/exit attribution. Single-date
 and daily runs require prior history; backfill deliberately initializes the chain. A missing
 intermediate SPY session is an error, not a new bootstrap. Resumed runs use the previous saved

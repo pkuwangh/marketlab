@@ -40,6 +40,7 @@ class ActionConfig:
     extension_age: int = 40
     washout_age: int = 15
     pullback_age: int = 20
+    break_watch_sessions: int = 5
     divergence_age: int = 10
     persistence: int = 3
     protect_cap: int = 65
@@ -491,14 +492,24 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
             or all(prices[k] >= pullback["anchors"][k] for k in prices)
         ):
             pullback["armed"] = False
-    breaking = _below(ma50) and _below(return20)
-    break_streak = previous.get("break_streak", 0) + 1 if breaking else 0
     repair_streak = previous.get("break_repair", 0) + 1 if _above(ma50) else 0
     br = copy.deepcopy(previous.get("break", {}))
     if repair_streak >= config.persistence:
         br["armed"] = False
-    if break_streak >= config.persistence and not br.get("armed"):
-        br = {"id": f"break:{day}", "date": day, "index": index, "armed": True, "consumed": False}
+        br["ready"] = True
+    if br.get("ready") and any(v is not None and v < 0 for v in ma50):
+        br = {
+            "id": f"break:{day}",
+            "date": day,
+            "index": index,
+            "armed": True,
+            "consumed": False,
+            "ready": False,
+        }
+    if "index" in br:
+        br["age"] = index - br["index"]
+        if br["age"] >= config.break_watch_sessions:
+            br["armed"] = False
 
     divergence = copy.deepcopy(previous.get("divergence", {}))
     if extension.get("id") != previous.get("extension", {}).get("id"):
@@ -599,7 +610,7 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         "protect-break": {
             "enabled": config.break_path,
             "setup": br.get("armed", False),
-            "persistent_damage": break_streak >= config.persistence,
+            "current_damage": None if any(v is None for v in ma50) else _below(ma50),
             "fresh_damage": confirmation_gate(
                 [maximum_evidence({"5d": evidence["trend"].leaves.get("5d")})],
                 "deterioration",
@@ -624,13 +635,6 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         allowed=prior_direction != "redeploying"
         and wash_hit is not None
         and wash_hit >= config.persistent_hit,
-    )
-    _reopen_after_new_low(
-        br,
-        prices,
-        day=day,
-        config=config,
-        allowed=prior_direction != "protected" and break_streak >= config.persistence,
     )
     causes = {
         "redeploy-washout": strong[:2],
@@ -758,7 +762,6 @@ def transition(*, snapshot, signals, histories, previous=None, config=DEFAULT_CO
         "pullback": pullback,
         "break": br,
         "established": established,
-        "break_streak": break_streak,
         "break_repair": repair_streak,
         "divergence": divergence,
         "evidence": {

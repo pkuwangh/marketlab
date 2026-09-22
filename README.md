@@ -123,10 +123,12 @@ either one strong setup snapshot (`extension_setup >= 0.75`) or persistent setup
 (`extension_setup >= 0.60` on at least 3 of the last 10 saved trading snapshots). These tuning
 parameters and lifecycle rules live in `src/marketlab/regime_lifecycle.py`. The setup itself requires
 both trend extension and volatility complacency to be at least `0.50`; one extreme leg cannot
-compensate for a missing one. `protect-extension` requires remembered internal divergence followed
-by price and volatility deterioration. `protect-break` independently recognizes persistent damage
-below the intermediate trend, current 5d selling, and another confirming family; prior extension
-is not required.
+compensate for a missing one. `protect-extension` requires remembered internal divergence and
+current volatility deterioration, confirmed by price damage or prior/current breadth and credit
+weakness together. `protect-break` instead watches a fresh loss of MA50 support after both indexes
+held above it for three sessions. Its five-session watch requires both currently below MA50,
+current 5d selling, and another confirming family. Continued losses cannot refresh the watch;
+prior extension is not required. `break_watch_sessions` controls its length in the lifecycle config.
 
 Washout memory is intentionally faster. It arms from either one strong snapshot
 (`washout_setup >= 0.75`) or persistent stress (`washout_setup >= 0.60` on at least 2 of
@@ -139,18 +141,22 @@ the first setup date.
 `redeploy-washout` requires armed stress, continuous-stress release of at least `0.05`, current
 stabilization of at least `0.75` in two distinct owned families, and remaining price opportunity.
 Both indexes must have recovered no more than half their episode's observed high-to-low damage.
-`redeploy-confirm` is a separate orderly-pullback recovery path within an intact longer-term trend.
+`redeploy-confirm` is a separate orderly-pullback recovery path within an intact longer-term trend:
+three sessions without new episode lows, a breakout above the preceding five closes, and
+non-price stabilization, with room below pre-pullback highs.
 Both need a resolved funding veto. Missing inputs are not calm readings.
 
 The action is a new entry, not the held posture. Entries consume setup episodes; repeated signals
-do not renew the holding clock. A washout or break episode permits at most two entries: a retry
-needs both indexes below the lows known at the prior holding's exit, plus qualifying stress or
-persistent break damage. Protection ends when its original deteriorating inputs repair and no
+do not renew the holding clock. A washout episode permits at most two entries: a retry needs
+both indexes below the lows known at the prior holding's exit plus qualifying stress. Break
+permits one entry per support-loss episode; a new opportunity requires repaired MA50 support,
+not another low in the same decline. Protection ends when its original deteriorating inputs repair and no
 current corroborated damage remains; missing original inputs cannot count as repair. Increased
 exposure ends on thesis failure or timeout. Ordinary restoration needs no redeploy action.
-The four-path model remains research, not validated market-beating timing. V1.2 improves the
-development replay but still has missed-upside costs and no `redeploy-confirm` entries. Tested
-broader confirm and slower washout-failure rules did not improve the account and are not included.
+The four-path model remains research, not validated market-beating timing. The entry-focused
+v1.2 revision restores confirm coverage and improves extension/break entry results, but false
+alarms remain and the longer-horizon results are mixed. These are repeatedly studied development
+data, not evidence of an out-of-sample edge.
 
 Some specific data concerns include:
 - VIX term-structure ratios require same-date observations for both legs.

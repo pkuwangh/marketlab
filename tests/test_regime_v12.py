@@ -247,10 +247,13 @@ def test_new_joint_damage_blocks_otherwise_repaired_protection():
 @pytest.mark.parametrize("move,expected", [(0.01, "no_change"), (-0.04, "protect-break")])
 def test_break_needs_recent_selling_not_only_old_medium_term_losses(move, expected):
     state = None
-    for i in range(3):
+    for i in range(4):
         day = DAY + timedelta(days=i)
-        snap, signals = inputs(day, stress=0.3, move=move, vol=0.2)
-        snap = replace(snap, spy_return_20d=-0.08, qqq_return_20d=-0.10)
+        snap, signals = inputs(
+            day, stress=0.5, move=move if i == 3 else 0.01, vol=0.2, ma50=0.02 if i < 3 else -0.02
+        )
+        if i == 3:
+            snap = replace(snap, spy_return_20d=-0.08, qqq_return_20d=-0.10)
         action, _, _ = transition(
             snapshot=snap,
             signals=signals,
@@ -261,7 +264,7 @@ def test_break_needs_recent_selling_not_only_old_medium_term_losses(move, expect
     assert action.state == expected
 
 
-def test_retry_remembers_intervening_low_without_moving_entry_thesis():
+def test_holding_remembers_intervening_low_without_moving_entry_thesis():
     config = replace(DEFAULT_CONFIG, protect_cap=3)
     state = {
         "config": asdict(config),
@@ -292,9 +295,6 @@ def test_retry_remembers_intervening_low_without_moving_entry_thesis():
     assert state["exit_reason"] == "holding_expired"
     assert state["closed_holding"]["lows"] == {"SPY": 100, "QQQ": 100}
     assert state["break"]["retry_lows"] == {"SPY": 85, "QQQ": 85}
-    _reopen_after_new_low(
-        state["break"], {"SPY": 87, "QQQ": 87}, allowed=True, day="later", config=config
-    )
     assert state["break"]["consumed"]
 
 

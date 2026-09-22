@@ -24,6 +24,8 @@ REFERENCES = {
     "B2-fresh-break": "E2-internals",
     "C1-base-recovery": "E2-internals",
     "C2-sequential-pullback": "C1-base-recovery",
+    "B3-support-transition": "C2-sequential-pullback",
+    "B3-retry-ablation": "C2-sequential-pullback",
 }
 
 

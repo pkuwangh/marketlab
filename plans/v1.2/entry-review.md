@@ -1,5 +1,8 @@
 # V1.2 Entry Review
 
+Later work: [support-transition break review](break-transition-review.md) revisits the
+unresolved break path below. These sections retain the earlier experiments and results.
+
 Scope: improve the event table, not the simulated account. Keep v1.2, exits, and washout
 rules unchanged. Work on extension, break, and confirm separately. No threshold search.
 

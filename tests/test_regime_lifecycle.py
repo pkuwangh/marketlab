@@ -321,22 +321,29 @@ def test_opportunity_uses_causal_prices_not_fear():
 def test_break_action_persists_without_extension_and_does_not_reset_entry():
     state = None
     histories = {s: [] for s in ("SPY", "QQQ")}
-    for i in range(5):
+    for i in range(10):
         day = DAY + timedelta(days=i)
-        snap, signals = inputs(day, ma200=-0.1)
+        snap, signals = inputs(
+            day,
+            ma200=-0.1,
+            ma50=0.02 if i < 3 else -0.02,
+            move=0.01 if i < 3 else -0.04,
+            vol=0 if i < 3 else 0.2,
+        )
         for symbol in histories:
             histories[symbol].append(price(day, 100 - i, symbol))
         action, _, _ = transition(
             snapshot=snap, signals=signals, histories=histories, previous=state
         )
         state = json.loads(json.dumps(action.lifecycle))
-        if i == 2:
+        if i == 3:
             assert action.state == "protect-break"
             assert state["held"]["date"] == day.isoformat()
-        elif i > 2:
+        elif i > 3:
             assert action.state == "no_change"
-            assert state["held"]["age"] == i - 2
-            assert "protect-break" in state["supporting"]
+            assert state["held"]["age"] == i - 3
+            assert ("protect-break" in state["supporting"]) is (i < 8)
+            assert state["held"]["posture"] == "protected"
     assert not state["extension"]["armed"]
 
 
@@ -353,10 +360,12 @@ def test_conflicting_unused_paths_and_consumed_opposite_resolution(monkeypatch):
 
     monkeypatch.setattr(lifecycle, "owned_evidence", contradictory)
     histories = {s: [price(DAY - timedelta(days=1), 100, s)] for s in ("SPY", "QQQ")}
-    state = None
+    state = {"config": asdict(DEFAULT_CONFIG), "index": -1, "break": {"ready": True}}
     for i in range(3):
         day = DAY + timedelta(days=i)
-        snap, signals = inputs(day, stress=0.9 if i < 2 else 0.5, ma200=-0.1)
+        snap, signals = inputs(
+            day, stress=0.9 if i < 2 else 0.5, ma200=-0.1, move=0 if i < 2 else -0.04
+        )
         for symbol in histories:
             histories[symbol].append(price(day, 80 if i < 2 else 84, symbol))
         prior = state
