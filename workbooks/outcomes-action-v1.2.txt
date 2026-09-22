@@ -4,19 +4,19 @@ snapshot_version=v1.2
 outcome_start=2016-01-01
 outcome_end=2026-06-01
 outcome_horizons=20,40,65
-generated_at=2026-09-21T22:15:19+00:00
+generated_at=2026-09-22T21:03:28+00:00
 command=marketlab regime outcomes --by action --start 2016-01-01 --end 2026-06-01 --horizons 20,40,65
 
 regime_action_day_count=2617
-regime_action_event_count=71
-regime_action_event_outcome_count=213
-available_regime_action_event_outcome_count=213
+regime_action_event_count=65
+regime_action_event_outcome_count=195
+available_regime_action_event_outcome_count=195
 
 frequency_table:
 action_state       count  share
 -----------------  -----  -----
-no_change          2546   97.3%
-protect-break      30     1.1%
+no_change          2552   97.5%
+protect-break      24     0.9%
 protect-extension  10     0.4%
 redeploy-washout   18     0.7%
 redeploy-confirm   13     0.5%
@@ -28,9 +28,9 @@ baseline:all_days        20d      2617     2617       +1.3%    +1.7%    -2.5%   
 baseline:all_days        40d      2617     2617       +2.5%    +3.4%    -3.5%   -4.4%
 baseline:all_days        65d      2617     2617       +4.1%    +5.5%    -4.4%   -5.5%
 -----------------------  -------  -------  ---------  -------  -------  ------  ------
-event:protect-break      20d      30       30         +1.5%    +1.8%    -3.7%   -4.2%
-event:protect-break      40d      30       30         +3.2%    +4.1%    -5.1%   -5.9%
-event:protect-break      65d      30       30         +6.2%    +8.1%    -6.0%   -6.9%
+event:protect-break      20d      24       24         +0.2%    +0.9%    -3.3%   -3.8%
+event:protect-break      40d      24       24         +0.9%    +1.7%    -4.7%   -5.4%
+event:protect-break      65d      24       24         +4.2%    +6.1%    -5.9%   -6.7%
 -----------------------  -------  -------  ---------  -------  -------  ------  ------
 event:protect-extension  20d      10       10         -0.6%    -0.8%    -3.5%   -4.2%
 event:protect-extension  40d      10       10         +0.1%    +1.4%    -6.2%   -6.3%
@@ -47,15 +47,15 @@ event:redeploy-washout   65d      18       18         +7.1%    +7.6%    -4.8%   
 Executed holding windows: underlying ETF returns, not portfolio P/L; averages use closed episodes only
 action             entries  closed  open  avg_held_SPY  avg_held_QQQ  SPY_entry_loss  SPY_running_dd
 -----------------  -------  ------  ----  ------------  ------------  --------------  --------------
-protect-break      30       30      0     +0.42%        +0.72%        -3.38%          -4.21%
+protect-break      24       24      0     -0.12%        +0.33%        -3.28%          -4.15%
 protect-extension  10       10      0     +1.96%        +2.45%        -2.29%          -3.06%
-redeploy-washout   18       18      0     +1.88%        +1.71%        -1.93%          -3.57%
-redeploy-confirm   13       13      0     +1.06%        +1.53%        -1.32%          -2.60%
+redeploy-washout   18       18      0     +1.94%        +1.75%        -1.87%          -3.51%
+redeploy-confirm   13       13      0     +1.08%        +1.44%        -1.29%          -2.43%
 
 Executable exposure: next adjusted open; 80% core, 0/20/40% tactical; 50/50 SPY/QQQ; cash 0%, borrowing 5%, one-way costs 5bp
 Cost/financing columns sum daily equity charges; reduced/increased count sessions.
 account           sessions  net       gross     portfolio_dd  avg_exposure  turnover  cost   financing  reduced  increased
 ----------------  --------  --------  --------  ------------  ------------  --------  -----  ---------  -------  ---------
-timed             2616      +470.10%  +490.09%  -28.94%       1.000         33.923    1.70%  1.75%      455      451
+timed             2616      +487.81%  +507.00%  -28.68%       0.997         31.493    1.57%  1.64%      462      422
 untimed           2616      +474.41%  +475.91%  -30.86%       1.000         5.213     0.26%  0.00%      0        0
-matched_exposure  2616      +474.14%  +475.64%  -30.85%       1.000         5.212     0.26%  0.00%      2616     0
+matched_exposure  2616      +471.69%  +473.18%  -30.78%       0.997         5.199     0.26%  0.00%      2616     0

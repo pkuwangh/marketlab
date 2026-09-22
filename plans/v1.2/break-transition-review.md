@@ -89,6 +89,11 @@ market-timing model. Its ex-pandemic 20d return is still close to all days, and 
 does not improve on all days. Before-2020 20d performance worsens. Two useful 2022 entries
 are too few to establish reliable bear-market performance. No watch-window optimization was run.
 
+A concentration check removes each variant's two most negative SPY labels separately
+at each horizon (not an input to the model). Old returns then become +2.42/+4.14/+7.25%;
+B3 returns become +1.67/+1.95/+5.35%. The relative improvement survives, but the remaining
+returns are positive: this is not proof that the signal reliably precedes losses.
+
 Removing retries loses the useful November 23 2018 warning. Several benign pullbacks still
 trigger protection, notably September/October 2020, September 2021, and April 2024.
 September 20 and 29 2021 are separate repaired-support attempts within related market action,
@@ -103,3 +108,16 @@ of old break signals into buys; redeploy still needs its own confirmation.
 The complete event additions/removals and all horizons are in `entry-event-changes.csv`,
 under `B3-support-transition` and `B3-retry-ablation`, with before/after gate and consumption
 state. Full trial traces remain under `data/research/regime/v1.2/entries/`.
+
+## Verification
+
+- 320 tests pass; lint passes. Coverage includes same-day and sequential support loss,
+  missing support data, configurable trading-session expiry, no refresh during continued
+  damage, no new-low retry, genuine repair/rearm, and no forced holding exit at watch expiry.
+- Rebuilt 2,693 canonical v1.2 snapshots through September 18 2026 without fetching sources.
+  All 2,617 comparison-date actions, lifecycle states, and pressure features match the
+  research replay exactly; the complete CLI action summary matches its research table.
+- Refreshed v1.2 action/protect/redeploy/posture reports and CSV/XLSX exports. Both export
+  formats contain 2,693 data rows and 268 columns.
+- Before/after checksums confirm unchanged price/market-series observations and unchanged
+  v0.0/v1.0/v1.1 regime/market-signal snapshots. User edits to Claude's follow-up are untouched.

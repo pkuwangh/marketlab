@@ -4,7 +4,7 @@ snapshot_version=v1.2
 outcome_start=2016-01-04
 outcome_end=2026-06-01
 outcome_horizons=20,40,65
-generated_at=2026-09-21T22:18:53+00:00
+generated_at=2026-09-22T21:04:14+00:00
 command=marketlab regime outcomes --by redeploy --start 2016-01-04 --end 2026-06-01 --horizons 20,40,65
 
 regime_redeploy_day_count=2617
@@ -41,9 +41,9 @@ redeploy-confirm:funding_unknown_only    20d      0     0         0          -  
 redeploy-confirm:funding_unknown_only    40d      0     0         0          -        -        -       -
 redeploy-confirm:funding_unknown_only    65d      0     0         0          -        -        -       -
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
-redeploy-confirm:multiple_blockers       20d      192   27        192        +2.2%    +2.4%    -2.1%   -2.6%
-redeploy-confirm:multiple_blockers       40d      192   27        192        +3.7%    +4.0%    -3.2%   -4.0%
-redeploy-confirm:multiple_blockers       65d      192   27        192        +6.7%    +8.1%    -3.7%   -4.5%
+redeploy-confirm:multiple_blockers       20d      191   27        191        +2.2%    +2.4%    -2.1%   -2.6%
+redeploy-confirm:multiple_blockers       40d      191   27        191        +3.7%    +4.0%    -3.2%   -3.9%
+redeploy-confirm:multiple_blockers       65d      191   27        191        +6.7%    +8.0%    -3.7%   -4.5%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
 redeploy-confirm:no_setup                20d      2244  0         2244       +1.2%    +1.7%    -2.5%   -3.2%
 redeploy-confirm:no_setup                40d      2244  0         2244       +2.4%    +3.3%    -3.6%   -4.5%
@@ -61,9 +61,9 @@ redeploy-confirm:waiting:opportunity     20d      7     4         7          +1.
 redeploy-confirm:waiting:opportunity     40d      7     4         7          +2.2%    -1.3%    -3.5%   -5.1%
 redeploy-confirm:waiting:opportunity     65d      7     4         7          +5.1%    +3.5%    -3.9%   -5.8%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
-redeploy-confirm:waiting:price_recovery  20d      33    12        33         +1.7%    +1.8%    -2.1%   -2.5%
-redeploy-confirm:waiting:price_recovery  40d      33    12        33         +4.1%    +4.1%    -3.0%   -3.7%
-redeploy-confirm:waiting:price_recovery  65d      33    12        33         +7.1%    +9.3%    -3.0%   -3.7%
+redeploy-confirm:waiting:price_recovery  20d      34    12        34         +1.6%    +1.8%    -2.1%   -2.5%
+redeploy-confirm:waiting:price_recovery  40d      34    12        34         +4.1%    +4.1%    -3.1%   -3.8%
+redeploy-confirm:waiting:price_recovery  65d      34    12        34         +7.1%    +9.6%    -3.1%   -3.8%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
 redeploy-washout:action                  20d      18    12        18         +3.5%    +3.2%    -3.3%   -4.5%
 redeploy-washout:action                  40d      18    12        18         +5.4%    +6.0%    -4.5%   -5.8%
@@ -73,9 +73,9 @@ redeploy-washout:already_held            20d      48    9         48         +3.
 redeploy-washout:already_held            40d      48    9         48         +4.8%    +5.2%    -4.8%   -6.2%
 redeploy-washout:already_held            65d      48    9         48         +7.2%    +8.5%    -5.4%   -6.8%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
-redeploy-washout:consumed                20d      221   12        221        +1.8%    +2.4%    -3.3%   -4.1%
-redeploy-washout:consumed                40d      221   12        221        +4.9%    +6.0%    -4.1%   -5.1%
-redeploy-washout:consumed                65d      221   12        221        +5.4%    +6.6%    -5.0%   -6.3%
+redeploy-washout:consumed                20d      219   12        219        +1.7%    +2.4%    -3.3%   -4.1%
+redeploy-washout:consumed                40d      219   12        219        +4.9%    +6.0%    -4.1%   -5.2%
+redeploy-washout:consumed                65d      219   12        219        +5.3%    +6.6%    -5.0%   -6.3%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
 redeploy-washout:funding_blocked_only    20d      0     0         0          -        -        -       -
 redeploy-washout:funding_blocked_only    40d      0     0         0          -        -        -       -
@@ -85,9 +85,9 @@ redeploy-washout:funding_unknown_only    20d      0     0         0          -  
 redeploy-washout:funding_unknown_only    40d      0     0         0          -        -        -       -
 redeploy-washout:funding_unknown_only    65d      0     0         0          -        -        -       -
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
-redeploy-washout:multiple_blockers       20d      262   21        262        +1.2%    +1.1%    -3.7%   -4.6%
-redeploy-washout:multiple_blockers       40d      262   21        262        +2.1%    +2.6%    -5.3%   -6.6%
-redeploy-washout:multiple_blockers       65d      262   21        262        +4.3%    +5.2%    -6.4%   -8.0%
+redeploy-washout:multiple_blockers       20d      260   21        260        +1.3%    +1.2%    -3.7%   -4.6%
+redeploy-washout:multiple_blockers       40d      260   21        260        +2.2%    +2.7%    -5.2%   -6.5%
+redeploy-washout:multiple_blockers       65d      260   21        260        +4.3%    +5.3%    -6.3%   -8.0%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
 redeploy-washout:no_setup                20d      1874  0         1874       +1.0%    +1.5%    -2.1%   -2.7%
 redeploy-washout:no_setup                40d      1874  0         1874       +2.2%    +3.0%    -3.1%   -3.8%
@@ -97,9 +97,9 @@ redeploy-washout:unknown:confirmation    20d      37    9         37         +2.
 redeploy-washout:unknown:confirmation    40d      37    9         37         +2.8%    +3.5%    -3.6%   -4.7%
 redeploy-washout:unknown:confirmation    65d      37    9         37         +5.7%    +6.7%    -4.6%   -5.8%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
-redeploy-washout:waiting:confirmation    20d      102   18        102        +2.3%    +2.7%    -3.9%   -4.7%
-redeploy-washout:waiting:confirmation    40d      102   18        102        +3.9%    +5.2%    -4.8%   -5.8%
-redeploy-washout:waiting:confirmation    65d      102   18        102        +4.9%    +6.1%    -6.5%   -7.8%
+redeploy-washout:waiting:confirmation    20d      106   18        106        +2.2%    +2.6%    -3.9%   -4.7%
+redeploy-washout:waiting:confirmation    40d      106   18        106        +3.8%    +5.0%    -4.8%   -5.8%
+redeploy-washout:waiting:confirmation    65d      106   18        106        +4.8%    +5.9%    -6.5%   -7.9%
 ---------------------------------------  -------  ----  --------  ---------  -------  -------  ------  ------
 redeploy-washout:waiting:opportunity     20d      55    9         55         +2.3%    +3.1%    -1.7%   -2.6%
 redeploy-washout:waiting:opportunity     40d      55    9         55         +2.2%    +3.5%    -2.6%   -4.0%
@@ -110,21 +110,21 @@ Counts overlap; only_* requires every other gate, unused episode, and resolver c
 path              gate             checked  pass  fail  unknown  only_fail  only_unknown
 ================  ===============  =======  ====  ====  =======  =========  ============
 redeploy-washout  setup            2617     743   1874  0        0          0
-redeploy-washout  unused_episode   743      474   269   0        53         0
+redeploy-washout  unused_episode   743      476   267   0        53         0
 redeploy-washout  release          743      609   134   0        0          0
-redeploy-washout  confirmation     743      186   446   111      102        37
+redeploy-washout  confirmation     743      186   446   111      106        37
 redeploy-washout  opportunity      743      444   299   0        55         0
 redeploy-washout  funding_clear    743      729   0     14       0          0
-redeploy-washout  direction_clear  743      723   20    0        0          0
+redeploy-washout  direction_clear  743      736   7     0        0          0
 redeploy-washout  priority_clear   743      743   0     0        0          0
 ----------------  ---------------  -------  ----  ----  -------  ---------  ------------
 redeploy-confirm  enabled          2617     2617  0     0        0          0
 redeploy-confirm  setup            2617     373   2244  0        7          0
 redeploy-confirm  unused_episode   373      250   123   0        34         0
-redeploy-confirm  price_recovery   373      66    307   0        33         0
+redeploy-confirm  price_recovery   373      66    307   0        34         0
 redeploy-confirm  base             373      212   161   0        4          0
 redeploy-confirm  confirmation     373      252   34    87       0          0
 redeploy-confirm  opportunity      373      330   43    0        7          0
 redeploy-confirm  funding_clear    373      373   0     0        0          0
-redeploy-confirm  direction_clear  373      357   16    0        0          0
+redeploy-confirm  direction_clear  373      354   19    0        0          0
 redeploy-confirm  priority_clear   373      368   5     0        1          0

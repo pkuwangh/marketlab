@@ -379,3 +379,97 @@ rather than only as a protect trigger — the same idea already raised for the o
 `r3-discussion.md` T3, now with much more precise, quantified support (57% bottom-decile firing,
 broad-based across 11 years) for the new mechanism too. Worth investigating alongside the arm/confirm
 redesign above, not instead of it — the two aren't mutually exclusive.
+
+---
+
+## 6. Follow-Up: `protect-break` Is Still Unresolved After V1.2's Entry Review
+
+Checked `plans/v1.2/entry-review.md` and the live `regime_lifecycle.py` after the v1.2 entry-focused
+round landed. `redeploy-confirm` and `protect-extension` both materially improved (Section 5's Q1/Q3
+diagnoses were acted on in some form — `redeploy-confirm` now fires 13 times with a sequenced-pullback
+redesign, and `protect-extension`'s return direction is now correctly negative at 20d). `protect-break`
+did not improve, and the project's own research doc says so directly: *"Break remains unresolved and
+the combined model makes its table worse... This is not a completed performance fix."*
+
+### The numbers moved the wrong way
+
+| | v1.1 | v1.2 |
+| --- | ---: | ---: |
+| entries | 21 | 30 |
+| 20d / 40d / 65d vs baseline (+1.3/+2.5/+4.1%) | +1.6/+1.9/+4.5% | +1.5/+3.2/+6.2% |
+| held return | +1.94% | +0.42% |
+
+40d and 65d both moved further in the wrong direction (more positive, not less) despite held return
+improving in absolute terms — more entries fired, not fewer, and the fixed-horizon story got worse
+even as the held-return story got marginally better.
+
+### Root cause confirmed unchanged in the live code
+
+`setup` (arming) and `persistent_damage` are still both gated on the identical
+`break_streak >= config.persistence` condition (`regime_lifecycle.py:500,602`) — the exact structural
+issue diagnosed in Section 4 above. The one adopted production change (commit `d78261c`) added a new
+`fresh_damage` gate checking only the 5-day leaf of trend evidence on top of the existing structure —
+a recency filter, not a restructuring of when arming happens relative to confirmation. A bounded-retry
+mechanism was also added (`66be59c`/`3cb06a1`), which explains the entry-count increase from 21 to 30,
+but retries are gated on the same `break_streak >= persistence` condition, so they inherit the same lag
+rather than correcting it.
+
+**Verified the lag persists empirically in the actual v1.2 entries, not just inferred from the code.**
+Checked each of the 12 entries new to v1.2 (not present in v1.1's list) for its percentile within a
+±20-session local price window (0 = exact local low):
+
+```
+2022-10-12  0.00   <- the exact bottom of the entire 2022 bear market
+2016-02-08  0.05
+2019-08-07  0.15
+2018-11-23  0.17
+2022-05-09  0.20
+2022-02-22  0.22
+2022-12-29  0.24
+2025-04-03  0.24
+2020-02-27  0.39
+2023-09-25  0.39
+2022-09-01  0.41
+2016-01-06  0.87   <- the one exception
+```
+
+11 of 12 sit in the lower half of their local range. `2022-10-12` is a particularly clean
+confirmation: the model's defensive signal firing on literally the single best entry day of the
+entire 10-year sample.
+
+### What was tried, and why it didn't test the actual mechanism
+
+`entry-review.md` documents two experiments aimed at `protect-break` specifically, both explicitly
+rejected with the reasoning shown, not silently dropped:
+
+- **B1** (require a fresh joint closing low plus specifically breadth/credit corroboration):
+  worsened 40d/65d, discarded.
+- **B2** (isolate just the fresh joint closing low ablation, no family restriction): also discarded
+  — *"Neither trial fixes break entry selection... report this topic as unresolved."*
+
+Both are **precision filters** on the existing trigger — narrowing which days satisfy a 3-consecutive-
+session-damage condition. Neither tests **decoupling arm-speed from confirmation-speed**, which was
+this document's Section 4 proposal: arm a "break watch" memory off a cheaper, faster signal (a single
+sharp day, or 2-of-3 non-consecutive sessions), then let the existing `trend`/`corroboration` gates
+confirm separately, on their own timing, while that memory is armed — the same setup-then-confirm
+separation extension and washout already use successfully. B1/B2 made the trigger *stricter*; this
+proposal would make it *faster*. A stricter trigger cannot fix a lag problem regardless of its outcome,
+which is consistent with both trials failing to move the needle in the intended direction.
+
+### Proposed next experiment (`B3`, continuing the doc's own naming convention)
+
+```text
+Arm a break-watch memory on: both indexes below MA50 for 1 session (or 2-of-3 non-consecutive),
+  not the full 3-consecutive-session persistence requirement.
+Confirm (fire) separately, on any subsequent day while armed, when:
+  current trend deterioration >= family_gate (the existing `fresh_damage`/5d check)
+  AND corroboration from another owned family >= family_gate (existing, unchanged)
+Bound the armed-but-unconfirmed memory window (e.g. 5-10 sessions, mirroring washout's grace
+  pattern) so a single bad day without follow-through expires rather than lingering indefinitely.
+```
+
+This should be specified precisely and run as its own frozen trial against the same frozen 2,617-date
+window before any adoption decision, per the project's existing discipline — it is a plausible fix for
+a precisely-identified mechanism, not a validated one. If it still fires late, that would be real
+evidence the lag isn't fixable by timing alone and the corroborating-input repurposing idea (Section 4,
+using `protect-break` as redeploy evidence rather than a protect trigger) deserves more weight instead.
